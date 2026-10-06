@@ -292,18 +292,22 @@ jobs:
           # 下载表按「平台 → 架构」分格，每格列出该架构的产物。
           REL_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ needs.prep.outputs.tag }}"
           cell() {   # <平台前缀> <显示名>：按 x64 → arm64 固定顺序收集
-            local p="$1" name="$2" arch row=""
+            local p="$1" name="$2" arch n
+            # 用数组收集再按 IFS 拼，而不是在循环里往字符串尾部追加 `<br>`：
+            # 那样最后一个条目会多出一个 `<br>`，在单元格末尾留一行空白。
+            local items=()
             for arch in x64 arm64; do
               for f in "${FILES[@]}"; do
-                local n; n="$(basename "$f")"
+                n="$(basename "$f")"
                 case "$n" in
                   *-${p}-${arch}.zip|*-${p}-${arch}.tar.gz|*-${p}-${arch}.apk)
-                    row="$row[<code>${n}</code>](${REL_URL}/${n})<br>" ;;
+                    items+=("[<code>${n}</code>](${REL_URL}/${n})") ;;
                 esac
               done
             done
-            [ -n "$row" ] || return 0
-            printf '| %s | %s |\n' "$name" "$row"
+            [ "${#items[@]}" -gt 0 ] || return 0
+            local IFS='<br>'
+            printf '| %s | %s |\n' "$name" "${items[*]}"
           }
           {
             echo 'table<<TABLE_EOF'
