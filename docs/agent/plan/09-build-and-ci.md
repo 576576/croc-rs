@@ -13,7 +13,6 @@
 | **`release.yml`** | `push` main + `workflow_dispatch` | **唯一入口**。算版本号、拼矩阵、调 lint、调 build、收产物发布 |
 | **`build.yml`** | 仅 `workflow_call` | **可复用构建**。只编译打包 + `upload-artifact`，不含任何版本推导 |
 | **`lint.yml`** | `workflow_call` + `workflow_dispatch` | **质量门禁**。fmt / clippy / test / 架构门禁 / MSRV |
-| **`nightly.yml`** | `schedule` + `workflow_dispatch` | Miri / Go 互通全矩阵 / 官方 relay / 基准。**不属于发布链路** |
 | **`clear.yml`** | 仅 `workflow_dispatch` | 预发布清理：每个窗口内只留最新 1 个 alpha Release |
 
 ### 1.1 三条铁律（沿用 Suwayomi-next）
@@ -236,20 +235,18 @@ jobs:
   msrv:     # dtolnay/rust-toolchain@1.98 + cargo check --workspace
 ```
 
-**Miri 与互通在 `nightly.yml`，不在 `lint.yml`。** 理由不是"太慢"，而是它们目前是
-**只告警**（`continue-on-error`）的状态：
+**互通矩阵不在 CI 里，只在本地跑**（`cargo xtask ci-interop`）。它不是"太慢"，而是
+矩阵里的 I12（`--local`）、I16–I18（`--transport derp`）、I9（断点续传）依赖尚未实现
+或尚未实测的能力，跑起来必然红。一个恒红的门禁比没有门禁更糟——它会逼着人学会
+无视红灯。**矩阵全绿之后加回 `lint.yml`**，在那之前它是本项目的头号缺口。
 
-> `continue-on-error` 的 job **依然会拖住整个可复用工作流**，而 `build` 的
-> `needs: [prep, lint]` 等的是**整个 lint 工作流**。于是两个"进度看板"把发布链路
-> 整条掐断了——第一次推 CI 就是这样：fmt / clippy / test / arch / MSRV 全绿，
-> 但 Miri 与互通还在跑，`build` 一直等不到。
->
-> 看板就该待在旁边，不该串在链路上。等它们稳定绿之后，再挪回 `lint.yml` 并摘掉
-> `continue-on-error`——**在那之前它们不算门禁**。
+> 顺带记一个踩过的坑：`continue-on-error` 的 job **依然会拖住整个可复用工作流**，
+> 而 `build` 的 `needs: [prep, lint]` 等的是**整个 lint**。第一次推 CI 时
+> fmt / clippy / test / arch / MSRV 全绿，但两个"只告警"的 job 还在跑，`build`
+> 一直等不到——看板串在链路上就会把链路掐断。
 
 - `--no-fail-fast`：默认在第一个失败的测试二进制处就收工，一轮要拿到全部失败。
-- **nightly 只出现在 `nightly.yml` 的 `miri` job**，产物构建链路（`build.yml`）里
-  不允许出现 nightly。
+- **全仓只用 stable**，产物构建链路里更不允许出现 nightly。
 - 跑 `--workspace` 的 job（clippy / test / msrv）都要装 GTK / WebKitGTK：`croc-gui`
   依赖 tauri，而 tauri 在 Linux 上要链接 glib / GTK / WebKitGTK。缺了会停在
   `glib-sys` 的 build script 上，报错只有一句 "failed to run custom build command"。
@@ -279,7 +276,7 @@ cargo xtask ci-interop   # = interop job（需本机有 Go 与 croc 源码）
 | 产物形态开关 | `pack_core` / `pack_jre` / `pack_msi` / `pack_exe` / `pack_oci` | `pack_cli` / `pack_gui` | 没有 JRE / 安装包 / 镜像需求 |
 | Windows 工具链 | `msvc` / `gnullvm` / `all` | 仅 msvc | 无 bundled C 依赖，不需要 llvm-mingw |
 | 外部资产 | WebUI zip、ext-runtime.jar、JRE | 无 | — |
-| Miri | 无 | 有（哨兵） | 本仓库**没有 unsafe**，Miri 查的是依赖里的 unsafe（`curve25519-dalek` 的 serial 后端）以及"以后有人伸手写裸指针"的哨兵。**它不是门禁** |
+| Miri | 无 | 无 | 本仓库 0 处 `unsafe`、0 处 FFI，安全 Rust 产不出 UB——见 [03](03-architecture.md) §8.5 |
 | 架构门禁 | 无 | `xtask purity` / `xtask deps` | 本项目对"纯 crate"与"纯 Rust 加密栈"有硬约束 |
 | 互通测试 | 无 | `interop` job | 与 Go 版互通是本项目的生命线 |
 
@@ -289,10 +286,11 @@ cargo xtask ci-interop   # = interop job（需本机有 Go 与 croc 源码）
 
 - [x] 根 `Cargo.toml` 配 `[workspace.lints]`（见 [03-architecture.md](03-architecture.md) §8.2）
 - [x] 根 `rustfmt.toml`：`edition = "2024"` / `max_width = 120` / `use_small_heuristics = "Max"`
-- [x] `.github/workflows/{release,build,lint,clear}.yml` 四份（另有 `nightly.yml`，不属于发布链路）
+- [x] `.github/workflows/{release,build,lint,clear}.yml` 四份
 - [x] `docs/agent/release.md`（操作手册；设计推导在本文档）
 - [x] `xtask` 子命令：`purity` / `deps` / `ci-lint` / `ci-build` / `ci-interop`
 - [x] `tests/interop/run.sh` + `tests/interop/README.md`（I1–I18）
 - [x] `crates/croc-cli`（`croc-rs`）与 `crates/croc-gui`（`crocw-rs`，Tauri 2）落地
-- [ ] 打第一个 alpha（推 main 验证自动链路）
+- [x] 打第一个 alpha（推 main 验证自动链路）—— CI 全绿，四个产物都出来了
+- [ ] **互通矩阵加回 `lint.yml`**（等 I12 / I16–I18 / I9 全绿）—— 当前头号缺口
 - [ ] `tools/gen-golden` 在有 Go 的机器上跑一次，产出 `tests/golden/{curves,pake,pakekey}.json`

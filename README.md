@@ -55,8 +55,7 @@ croc-pakekey / croc-pake / croc-siec    纯数学与密钥协商
 构建脚本里也没有 `cc` / `bindgen`。`[workspace.lints]` 的 `unsafe_code = "warn"` 配上 CI 的
 `-D warnings`，让"加一处 `unsafe`"变成一个必须显式面对的编译错误。
 
-Miri 仍然在跑（`nightly.yml`，唯一用 nightly 的地方），但它查的是**依赖里的** unsafe
-（主要是 `curve25519-dalek` 的 serial 后端）与"以后有人伸手写裸指针"的哨兵——**它是看板不是门禁**。
+所以也**不跑 Miri**（安全 Rust 产不出 UB）。全仓只用 stable 工具链。
 
 ---
 

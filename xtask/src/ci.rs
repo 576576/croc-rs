@@ -12,7 +12,8 @@
 //! | `ci-build` | `build.yml` 在本机 target 上的编译与打包 |
 //! | `ci-interop` | `lint.yml` 的 interop job（需本机有 Go 与 croc 源码） |
 //!
-//! MSRV 与 Miri 需要额外工具链，不在这里跑（见 `release.md` §4）。
+//! MSRV 需要额外工具链，不在这里跑（见 `release.md` §4）。
+//! 互通矩阵**只在本地跑**（`ci-interop`），它还没进 `lint.yml`——原因见 09 §5.3。
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -58,7 +59,7 @@ fn summarize(steps: &[Step]) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// `cargo xtask ci-lint`：跑完 `lint.yml` 里除 MSRV / Miri / interop 之外的全部 job。
+/// `cargo xtask ci-lint`：跑完 `lint.yml` 里除 MSRV 之外的全部 job。
 ///
 /// **不早退**：本地跑一次就想拿到全部红灯，所以在第一个失败处继续往下跑
 /// （对应 CI 里那几个并行的 job）。

@@ -100,13 +100,12 @@
 | `release.yml` | `push` main（paths-ignore 文档）+ `workflow_dispatch` | **唯一入口**：prep → lint → build → publish |
 | `build.yml` | 仅 `workflow_call` | 全矩阵编译，产出 `croc-rs` 与 `crocw-rs`；不推导任何参数 |
 | `lint.yml` | `workflow_call` + `workflow_dispatch`（**不跟 push/PR**） | fmt、clippy、test、`xtask purity`/`deps`、MSRV |
-| `nightly.yml` | `schedule`（UTC 18:00）+ `workflow_dispatch` | **Miri（唯一 nightly）**、Go 互通全矩阵、官方 relay、基准 |
 | `clear.yml` | 仅 `workflow_dispatch` | 预发布清理：每窗口只留最新 1 个 alpha |
 
 > **质量门禁不跟 PR**：挂在 `build` 的 `needs` 上，门禁不过就不进编译——所有入口都从 `release.yml` 进，没有绕过路径。
 > 代价是 PR 阶段没有绿灯，由本地 `cargo xtask ci-lint` 补。
 
-工具链：**stable 默认（Rust 2024，MSRV 1.98）；nightly 仅 Miri 使用，不参与产物构建。**
+工具链：**全仓只用 stable（Rust 2024，MSRV 1.98）。**
 
 互通测试是 `lint.yml` 里的一个 job（跑 I1–I5、I7–I15、I16–I18）：
 
@@ -114,8 +113,10 @@
 - 起一个 Rust relay（本地端口），跑矩阵；
 - 失败时保留双方日志（**注意先脱敏**）。
 
-另外挂一个 `schedule`（每夜）跑 I6（官方 relay）+ 弱网 + 长跑 + 性能基准——它不属于发布链路，
-单独一个 `nightly.yml`，失败只告警不阻塞发布。
+**互通矩阵目前只在本地跑**（`cargo xtask ci-interop`）。它没有进 `lint.yml`，因为矩阵里的
+I12（`--local`）、I16–I18（`--transport derp`）、I9（断点续传）依赖尚未实现或尚未实测的
+能力，跑起来必然红——一个恒红的门禁比没有门禁更糟。**矩阵全绿之后把它加回 `lint.yml`**，
+在那之前它是本项目的头号缺口（见 [09](09-build-and-ci.md) §8 的检查清单）。
 
 ### 3.1 本地必须能跑完等价检查
 

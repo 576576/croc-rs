@@ -2,12 +2,9 @@ name: Lint
 
 # 质量门禁：格式 / 静态检查 / 测试 / 架构门禁 / MSRV。
 #
-# **Miri 与 Go 互通不在这里**，它们在 nightly.yml。原因不是"太慢"，而是它们现在是
-# **只告警**的状态：`continue-on-error` 的 job 依然会拖住整个可复用工作流，而
-# `build` 的 `needs: [prep, lint]` 等的是**整个 lint 工作流**——于是两个"进度看板"
-# 把发布链路整条掐断了。看板就该待在旁边，不该串在链路上。
-#
-# 等它们稳定绿之后，再挪回这里并摘掉 `continue-on-error`。
+# **互通矩阵不在这里**，它只在本地跑（`cargo xtask ci-interop`）：矩阵里的
+# I12 / I16–I18 / I9 依赖尚未实现或尚未实测的能力，跑起来必然红，而恒红的门禁会
+# 逼着人学会无视红灯。矩阵全绿之后加回这里。
 #
 # **不跟 push / PR**：由 release.yml 在调用 build 之前作为一个 job 调起（`workflow_call`），
 # 所以发布链路上没有任何一道能绕过它；单独跑它用 workflow_dispatch。

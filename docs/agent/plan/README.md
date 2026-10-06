@@ -35,7 +35,7 @@
 | **实现风格** | **优雅优先于逐字一致**——仅实现层；线路字节仍是硬契约 | 见 [00-overview.md](00-overview.md) §4 |
 | **架构范式** | **函数式：纯核心（sans-io）+ 副作用边缘 + 类型状态** | 见 [03-architecture.md](03-architecture.md) |
 | **Tailscale** | ⏸ **PENDING**：架构抽象 + 降级协商 v1 就位（P1，零依赖）；实现挂起等上游 tailcat-rs。`--transport derp` = 提示后走 relay | 见 [08-tailscale.md](08-tailscale.md) |
-| 工具链 | **Rust 2024 + stable**（MSRV 1.98）；nightly **仅用于 Miri** | 见 [03-architecture.md](03-architecture.md) §8.1 |
+| 工具链 | **Rust 2024 + stable**（MSRV 1.98）；**全仓不用 nightly** | 见 [03-architecture.md](03-architecture.md) §8.1 |
 | 产物 | **`croc-rs`**（CLI）+ **`crocw-rs`**（GUI，w = window） | 见 [09-build-and-ci.md](09-build-and-ci.md) |
 | CI | 四 workflow：`release`（唯一入口）/ `build` / `lint` / `clear`；**lint 不跟 PR，挂在发布链路上** | 对齐 Suwayomi-next，见 [09-build-and-ci.md](09-build-and-ci.md) |
 | 异步运行时 | Tokio | 生态最全（socks5、组播、Tauri 兼容） |

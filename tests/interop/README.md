@@ -40,5 +40,9 @@ CROC_GO_BIN=/usr/local/bin/croc-go bash tests/interop/run.sh
 
 ## CI
 
-`lint.yml` 的 `interop` job 跑全矩阵但设了 `CROC_INTEROP_SKIP_NETWORK=1`；
-`nightly.yml` 单独跑 I6（官方 relay）。
+**目前没进 CI**，只在本地跑（`cargo xtask ci-interop`）。矩阵里的 I12（`--local`）、
+I16–I18（`--transport derp`）、I9（断点续传）依赖尚未实现或尚未实测的能力，跑起来必然红，
+而恒红的门禁会逼着人学会无视红灯。
+
+**矩阵全绿之后把它加回 `lint.yml`**（`CROC_INTEROP_SKIP_NETWORK=1` 跳过需要外网的 I6）。
+在那之前，互通测试是**手工门禁**：改动协议层之后必须自己跑一遍。
