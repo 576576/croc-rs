@@ -1,0 +1,79 @@
+name: Nightly
+
+# 每夜任务：**不属于发布链路**，失败只告警不阻塞发布。
+#
+# 跑三类在 PR 阶段太慢或依赖外网的东西：
+#   1. 官方 relay 互通（I6）—— 需要外网，且会打真实服务器，不能每次推送都跑；
+#   2. 长跑 / 弱网 —— 耗时，且结果本身是概率性的；
+#   3. 性能基准 —— 需要与基线比较，噪音大。
+#
+# 背景见 docs/agent/plan/07-risks-and-testing.md §2.1（L6）与 §2.5。
+
+on:
+  schedule:
+    # UTC 18:00 = 北京时间 02:00，避开维护窗口。
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  interop-official:
+    name: 官方 relay 互通
+    runs-on: ubuntu-latest
+    # 外网抖动与上游故障都不该让人半夜被叫起来 —— 这一整个 workflow 只告警。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: 构建 Go 版 croc（基线 v11.5.4）
+        run: |
+          git clone --depth 1 --branch v11.5.4 https://github.com/schollz/croc /tmp/croc-go
+          cd /tmp/croc-go
+          go build -o /usr/local/bin/croc-go .
+          croc-go --version
+      - name: 构建 Rust 版
+        run: cargo build --release -p croc-cli
+      - name: I6 · Rust → Go 走官方 relay
+        env:
+          CROC_GO_BIN: /usr/local/bin/croc-go
+          CROC_RS_BIN: ${{ github.workspace }}/target/release/croc-rs
+          # 只跑 I6（需要外网的那条），其余矩阵由 lint.yml 覆盖。
+          CROC_INTEROP_ONLY: I6
+        run: bash tests/interop/run.sh
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-interop-logs
+          path: target/interop-logs
+          if-no-files-found: ignore
+
+  bench:
+    name: 性能基准
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 跑基准
+        # 指标定义见 07-risks-and-testing.md §2.5：纯加密吞吐 / 局域网吞吐 / 中继转发吞吐 /
+        # 清单生成 / 握手耗时。R9 的对策是「回退超过 15% 则阻断」，所以这里把结果存成
+        # 制品，人工比对上一次的数值 —— 自动比对需要一台稳定的基准机，暂不做。
+        run: cargo bench --workspace -- --output-format bencher | tee bench.txt
+      - name: 上传基准结果
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-${{ github.run_id }}
+          path: bench.txt
+          if-no-files-found: ignore

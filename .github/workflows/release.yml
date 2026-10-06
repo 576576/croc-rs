@@ -1,0 +1,354 @@
+name: Release
+
+# 发布 CI（**唯一入口**）：推送 main 出自动 alpha，手动 dispatch 出 alpha / beta / release。
+#
+# 链路：prep（算参数）→ lint（门禁，与 prep 并行）→ build（needs: prep+lint）→ publish。
+# 质量门禁挂在 build 的 needs 上，所以门禁不过就直接不进编译 —— 没有绕过路径。
+# 决策与背景见 docs/agent/plan/09-build-and-ci.md。
+
+on:
+  push:
+    branches: [main]
+    # 纯文档改动不出包（paths-ignore 只在改动**全部**命中时才跳过）；本文件自身不在忽略范围。
+    paths-ignore:
+      - 'docs/**'
+      # 两条都给：`**/` 能否匹配零级目录（根目录 README.md）在 glob 实现之间有歧义。
+      - '*.md'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 发布通道
+        type: choice
+        options: [alpha, beta, release]
+        default: alpha
+      # 平台开关：先 Windows/Linux/macOS，再 Android；同族内一律 x64 在前、arm64 在后。
+      # 默认只勾 Windows x64 + Linux x64（与自动 alpha 逐项一致，所以两条路径出的包一样）。
+      build_windows_x64:
+        description: Windows x64
+        type: boolean
+        default: true
+      build_windows_arm64:
+        description: Windows arm64
+        type: boolean
+        default: false
+      build_linux_x64:
+        description: Linux x64
+        type: boolean
+        default: true
+      build_linux_arm64:
+        description: Linux arm64
+        type: boolean
+        default: false
+      build_macos_x64:
+        description: macOS x64
+        type: boolean
+        default: false
+      build_macos_arm64:
+        description: macOS arm64
+        type: boolean
+        default: false
+      build_android_arm64:
+        description: Android arm64
+        type: boolean
+        default: false
+      build_android_x64:
+        description: Android x64
+        type: boolean
+        default: false
+      # 形态开关：两者正交，都关则没有可发布的包（prep 里先拦一道）。
+      pack_cli:
+        description: 产出 croc-rs（CLI）
+        type: boolean
+        default: true
+      pack_gui:
+        description: 产出 crocw-rs（Tauri GUI，含 Android APK）
+        type: boolean
+        default: true
+      release_notes:
+        description: 发行说明
+        type: string
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prep:
+    name: 准备构建参数
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      channel: ${{ steps.out.outputs.channel }}
+      channel_suffix: ${{ steps.out.outputs.channel_suffix }}
+      version_name: ${{ steps.out.outputs.version_name }}
+      count: ${{ steps.out.outputs.count }}
+      tag: ${{ steps.out.outputs.tag }}
+      prerelease: ${{ steps.out.outputs.prerelease }}
+      targets: ${{ steps.out.outputs.targets }}
+      android_targets: ${{ steps.out.outputs.android_targets }}
+      pack_cli: ${{ steps.out.outputs.pack_cli }}
+      pack_gui: ${{ steps.out.outputs.pack_gui }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # count 由提交数推导，必须拿到完整历史。
+          fetch-depth: 0
+      - name: 计算版本与矩阵
+        id: out
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EVENT="${{ github.event_name }}"
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            FLOW="manual"
+            CHANNEL="${{ github.event.inputs.channel }}"
+            PACK_CLI="${{ github.event.inputs.pack_cli }}"
+            PACK_GUI="${{ github.event.inputs.pack_gui }}"
+            ANDROID_ARM64="${{ github.event.inputs.build_android_arm64 }}"
+            ANDROID_X64="${{ github.event.inputs.build_android_x64 }}"
+
+            SEL=""
+            [ "${{ github.event.inputs.build_windows_x64 }}" = "true" ] && SEL="$SEL windows-x64"
+            [ "${{ github.event.inputs.build_windows_arm64 }}" = "true" ] && SEL="$SEL windows-arm64"
+            [ "${{ github.event.inputs.build_linux_x64 }}" = "true" ] && SEL="$SEL linux-x64"
+            [ "${{ github.event.inputs.build_linux_arm64 }}" = "true" ] && SEL="$SEL linux-arm64"
+            [ "${{ github.event.inputs.build_macos_x64 }}" = "true" ] && SEL="$SEL macos-x64"
+            [ "${{ github.event.inputs.build_macos_arm64 }}" = "true" ] && SEL="$SEL macos-arm64"
+
+            # input 缺失时渲染成空串（不是 "false"），统一兜成默认值。
+            PACK_CLI="${PACK_CLI:-true}"
+            PACK_GUI="${PACK_GUI:-true}"
+            ANDROID_ARM64="${ANDROID_ARM64:-false}"
+            ANDROID_X64="${ANDROID_X64:-false}"
+          else
+            # 推送 main：自动 alpha，固定 windows-x64 + linux-x64；
+            # 形态与手动 dispatch 的默认值保持一致 —— 所以两条路径出的包一样，不必分叉。
+            FLOW="auto"
+            CHANNEL="alpha"
+            PACK_CLI="true"
+            PACK_GUI="true"
+            ANDROID_ARM64="false"
+            ANDROID_X64="false"
+            SEL="windows-x64 linux-x64"
+          fi
+
+          # 通道段只有 beta 非空：beta 与 release 共用 1.y.z 版本名，不区分就会重名。
+          if [ "$CHANNEL" = "beta" ]; then CH_SUFFIX="-beta"; else CH_SUFFIX=""; fi
+
+          # 版本计数只能由提交历史推导，没有手填输入框。
+          COUNT="$(git rev-list --count HEAD)"
+
+          # alpha 用 r{count}（本身就是通道标记，不再加后缀段）；
+          # beta/release 用 1.{count/100}.{count%100}，末两位**必须补零**：
+          # tag 去非数字后要能当数字比大小，1.2.5 → 125 会小于 r1205 被判旧，1.2.05 → 10205 才对。
+          if [ "$CHANNEL" = "alpha" ]; then
+            VER_NAME="r${COUNT}"
+          else
+            VER_NAME="1.$((COUNT / 100)).$(printf '%02d' $((COUNT % 100)))"
+          fi
+
+          case "$CHANNEL" in
+            release) TAG="v${VER_NAME}";                       PRE="false" ;;
+            beta)    TAG="v${VER_NAME}-beta.${{ github.run_id }}"; PRE="false" ;;
+            alpha)   TAG="${VER_NAME}-alpha.${{ github.run_id }}"; PRE="true" ;;
+            *)       echo "::error::未知通道 $CHANNEL"; exit 1 ;;
+          esac
+
+          # 桌面/服务端矩阵。**每个 target 都是原生同架构编译**，不引入交叉工具链
+          # （核心依赖是纯 Rust 加密栈，原生编译最省事）。macos-13 已下线，x64 用 macos-15-intel。
+          INCLUDE="$(python3 - "$SEL" <<'PY'
+          import json, sys
+
+          mapping = {
+              "windows-x64":   ("windows-latest", "x86_64-pc-windows-msvc"),
+              "windows-arm64": ("windows-11-arm", "aarch64-pc-windows-msvc"),
+              "linux-x64":     ("ubuntu-latest",  "x86_64-unknown-linux-gnu"),
+              "linux-arm64":   ("ubuntu-24.04-arm", "aarch64-unknown-linux-gnu"),
+              "macos-x64":     ("macos-15-intel", "x86_64-apple-darwin"),
+              "macos-arm64":   ("macos-15",       "aarch64-apple-darwin"),
+          }
+          inc = [{"target": t, "os": mapping[t][0], "rust_target": mapping[t][1]}
+                 for t in sys.argv[1].split() if t in mapping]
+          print(json.dumps(inc))
+          PY
+          )"
+
+          # Android 矩阵：被勾上的架构各是一个 job。abi 是 Tauri CLI 的取值（不是 rust target）。
+          ANDROID_INCLUDE="$(python3 - "$ANDROID_ARM64" "$ANDROID_X64" <<'PY'
+          import json, sys
+
+          mapping = [
+              ("android-arm64", "aarch64", "aarch64-linux-android"),
+              ("android-x64",   "x86_64",  "x86_64-linux-android"),
+          ]
+          inc = [{"target": name, "abi": abi, "rust_target": rt}
+                 for flag, (name, abi, rt) in zip(sys.argv[1:], mapping) if flag == "true"]
+          print(json.dumps(inc))
+          PY
+          )"
+
+          # 兜底一：一个目标都没勾。让每个 target 白跑一遍编译才报错太浪费，这里先拦。
+          if [ -z "$SEL" ] && [ "$ANDROID_INCLUDE" = "[]" ]; then
+            echo "::error::未选择任何构建目标"
+            exit 1
+          fi
+          # 兜底二：两种形态都关，没有可发布的包。
+          if [ "$PACK_CLI" != "true" ] && [ "$PACK_GUI" != "true" ]; then
+            echo "::error::pack_cli 与 pack_gui 都是关的，没有可发布的包"
+            exit 1
+          fi
+          # Android 只由 GUI 产出，只勾 Android 却关了 pack_gui 等于白跑。
+          if [ "$ANDROID_INCLUDE" != "[]" ] && [ "$PACK_GUI" != "true" ]; then
+            echo "::error::勾了 Android 目标但 pack_gui 是关的（APK 由 GUI 产出）"
+            exit 1
+          fi
+
+          {
+            echo "channel=$CHANNEL"
+            echo "channel_suffix=$CH_SUFFIX"
+            echo "version_name=$VER_NAME"
+            echo "count=$COUNT"
+            echo "tag=$TAG"
+            echo "prerelease=$PRE"
+            echo "targets=$INCLUDE"
+            echo "android_targets=$ANDROID_INCLUDE"
+            echo "pack_cli=$PACK_CLI"
+            echo "pack_gui=$PACK_GUI"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "$FLOW 发布: $CHANNEL $VER_NAME (commits $COUNT) -> $TAG"
+          echo "   targets=[$SEL] android=[$ANDROID_ARM64 $ANDROID_X64] cli=$PACK_CLI gui=$PACK_GUI"
+
+  lint:
+    name: 质量门禁（复用 lint.yml）
+    # 与 prep 并行，不占发布链路的时间；门禁不过时由 build 的 needs 拦住编译。
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint.yml
+
+  build:
+    name: 构建（复用 build.yml）
+    needs: [prep, lint]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+    with:
+      channel: ${{ needs.prep.outputs.channel }}
+      channel_suffix: ${{ needs.prep.outputs.channel_suffix }}
+      version_name: ${{ needs.prep.outputs.version_name }}
+      count: ${{ needs.prep.outputs.count }}
+      targets: ${{ needs.prep.outputs.targets }}
+      android_targets: ${{ needs.prep.outputs.android_targets }}
+      pack_cli: ${{ needs.prep.outputs.pack_cli == 'true' }}
+      pack_gui: ${{ needs.prep.outputs.pack_gui == 'true' }}
+
+  publish:
+    name: 发布 ${{ needs.prep.outputs.channel }} (${{ needs.prep.outputs.version_name }})
+    needs: [prep, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: 收集产物
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+
+          # 只按正向白名单收两个产物前缀：写成裸 artifacts/* 时，空目录的 glob 不展开，
+          # 会把字面量 `artifacts/*` 当文件名传给 gh release create。
+          FILES=()
+          for f in artifacts/*; do
+            [ -f "$f" ] || continue
+            case "$(basename "$f")" in
+              croc-rs-*|crocw-rs-*) FILES+=("$f") ;;
+              *) echo "跳过非发布产物：$f" ;;
+            esac
+          done
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::没有收到任何发布产物"
+            exit 1
+          fi
+
+          # 校验和：先 cd 再算，写进 SHA256SUMS.txt 的路径就是裸文件名。
+          ( cd artifacts && sha256sum "${FILES[@]##*/}" > SHA256SUMS.txt )
+          ls -la artifacts
+
+          # 下载表按「平台 → 架构」分格，每格列出该架构的产物。
+          REL_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ needs.prep.outputs.tag }}"
+          cell() {   # <平台前缀> <显示名>：按 x64 → arm64 固定顺序收集
+            local p="$1" name="$2" arch row=""
+            for arch in x64 arm64; do
+              for f in "${FILES[@]}"; do
+                local n; n="$(basename "$f")"
+                case "$n" in
+                  *-${p}-${arch}.zip|*-${p}-${arch}.tar.gz|*-${p}-${arch}.apk)
+                    row="$row[<code>${n}</code>](${REL_URL}/${n})<br>" ;;
+                esac
+              done
+            done
+            [ -n "$row" ] || return 0
+            printf '| %s | %s |\n' "$name" "$row"
+          }
+          {
+            echo 'table<<TABLE_EOF'
+            echo '| OS | Download |'
+            echo '|---|---|'
+            cell windows Windows
+            cell linux   Linux
+            cell macos   macOS
+            cell android Android
+            echo 'TABLE_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "files<<FILES_EOF"
+            printf '%s\n' "${FILES[@]}"
+            echo "FILES_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prep.outputs.tag }}
+          VER: ${{ needs.prep.outputs.version_name }}
+          CH: ${{ needs.prep.outputs.channel }}
+          PRE: ${{ needs.prep.outputs.prerelease }}
+          TABLE: ${{ steps.collect.outputs.table }}
+          NOTES: ${{ github.event.inputs.release_notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # release 通道同版本重复发布：先删旧 tag/release
+          # （alpha/beta 的 tag 里带 run_id，天然唯一，不删）。
+          if [ "$CH" = "release" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes --cleanup-tag || true
+          fi
+
+          mapfile -t FILES < <(printf '%s\n' "${{ steps.collect.outputs.files }}" | grep -v '^$')
+          test "${#FILES[@]}" -gt 0 || { echo "::error::没有可上传的产物"; exit 1; }
+
+          # 说明顺序：手填说明 → 下载表 → 校验和；changelog 由 --generate-notes 追加在最后。
+          BODY="$TABLE"
+          BODY="$BODY"$'\n\n'"校验和见 \`SHA256SUMS.txt\`。"
+          # UI 是单行框，字面量 \n 在这里还原；粘贴进来的 \r 直接去掉。
+          NOTES="${NOTES//$'\r'/}"
+          if [ -n "$NOTES" ]; then
+            BODY="$(printf '%b' "$NOTES")"$'\n\n'"$BODY"
+          fi
+
+          gh release create "$TAG" "${FILES[@]}" artifacts/SHA256SUMS.txt \
+            --title "croc-rs $VER ($CH)" \
+            --notes "## croc-rs $VER · $CH
+          $BODY" \
+            --prerelease="$PRE" \
+            --generate-notes

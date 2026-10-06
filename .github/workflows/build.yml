@@ -1,0 +1,294 @@
+name: Build
+
+# 可复用构建工作流（仅 workflow_call）：只负责把两个产物做出来。
+#
+# **不推导任何参数** —— 版本号、通道后缀、矩阵 include 全在 release.yml 的 prep 里算一次。
+# 产物命名规则与背景见 docs/agent/plan/09-build-and-ci.md §3 / §5.2。
+#
+# 两个产物（正交开关 pack_cli / pack_gui）：
+#   croc-rs    ← crates/croc-cli   桌面 + 服务器全部平台；Android 不出
+#   crocw-rs   ← crates/croc-gui   Tauri 2（w = window），含 Android APK
+#
+# crate 名不带 -rs 后缀，-rs 只出现在二进制名上。
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: alpha / beta / release —— 写入编译期 CROC_BUILD_TYPE
+        required: true
+        type: string
+      channel_suffix:
+        description: 产物名里的通道段（仅 beta 为 -beta，其余通道为空串）
+        required: true
+        type: string
+      version_name:
+        description: 版本名（alpha 为 r{count}，beta/release 为 1.y.z）
+        required: true
+        type: string
+      count:
+        description: 提交数（git rev-list --count HEAD）
+        required: true
+        type: string
+      targets:
+        description: 桌面构建矩阵 include 数组（JSON 字符串，不含 Android；可为空数组）
+        required: true
+        type: string
+      android_targets:
+        description: Android 构建矩阵 include 数组（JSON 字符串，元素含 target/abi/rust_target；可为空数组）
+        required: true
+        type: string
+      pack_cli:
+        description: 是否产出 croc-rs（CLI）；与 pack_gui 正交，两者都关就没有可发布的包
+        required: false
+        type: boolean
+        default: true
+      pack_gui:
+        description: 是否产出 crocw-rs（Tauri GUI，含 Android APK）
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  cli:
+    name: CLI ${{ matrix.target }}
+    # 空矩阵会让 Actions 直接报错，所以空数组时显式跳过。
+    if: inputs.pack_cli && inputs.targets != '[]'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(inputs.targets) }}
+    env:
+      CARGO_TERM_COLOR: always
+      CROC_BUILD_TYPE: ${{ inputs.channel }}
+      CROC_VERSION_NAME: ${{ inputs.version_name }}
+      CROC_VERSION_COUNT: ${{ inputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+      - name: 构建
+        run: cargo build --release -p croc-cli --target ${{ matrix.rust_target }}
+      - name: 打包
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VER="${{ inputs.version_name }}"
+          TGT="${{ matrix.target }}"
+          BASE="croc-rs-${VER}${{ inputs.channel_suffix }}-${TGT}"
+
+          # 判平台一律用 runner.os，别拿 matrix.os 的 runner 标签比字面量
+          # （windows-latest 之外还有 windows-11-arm）。
+          BIN="target/${{ matrix.rust_target }}/release/croc-rs"
+          IS_WIN="false"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN="${BIN}.exe"
+            IS_WIN="true"
+          fi
+          test -f "$BIN" || { echo "::error::找不到 $BIN"; exit 1; }
+
+          # 暂存目录 → 压缩包。单文件也走目录，这样 LICENSE 与 README 能一起进去
+          # （GPL-3 要求随二进制分发许可证全文）。
+          STAGE="dist/${BASE}"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/"
+          cp LICENSE README.md "$STAGE/" 2>/dev/null || true
+
+          if [ "$IS_WIN" = "true" ]; then
+            ARCHIVE="dist/${BASE}.zip"
+            # Git for Windows 的 bash 没有 zip / unzip，走 python3 的 zipfile。
+            python3 -c "import sys,zipfile,pathlib; \
+          d=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(sys.argv[2],'w',zipfile.ZIP_DEFLATED); \
+          [z.write(p, p.relative_to(d.parent)) for p in sorted(d.rglob('*')) if p.is_file()]; z.close()" \
+              "$STAGE" "$ARCHIVE"
+          else
+            ARCHIVE="dist/${BASE}.tar.gz"
+            # tar -C dist：包内路径是相对名（croc-rs-<VER>-<TGT>/...），不带 dist/ 前缀。
+            tar -C dist -czf "$ARCHIVE" "${BASE}"
+          fi
+          rm -rf "$STAGE"
+
+          test -f "$ARCHIVE" || { echo "::error::打包失败：$ARCHIVE 不存在"; exit 1; }
+          echo "packed: $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"
+          {
+            echo "artifacts=$ARCHIVE"
+            echo "artifact_name=$BASE"
+          } >> "$GITHUB_OUTPUT"
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.pack.outputs.artifact_name }}
+          path: ${{ steps.pack.outputs.artifacts }}
+
+  gui:
+    name: GUI ${{ matrix.target }}
+    if: inputs.pack_gui && inputs.targets != '[]'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(inputs.targets) }}
+    env:
+      CARGO_TERM_COLOR: always
+      CROC_BUILD_TYPE: ${{ inputs.channel }}
+      CROC_VERSION_NAME: ${{ inputs.version_name }}
+      CROC_VERSION_COUNT: ${{ inputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gui-${{ matrix.target }}
+      - name: 安装 Linux 系统依赖
+        # WebKitGTK 4.1 是 Tauri 2 的运行时依赖（4.0 只够 Tauri 1）。
+        # libappindicator / librsvg 供托盘与图标，patchelf 供 AppImage。
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: 安装 Tauri CLI
+        # 锁 major：Tauri 2 的 CLI 参数与配置文件结构在 2.x 内稳定，跨 major 会变。
+        run: cargo install tauri-cli --version '^2' --locked
+      - name: 构建
+        shell: bash
+        run: cargo tauri build --target ${{ matrix.rust_target }} --no-bundle
+      - name: 打包
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VER="${{ inputs.version_name }}"
+          TGT="${{ matrix.target }}"
+          BASE="crocw-rs-${VER}${{ inputs.channel_suffix }}-${TGT}"
+
+          BIN="target/${{ matrix.rust_target }}/release/crocw-rs"
+          IS_WIN="false"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN="${BIN}.exe"
+            IS_WIN="true"
+          fi
+          test -f "$BIN" || { echo "::error::找不到 $BIN"; exit 1; }
+
+          STAGE="dist/${BASE}"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/"
+          cp LICENSE README.md "$STAGE/" 2>/dev/null || true
+
+          if [ "$IS_WIN" = "true" ]; then
+            ARCHIVE="dist/${BASE}.zip"
+            python3 -c "import sys,zipfile,pathlib; \
+          d=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(sys.argv[2],'w',zipfile.ZIP_DEFLATED); \
+          [z.write(p, p.relative_to(d.parent)) for p in sorted(d.rglob('*')) if p.is_file()]; z.close()" \
+              "$STAGE" "$ARCHIVE"
+          else
+            ARCHIVE="dist/${BASE}.tar.gz"
+            tar -C dist -czf "$ARCHIVE" "${BASE}"
+          fi
+          rm -rf "$STAGE"
+
+          test -f "$ARCHIVE" || { echo "::error::打包失败：$ARCHIVE 不存在"; exit 1; }
+          echo "packed: $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"
+          {
+            echo "artifacts=$ARCHIVE"
+            echo "artifact_name=$BASE"
+          } >> "$GITHUB_OUTPUT"
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.pack.outputs.artifact_name }}
+          path: ${{ steps.pack.outputs.artifacts }}
+
+  android:
+    name: Android ${{ matrix.target }}
+    # 与桌面矩阵同一套写法：include 由调用方按勾选拼好，空数组时整个 job 跳过。
+    if: inputs.pack_gui && inputs.android_targets != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(inputs.android_targets) }}
+    env:
+      CARGO_TERM_COLOR: always
+      CROC_BUILD_TYPE: ${{ inputs.channel }}
+      CROC_VERSION_NAME: ${{ inputs.version_name }}
+      CROC_VERSION_COUNT: ${{ inputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ matrix.target }}
+      - name: 安装 JDK
+        # Tauri 2 的 Android 模板用 AGP 8.x，需要 JDK 17+。
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # NDK 必须显式装：预装列表里没有，而 Tauri 的 gradle 模板会引用它。
+          packages: 'platforms;android-35' 'build-tools;35.0.0' 'ndk;26.1.10909125'
+      - name: 安装 NDK 环境变量
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          {
+            echo "ANDROID_HOME=$SDK"
+            echo "ANDROID_SDK_ROOT=$SDK"
+            echo "NDK_HOME=$SDK/ndk/26.1.10909125"
+          } >> "$GITHUB_ENV"
+      - name: 安装 Tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+      - name: 初始化 Android 工程
+        # gen/android 是生成物（已 gitignore），每次构建现生成，避免模板漂移。
+        working-directory: crates/croc-gui
+        run: cargo tauri android init
+      - name: 构建 APK
+        working-directory: crates/croc-gui
+        run: cargo tauri android build --apk --target ${{ matrix.abi }}
+      - name: 打包产物
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VER="${{ inputs.version_name }}"
+          TGT="${{ matrix.target }}"
+          NAME="crocw-rs-${VER}${{ inputs.channel_suffix }}-${TGT}"
+
+          # APK 的落盘路径随 Tauri 版本变化（universal / 分 ABI），用 find 兜住。
+          APK="$(find crates/croc-gui/gen/android/app/build/outputs/apk -name '*.apk' -print -quit 2>/dev/null || true)"
+          test -n "$APK" || {
+            echo "::error::找不到 APK，输出目录内容："
+            find crates/croc-gui/gen/android/app/build/outputs 2>/dev/null | head -50
+            exit 1
+          }
+          mkdir -p dist
+          cp "$APK" "dist/${NAME}.apk"
+          echo "packed: dist/${NAME}.apk ($(du -h "dist/${NAME}.apk" | cut -f1))"
+          {
+            echo "artifacts=dist/${NAME}.apk"
+            echo "artifact_name=$NAME"
+          } >> "$GITHUB_OUTPUT"
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.pack.outputs.artifact_name }}
+          path: ${{ steps.pack.outputs.artifacts }}
