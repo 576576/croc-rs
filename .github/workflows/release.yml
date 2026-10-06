@@ -253,6 +253,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          # `gh release create --generate-notes` 要读提交历史来生成 changelog。
+          # 少了这一步它会报 "failed to run git: not a git repository"——
+          # 而 artifacts 是纯下载来的，工作目录里本来什么都没有。
+          fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
           path: artifacts

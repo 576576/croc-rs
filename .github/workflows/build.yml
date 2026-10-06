@@ -158,12 +158,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - name: 安装 Tauri CLI
-        # 锁 major：Tauri 2 的 CLI 参数与配置文件结构在 2.x 内稳定，跨 major 会变。
-        run: cargo install tauri-cli --version '^2' --locked
       - name: 构建
         shell: bash
-        run: cargo tauri build --target ${{ matrix.rust_target }} --no-bundle
+        # **故意不用 `cargo tauri build`。** 那个命令要从源码编一遍 tauri-cli
+        # （`cargo install` 会拖进来一整套 clap + cargo-mobile2，实测每个 target 多花
+        # 12–15 分钟），而它替我们做的事只有两件：
+        #
+        #   1. 跑前端构建 —— 我们没有：`ui/` 是纯静态页，没有 bundler；
+        #   2. 打包安装器 —— 我们传 `--no-bundle`，本来就只要裸二进制。
+        #
+        # 配置校验与前端资源内嵌由 `tauri-build`（`build.rs`）在编译期做完了，所以
+        # 直接 `cargo build` 的产物与 `cargo tauri build --no-bundle` 一致。
+        #
+        # Android 那边不一样：`tauri android init/build` 要生成 Gradle 工程，绕不开
+        # CLI——但那个 job 默认关闭，代价只在真出 APK 时才付。
+        run: cargo build --release -p croc-gui --target ${{ matrix.rust_target }}
       - name: 打包
         id: pack
         shell: bash
@@ -257,6 +266,8 @@ jobs:
             echo "NDK_HOME=$SDK/ndk/26.1.10909125"
           } >> "$GITHUB_ENV"
       - name: 安装 Tauri CLI
+        # Android 这条路径绕不开 CLI（要生成 Gradle 工程）。`cargo install` 会从源码
+        # 编一遍，约 12–15 分钟——所以 Android 默认关闭，只在真出 APK 时付这个代价。
         run: cargo install tauri-cli --version '^2' --locked
       - name: 初始化 Android 工程
         # gen/android 是生成物（已 gitignore），每次构建现生成，避免模板漂移。
