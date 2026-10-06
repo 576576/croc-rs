@@ -1,0 +1,24 @@
+[package]
+name = "croc-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The effect interpreter for croc's pure protocol core: sockets, files, timers and the data plane."
+
+[lints]
+workspace = true
+
+[dependencies]
+croc-protocol.workspace = true
+croc-core.workspace = true
+croc-net.workspace = true
+croc-pake.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+# `ModTime` 内部是 `OffsetDateTime`；从 `SystemTime` 转过来要用它。
+time.workspace = true
