@@ -1,0 +1,27 @@
+[package]
+name = "croc-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "croc's sans-io wire layer: comm framing, message codec, compression and AEAD."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+time.workspace = true
+flate2.workspace = true
+aes-gcm.workspace = true
+pbkdf2.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+croc-pake.workspace = true
+
+[dev-dependencies]
+hex.workspace = true

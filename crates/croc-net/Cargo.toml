@@ -1,0 +1,18 @@
+[package]
+name = "croc-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Async IO primitives shared by croc's side-effecting crates: framed comm connections and the OS random source."
+
+[lints]
+workspace = true
+
+[dependencies]
+croc-protocol.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
