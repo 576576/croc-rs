@@ -1,0 +1,27 @@
+[package]
+name = "croc-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "croc's pure domain layer: code phrases, chunk planning, overwrite policy, the peer session state machine and redaction."
+
+[lints]
+workspace = true
+
+[dependencies]
+croc-protocol.workspace = true
+# 对端会话状态机要跑 PAKE（接收方是发起方 A、发送方是响应方 B），
+# 以及 pakekey 的密钥编排。两者都是纯 crate，不破坏本层的 sans-io 约束。
+croc-pake.workspace = true
+croc-pakekey.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+# 只用来在测试里独立复算一遍 `relay_index` 的取模，生产代码走逐字节 Horner。
+num-bigint.workspace = true
+num-traits.workspace = true
