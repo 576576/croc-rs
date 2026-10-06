@@ -39,6 +39,14 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: 安装 Linux 系统依赖
+        # `croc-gui` 依赖 tauri，而 tauri 在 Linux 上要链接 GTK / WebKitGTK / glib。
+        # 不装的话 `cargo clippy --workspace` 会在 `glib-sys` 的 build script 上直接失败——
+        # 报错信息只有一句 "failed to run custom build command"，看不出缺的是系统库。
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libglib2.0-dev
       - name: 静态检查
         # lint 级别由根 Cargo.toml 的 [workspace.lints] 统一定义（含 clippy::todo，
         # 所以任何 `todo!()` 占位都会在这里变成硬错误）。测试代码在 crate 根部豁免。
@@ -52,6 +60,14 @@ jobs:
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: 安装 Linux 系统依赖
+        # `croc-gui` 依赖 tauri，而 tauri 在 Linux 上要链接 GTK / WebKitGTK / glib。
+        # 不装的话 `cargo clippy --workspace` 会在 `glib-sys` 的 build script 上直接失败——
+        # 报错信息只有一句 "failed to run custom build command"，看不出缺的是系统库。
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libglib2.0-dev
       - name: 测试
         # --no-fail-fast：默认在第一个失败的测试二进制处就收工，一轮要拿到全部失败。
         run: cargo test --workspace --no-fail-fast
@@ -84,6 +100,14 @@ jobs:
           # 与根 Cargo.toml 的 rust-version 一致。浮动到最新 stable 会让 MSRV 失去意义。
           toolchain: '1.98'
       - uses: Swatinem/rust-cache@v2
+      - name: 安装 Linux 系统依赖
+        # `croc-gui` 依赖 tauri，而 tauri 在 Linux 上要链接 GTK / WebKitGTK / glib。
+        # 不装的话 `cargo clippy --workspace` 会在 `glib-sys` 的 build script 上直接失败——
+        # 报错信息只有一句 "failed to run custom build command"，看不出缺的是系统库。
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libglib2.0-dev
       - name: 检查最低支持版本
         # --all-targets：测试与示例也要能编过，否则 MSRV 只是纸面数字。
         run: cargo check --workspace --all-targets
