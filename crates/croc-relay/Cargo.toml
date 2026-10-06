@@ -1,0 +1,20 @@
+[package]
+name = "croc-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A croc-compatible relay server: rooms, admission control and bidirectional piping."
+
+[lints]
+workspace = true
+
+[dependencies]
+croc-protocol.workspace = true
+croc-net.workspace = true
+tokio.workspace = true
+tokio-util = "0.7"
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
