@@ -1,0 +1,32 @@
+[package]
+name = "croc-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The croc-rs command line client: send, receive and self-hosted relay."
+
+[[bin]]
+name = "croc-rs"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+croc-protocol.workspace = true
+croc-core.workspace = true
+croc-engine.workspace = true
+croc-pake.workspace = true
+croc-relay.workspace = true
+croc-net.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
