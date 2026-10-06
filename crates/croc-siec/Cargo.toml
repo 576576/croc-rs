@@ -1,0 +1,21 @@
+[package]
+name = "croc-siec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Short-Weierstrass curve arithmetic for croc: SIEC255, NIST P-256/384/521, Ed25519."
+
+[lints]
+workspace = true
+
+[dependencies]
+num-bigint.workspace = true
+num-traits.workspace = true
+curve25519-dalek.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+hex.workspace = true

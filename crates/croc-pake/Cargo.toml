@@ -1,0 +1,23 @@
+[package]
+name = "croc-pake"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Wire-compatible port of schollz/pake v3 (SPAKE2) as used by croc."
+
+[lints]
+workspace = true
+
+[dependencies]
+croc-siec.workspace = true
+num-bigint.workspace = true
+num-traits.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+hex.workspace = true
