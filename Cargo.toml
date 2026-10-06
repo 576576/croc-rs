@@ -1,0 +1,145 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/croc-siec",
+    "crates/croc-pake",
+    "crates/croc-pakekey",
+    "crates/croc-protocol",
+    "crates/croc-net",
+    "crates/croc-core",
+    "crates/croc-relay",
+    "crates/croc-engine",
+    "crates/croc-cli",
+    "crates/croc-gui",
+    "xtask",
+]
+
+# 全 workspace 统一的 lint 配置，对齐 Suwayomi-next。各 crate 用
+# `[lints] workspace = true` 继承（Rust 1.74+）。CI 跑 `-D warnings`，所以这里
+# 每一条 `warn` 都是硬门禁。
+#
+# 注意 `todo = "warn"`：**禁止用 `todo!()` 占位**。未实现的路径要返回
+# `Err(...Unavailable)` 并走降级逻辑，见 docs/agent/plan/03-architecture.md §8.3。
+[workspace.lints.rust]
+unsafe_code = "warn"
+rust_2018_idioms = "warn"
+
+[workspace.lints.clippy]
+# panic 三件套：生产代码一律 warn，测试里的例外写在各 crate 根部。
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+unreachable = "warn"
+todo = "warn"
+# 异步正确性：持锁跨 await 是死锁温床。
+await_holding_lock = "warn"
+
+# ---- 控制流函数式化（全部按"归零"要求写）----
+# 索引循环与下标访问：越界 panic 的根源，改用 `.get()` / 迭代器 / 切片。
+indexing_slicing = "warn"
+# 本可用组合子却写了 match / if-let。
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+option_if_let_else = "warn"
+# 其余控制流形状。
+needless_continue = "warn"
+useless_let_if_seq = "warn"
+match_same_arms = "warn"
+single_match_else = "warn"
+branches_sharing_code = "warn"
+if_same_then_else = "warn"
+# 累积器与容器用法。
+iter_with_drain = "warn"
+needless_collect = "warn"
+single_option_map = "warn"
+unnecessary_wraps = "warn"
+# 表达式化细节。
+semicolon_if_nothing_returned = "warn"
+items_after_statements = "warn"
+ignored_unit_patterns = "warn"
+# 命名与签名整洁度。
+unused_self = "warn"
+redundant_closure_for_method_calls = "warn"
+elidable_lifetime_names = "warn"
+use_self = "warn"
+similar_names = "warn"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "GPL-3.0-only"
+repository = "https://github.com/schollz/croc"
+authors = ["croc-rs contributors"]
+description = "A Rust rewrite of croc: send files anywhere, simply and securely."
+
+[workspace.dependencies]
+# ---- 纯 Rust 大整数与曲线算术 ----
+# croc 的线路字节直接来自 Go `math/big` 的语义（欧几里得取模、十进制 JSON 数字），
+# 所以这里用任意精度整数而不是定长 `crypto-bigint`。
+num-bigint = "0.4"
+num-traits = "0.2"
+# Ed25519 适配器（pake v3 的第五条曲线）。纯 Rust，无 C 依赖。
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
+
+# ---- 纯 Rust 加密栈（RustCrypto）----
+# 禁止 OpenSSL / ring：核心 crate 要能交叉编译到 Android。
+sha2 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+# 中继握手的密钥派生：Go 用 `pbkdf2.Key(strongKey, salt, 100, 32, sha256.New)`。
+# 迭代次数只有 100，这是 croc 的既有设计（弱口令只是用来给中继鉴权，不是给用户口令）。
+pbkdf2 = "0.12"
+subtle = "2"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+aes-gcm = "0.10"
+# DEFLATE。Go 侧用 `flate.HuffmanOnly`，DEFLATE 是自描述格式，解码端与压缩级别无关，
+# 所以这里用纯 Rust 的 miniz_oxide 后端即可（禁掉 C 后端以保住 Android 交叉编译）。
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+# ---- 序列化 ----
+# Go 的 `[]byte` 在 JSON 里是标准 base64（带 padding），所以字节字段要自己接管编解码，
+# 见 croc-protocol 的 `base64_bytes`。
+serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
+# Go 的 `time.Time` 在 JSON 里是 RFC3339Nano（`"2026-10-06T20:31:00.123456789+08:00"`）。
+# 自己写一个 civil-date 转换是能写，但没必要——`time` 是纯 Rust、no_std 可用、
+# Android 上没问题，且它的 `serde-well-known` 正好提供 RFC3339 编解码。
+time = { version = "0.3", features = ["serde-well-known"] }
+
+# ---- 基础工具 ----
+thiserror = "2"
+tracing = "0.1"
+
+# ---- 异步与 IO ----
+# 只有 `croc-net` / `croc-relay` / `croc-core` / `croc-engine` 这些"副作用边缘"能碰
+# tokio；纯 crate（croc-protocol / croc-pake / croc-siec）被 `cargo xtask purity` 挡住。
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros", "signal", "fs"] }
+# 取消令牌。所有 `select!` 都必须带 `cancelled()` 分支，否则 Ctrl-C 会留下半截文件。
+tokio-util = { version = "0.7", features = ["rt"] }
+bytes = "1"
+# OS 随机源。选 `getrandom` 而不是 `rand`：Android 上同样可用，且不带任何额外抽象。
+getrandom = "0.3"
+
+# ---- 仅测试用 ----
+# 黄金向量是 JSON，十六进制字段用 `hex` 解。两者都只进 `[dev-dependencies]`，
+# 不会出现在发布产物里。
+serde_json = "1"
+hex = "0.4"
+
+# ---- workspace 内部 crate ----
+croc-siec = { path = "crates/croc-siec" }
+croc-pake = { path = "crates/croc-pake" }
+croc-pakekey = { path = "crates/croc-pakekey" }
+croc-protocol = { path = "crates/croc-protocol" }
+croc-net = { path = "crates/croc-net" }
+croc-core = { path = "crates/croc-core" }
+croc-relay = { path = "crates/croc-relay" }
+croc-engine = { path = "crates/croc-engine" }
+croc-cli = { path = "crates/croc-cli" }
+croc-gui = { path = "crates/croc-gui" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
