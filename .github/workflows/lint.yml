@@ -1,6 +1,13 @@
 name: Lint
 
-# 质量门禁：格式 / 静态检查 / 测试 / 架构门禁 / MSRV / Miri / Go 互通。
+# 质量门禁：格式 / 静态检查 / 测试 / 架构门禁 / MSRV。
+#
+# **Miri 与 Go 互通不在这里**，它们在 nightly.yml。原因不是"太慢"，而是它们现在是
+# **只告警**的状态：`continue-on-error` 的 job 依然会拖住整个可复用工作流，而
+# `build` 的 `needs: [prep, lint]` 等的是**整个 lint 工作流**——于是两个"进度看板"
+# 把发布链路整条掐断了。看板就该待在旁边，不该串在链路上。
+#
+# 等它们稳定绿之后，再挪回这里并摘掉 `continue-on-error`。
 #
 # **不跟 push / PR**：由 release.yml 在调用 build 之前作为一个 job 调起（`workflow_call`），
 # 所以发布链路上没有任何一道能绕过它；单独跑它用 workflow_dispatch。
@@ -111,68 +118,3 @@ jobs:
       - name: 检查最低支持版本
         # --all-targets：测试与示例也要能编过，否则 MSRV 只是纸面数字。
         run: cargo check --workspace --all-targets
-
-  miri:
-    name: Miri
-    runs-on: ubuntu-latest
-    # ⚠ 暂时只告警：Miri 需要 nightly 组件 + 一次完整下载，且它的严格 provenance 检查
-    #   会把 `croc-siec` 里"整数 → 指针"的推断全过一遍——这一步目前还没在 CI 上跑通过。
-    #   等它稳定绿之后再摘掉这一行（摘掉前它不能算门禁）。
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
-      # ★ 这是整个仓库唯一使用 nightly 的地方（Miri 只在 nightly 上发布）。
-      #   产物构建链路 build.yml 里不允许出现 nightly —— 见 09-build-and-ci.md §5.3。
-      - name: 安装 nightly + Miri
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-      - uses: Swatinem/rust-cache@v2
-      - name: 运行 Miri
-        # 只跑含 unsafe 的两个 crate：croc-siec 的曲线算术与 croc-pake 的密钥协商。
-        # 严格 provenance 会抓出整数→指针的越界推断（大整数实现最容易踩）。
-        env:
-          MIRIFLAGS: -Zmiri-strict-provenance
-        run: cargo +nightly miri test -p croc-siec -p croc-pake
-
-  interop:
-    name: Go 互通
-    runs-on: ubuntu-latest
-    # ⚠ 暂时只告警：矩阵里的 I12（--local）、I16–I18（--transport derp）、I9（断点续传）
-    #   依赖尚未实现或尚未实测的能力，跑起来必然红。**先让红灯可见**（它如实反映进度），
-    #   但不该因此把发布链路整条掐断。矩阵全绿后摘掉这一行。
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: 安装 Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-      - name: 构建 Go 版 croc（基线 v11.5.4）
-        # 用源码构建而不是 `go install ...@v11.5.4`：基线版本必须钉死，
-        # 且 go install 会走 module proxy，网络抖动时失败信息很难懂。
-        run: |
-          git clone --depth 1 --branch v11.5.4 https://github.com/schollz/croc /tmp/croc-go
-          cd /tmp/croc-go
-          go build -o /usr/local/bin/croc-go .
-          croc-go --version
-      - name: 构建 Rust 版
-        run: cargo build --release -p croc-cli
-      - name: 跑互通矩阵（I1–I18）
-        env:
-          CROC_GO_BIN: /usr/local/bin/croc-go
-          CROC_RS_BIN: ${{ github.workspace }}/target/release/croc-rs
-          # I6 走官方 relay，需要外网；CI 上跳过，交给 nightly.yml。
-          CROC_INTEROP_SKIP_NETWORK: '1'
-        run: bash tests/interop/run.sh
-      - name: 上传失败日志
-        # 日志里可能带房间号与口令，run.sh 负责先过一遍脱敏再落盘。
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: interop-logs
-          path: target/interop-logs
-          if-no-files-found: ignore

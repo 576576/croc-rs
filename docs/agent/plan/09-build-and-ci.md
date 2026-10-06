@@ -12,7 +12,8 @@
 |------|------|------|
 | **`release.yml`** | `push` main + `workflow_dispatch` | **唯一入口**。算版本号、拼矩阵、调 lint、调 build、收产物发布 |
 | **`build.yml`** | 仅 `workflow_call` | **可复用构建**。只编译打包 + `upload-artifact`，不含任何版本推导 |
-| **`lint.yml`** | `workflow_call` + `workflow_dispatch` | **质量门禁**。fmt / clippy / test / 架构门禁 / MSRV / Miri / 互通 |
+| **`lint.yml`** | `workflow_call` + `workflow_dispatch` | **质量门禁**。fmt / clippy / test / 架构门禁 / MSRV |
+| **`nightly.yml`** | `schedule` + `workflow_dispatch` | Miri / Go 互通全矩阵 / 官方 relay / 基准。**不属于发布链路** |
 | **`clear.yml`** | 仅 `workflow_dispatch` | 预发布清理：每个窗口内只留最新 1 个 alpha Release |
 
 ### 1.1 三条铁律（沿用 Suwayomi-next）
@@ -233,14 +234,25 @@ jobs:
   arch:     # cargo xtask purity   —— 纯 crate 不得引入 IO
             # cargo xtask deps     —— 核心 crate 不得引入 openssl / ring
   msrv:     # dtolnay/rust-toolchain@1.98 + cargo check --workspace
-  miri:     # ★ 唯一使用 nightly 的地方
-            #   cargo +nightly miri test -p croc-siec -p croc-pake
-  interop:  # 起 Rust relay，跑 tests/interop/run.sh（I1–I18）
-            #   需要 actions/setup-go + croc v11.5.4
 ```
 
+**Miri 与互通在 `nightly.yml`，不在 `lint.yml`。** 理由不是"太慢"，而是它们目前是
+**只告警**（`continue-on-error`）的状态：
+
+> `continue-on-error` 的 job **依然会拖住整个可复用工作流**，而 `build` 的
+> `needs: [prep, lint]` 等的是**整个 lint 工作流**。于是两个"进度看板"把发布链路
+> 整条掐断了——第一次推 CI 就是这样：fmt / clippy / test / arch / MSRV 全绿，
+> 但 Miri 与互通还在跑，`build` 一直等不到。
+>
+> 看板就该待在旁边，不该串在链路上。等它们稳定绿之后，再挪回 `lint.yml` 并摘掉
+> `continue-on-error`——**在那之前它们不算门禁**。
+
 - `--no-fail-fast`：默认在第一个失败的测试二进制处就收工，一轮要拿到全部失败。
-- **nightly 只出现在 `miri` job**，产物构建链路（`build.yml`）里不允许出现 nightly。
+- **nightly 只出现在 `nightly.yml` 的 `miri` job**，产物构建链路（`build.yml`）里
+  不允许出现 nightly。
+- 跑 `--workspace` 的 job（clippy / test / msrv）都要装 GTK / WebKitGTK：`croc-gui`
+  依赖 tauri，而 tauri 在 Linux 上要链接 glib / GTK / WebKitGTK。缺了会停在
+  `glib-sys` 的 build script 上，报错只有一句 "failed to run custom build command"。
 
 ### 5.4 `clear.yml`（预发布清理）
 

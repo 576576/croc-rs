@@ -99,7 +99,8 @@
 |----------|------|------|
 | `release.yml` | `push` main（paths-ignore 文档）+ `workflow_dispatch` | **唯一入口**：prep → lint → build → publish |
 | `build.yml` | 仅 `workflow_call` | 全矩阵编译，产出 `croc-rs` 与 `crocw-rs`；不推导任何参数 |
-| `lint.yml` | `workflow_call` + `workflow_dispatch`（**不跟 push/PR**） | fmt、clippy、test、`xtask purity`/`deps`、MSRV、**Miri（唯一 nightly）**、interop |
+| `lint.yml` | `workflow_call` + `workflow_dispatch`（**不跟 push/PR**） | fmt、clippy、test、`xtask purity`/`deps`、MSRV |
+| `nightly.yml` | `schedule`（UTC 18:00）+ `workflow_dispatch` | **Miri（唯一 nightly）**、Go 互通全矩阵、官方 relay、基准 |
 | `clear.yml` | 仅 `workflow_dispatch` | 预发布清理：每窗口只留最新 1 个 alpha |
 
 > **质量门禁不跟 PR**：挂在 `build` 的 `needs` 上，门禁不过就不进编译——所有入口都从 `release.yml` 进，没有绕过路径。

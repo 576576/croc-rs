@@ -2,10 +2,15 @@ name: Nightly
 
 # 每夜任务：**不属于发布链路**，失败只告警不阻塞发布。
 #
-# 跑三类在 PR 阶段太慢或依赖外网的东西：
-#   1. 官方 relay 互通（I6）—— 需要外网，且会打真实服务器，不能每次推送都跑；
-#   2. 长跑 / 弱网 —— 耗时，且结果本身是概率性的；
-#   3. 性能基准 —— 需要与基线比较，噪音大。
+# 跑四类"要么慢、要么依赖外网、要么还没稳定"的东西：
+#   1. Miri —— 严格 provenance 下跑 SPAKE2 的标量乘，慢到不适合每次推送都跑；
+#   2. Go 互通全矩阵 —— 要克隆并编译 Go 版 croc，且矩阵里的 I12 / I16–I18 依赖
+#      尚未实现的能力，跑起来必然红；**先让红灯可见**，但不该掐断发布；
+#   3. 官方 relay 互通（I6）—— 需要外网，且会打真实服务器；
+#   4. 性能基准 —— 需要与基线比较，噪音大。
+#
+# 它们待在**独立工作流**里而不是 lint.yml：`continue-on-error` 的 job 依然会拖住
+# 整个可复用工作流，而 `build` 的 `needs` 等的是整个 lint——看板不该串在链路上。
 #
 # 背景见 docs/agent/plan/07-risks-and-testing.md §2.1（L6）与 §2.5。
 
@@ -19,6 +24,61 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    # Miri 只在 nightly 上发布——**这是整个仓库唯一使用 nightly 的地方**。
+    # 产物构建链路（build.yml）里不允许出现 nightly。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装 nightly + Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - name: 运行 Miri
+        # 只跑含 unsafe 的两个 crate。严格 provenance 会抓出"整数 → 指针"的越界推断，
+        # 而大整数实现最容易踩这个。
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+        run: cargo +nightly miri test -p croc-siec -p croc-pake
+
+  interop:
+    name: Go 互通（全矩阵）
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: 构建 Go 版 croc（基线 v11.5.4）
+        run: |
+          git clone --depth 1 --branch v11.5.4 https://github.com/schollz/croc /tmp/croc-go
+          cd /tmp/croc-go
+          go build -o /usr/local/bin/croc-go .
+          croc-go --version
+      - name: 构建 Rust 版
+        run: cargo build --release -p croc-cli
+      - name: 跑互通矩阵（I1–I18）
+        env:
+          CROC_GO_BIN: /usr/local/bin/croc-go
+          CROC_RS_BIN: ${{ github.workspace }}/target/release/croc-rs
+          # nightly 有外网，I6（官方 relay）也一起跑。
+        run: bash tests/interop/run.sh
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-interop-logs
+          path: target/interop-logs
+          if-no-files-found: ignore
+
   interop-official:
     name: 官方 relay 互通
     runs-on: ubuntu-latest
