@@ -115,8 +115,7 @@ Windows runner 上 `tar` 与 `zip` 的行为差异最容易出坑，各用各的
 | `test` | `cargo test --workspace --no-fail-fast` | 同 |
 | `arch` | `cargo xtask purity` + `cargo xtask deps` | 同 |
 | `msrv` | `cargo +1.98 check --workspace --all-targets` | 同 |
-| `miri` | `cargo +nightly miri test -p croc-siec -p croc-pake` | 同 |
-| `interop` | 起 Rust relay，跑 I1–I18 | `cargo xtask ci-interop` |
+| — | （Miri 与互通**不在** lint 里，见下） | — |
 
 `cargo xtask ci-lint` 一把跑完 `fmt` / `clippy` / `test` / `arch` 四项（MSRV 与 Miri 需要
 额外工具链，单独跑）。
@@ -125,7 +124,12 @@ Windows runner 上 `tar` 与 `zip` 的行为差异最容易出坑，各用各的
 `build` 的 `needs` 上则物理上无法绕过。代价是 PR 阶段没有绿灯信号，由本地
 `cargo xtask ci-lint` 补。
 
-**nightly 只出现在 `miri` job 里。** 产物构建链路（`build.yml`）里不允许出现 nightly。
+**Miri 与 Go 互通不在 `lint.yml`，在 `nightly.yml`。** 不是"太慢"，而是它们目前只告警
+（`continue-on-error`）——而 `continue-on-error` 的 job **依然会拖住整个可复用工作流**，
+`build` 的 `needs: [prep, lint]` 等的是整个 lint，于是看板把发布链路掐断了。
+看板待在旁边，等绿了再挪回门禁里。
+
+**nightly 只出现在 `nightly.yml` 的 `miri` job 里。** 产物构建链路（`build.yml`）里不允许出现 nightly。
 
 ---
 

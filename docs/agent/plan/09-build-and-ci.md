@@ -279,7 +279,7 @@ cargo xtask ci-interop   # = interop job（需本机有 Go 与 croc 源码）
 | 产物形态开关 | `pack_core` / `pack_jre` / `pack_msi` / `pack_exe` / `pack_oci` | `pack_cli` / `pack_gui` | 没有 JRE / 安装包 / 镜像需求 |
 | Windows 工具链 | `msvc` / `gnullvm` / `all` | 仅 msvc | 无 bundled C 依赖，不需要 llvm-mingw |
 | 外部资产 | WebUI zip、ext-runtime.jar、JRE | 无 | — |
-| Miri | 无 | 有 | 本项目的 `croc-siec` / `croc-pake` 含 unsafe |
+| Miri | 无 | 有（哨兵） | 本仓库**没有 unsafe**，Miri 查的是依赖里的 unsafe（`curve25519-dalek` 的 serial 后端）以及"以后有人伸手写裸指针"的哨兵。**它不是门禁** |
 | 架构门禁 | 无 | `xtask purity` / `xtask deps` | 本项目对"纯 crate"与"纯 Rust 加密栈"有硬约束 |
 | 互通测试 | 无 | `interop` job | 与 Go 版互通是本项目的生命线 |
 

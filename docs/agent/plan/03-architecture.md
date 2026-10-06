@@ -246,7 +246,7 @@ impl Engine {
 | Edition | **2024**（workspace 统一） | `rust-version` 与 edition 在 `[workspace.package]` 声明，各 crate 继承 |
 | 工具链 | **stable**（默认） | 本机实测 `rustc 1.98.1 (2026-09-01)`；CI 用 `dtolnay/rust-toolchain@stable` |
 | MSRV | `rust-version = "1.98"` | CI 额外跑一个 MSRV job（`--ignore-rust-version` 关闭），防止依赖悄悄抬高要求 |
-| nightly | **仅 Miri 使用** | 只对含 `unsafe` 的 crate（`croc-siec`、`croc-pake`）跑 `cargo +nightly miri test`；不参与产物构建 |
+| nightly | **仅 Miri 使用** | 只对 `croc-siec`、`croc-pake` 跑 `cargo +nightly miri test`；不参与产物构建。**本仓库一行 `unsafe` 都没有**，所以 Miri 查的是依赖里的 unsafe 与"有人以后伸手去写裸指针"的哨兵，不是我们的门禁——见 §8.5 |
 | 产物构建 | 一律 stable | 发布产物的 workflow 不允许出现 nightly |
 
 > tailscale crate 曾要求 MSRV 1.97，但它已标记为 **pending**（见 [08-tailscale.md](08-tailscale.md)），因此不再抬高本项目工具链要求。
@@ -302,6 +302,12 @@ perf = "warn"
 
 **豁免**：`croc-siec` / `croc-pake` 内的 `indexing_slicing` 逐处 `#[allow]` 并说明理由（大整数按字节遍历确实需要下标）；`module_name_repetitions` 全局豁免（`croc_` 前缀）。
 
+> **本仓库没有 `unsafe`。** 0 处 `unsafe`、0 处 FFI（没有 `extern "C"` / `#[no_mangle]` /
+> `#[link`）、0 处 `transmute` / `from_raw` / `as_ptr`，构建脚本里也没有 `cc` / `bindgen` /
+> `pkg-config`。唯一的 C 代码在依赖里（Tauri 在 Linux 上链 GTK / WebKitGTK），不是我们写的。
+> `unsafe_code = "warn"` + CI 的 `-D warnings` 让"加一处 unsafe"变成一个必须显式面对的
+> 编译错误——**这条纪律才是真正的门禁**，Miri 只是它的补充。
+
 > ⚠ **对设计的反向约束**：因为 `todo = "warn"` + CI `-D warnings`，
 > `TailscalePlane` 的 pending 占位**不能写 `todo!()`**，改为返回 `Err(PlaneError::Unavailable)`——
 > 见 [08-tailscale.md](08-tailscale.md) §3.1。
@@ -327,9 +333,10 @@ perf = "warn"
 | 检查 | 命令 |
 |------|------|
 | 纯 crate 不得引入 IO | `cargo xtask purity` — 扫描 `croc-protocol|croc-pake|croc-siec` 中是否出现 `tokio::`、`std::fs`、`Instant::now`、`thread_rng` |
+| `unsafe` 纪律 | `[workspace.lints]` 的 `unsafe_code = "warn"` + CI 的 `-D warnings` |
 | 交叉编译 | `cargo build --target aarch64-linux-android --workspace` |
 | feature 完整性 | `cargo check --all-features` + `unexpected_cfgs` |
-| Miri | 对含 `unsafe` 的 crate 跑 `cargo miri test` |
+| Miri | 对 `croc-siec` / `croc-pake` 跑 `cargo +nightly miri test`（**哨兵，不是门禁**） |
 
 ---
 

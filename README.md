@@ -51,7 +51,12 @@ croc-pakekey / croc-pake / croc-siec    纯数学与密钥协商
 `Instant::now`、OS 随机源。随机数由调用方注入，于是**一次完整的握手与清单交换可以在单元测试里
 确定性重放**——不需要 socket、不需要超时。CI 用 `cargo xtask purity` 强制这条线。
 
-`croc-siec` / `croc-pake` 含 `unsafe`，所以是唯一跑 Miri 的地方（也是唯一用 nightly 的地方）。
+**本仓库没有 `unsafe`**：0 处 `unsafe`、0 处 FFI、0 处 `transmute` / `from_raw` / `as_ptr`，
+构建脚本里也没有 `cc` / `bindgen`。`[workspace.lints]` 的 `unsafe_code = "warn"` 配上 CI 的
+`-D warnings`，让"加一处 `unsafe`"变成一个必须显式面对的编译错误。
+
+Miri 仍然在跑（`nightly.yml`，唯一用 nightly 的地方），但它查的是**依赖里的** unsafe
+（主要是 `curve25519-dalek` 的 serial 后端）与"以后有人伸手写裸指针"的哨兵——**它是看板不是门禁**。
 
 ---
 
