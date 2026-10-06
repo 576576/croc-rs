@@ -302,9 +302,14 @@ perf = "warn"
 
 **豁免**：`croc-siec` / `croc-pake` 内的 `indexing_slicing` 逐处 `#[allow]` 并说明理由（大整数按字节遍历确实需要下标）；`module_name_repetitions` 全局豁免（`croc_` 前缀）。
 
-> **本仓库没有 `unsafe`。** 0 处 `unsafe`、0 处 FFI（没有 `extern "C"` / `#[no_mangle]` /
-> `#[link`）、0 处 `transmute` / `from_raw` / `as_ptr`，构建脚本里也没有 `cc` / `bindgen` /
-> `pkg-config`。唯一的 C 代码在依赖里（Tauri 在 Linux 上链 GTK / WebKitGTK），不是我们写的。
+> **本仓库没有 `unsafe`，也没有 FFI。** 全仓 0 处 `unsafe`、0 处 `extern "C"` /
+> `#[no_mangle]` / `#[link`、0 处 `transmute` / `from_raw` / `as_ptr`，构建脚本里也没有
+> `cc` / `bindgen` / `pkg-config`——**整个 workspace 不编译任何 C 代码**。
+>
+> 依赖图里唯一带"FFI 味道"的是 `windows-sys`（Windows 上的 tokio）与 `libc`
+> （Unix 上的 tokio / Tauri）：它们只是**平台 API 的绑定声明**，不含 C 源码，也不跑
+> `cc`。真正链系统 C 库的只有 `croc-gui`——Tauri 在 Linux 上要链 GTK / WebKitGTK，
+> 那是 WebView 绕不开的，且是**链接**不是编译。
 >
 > 所以**不需要 Miri**：安全 Rust 产不出 UB，Miri 能查的只有依赖里的 unsafe，而那部分
 > 上游自己会跑。`unsafe_code = "warn"` + CI 的 `-D warnings` 已经让"加一处 unsafe"
