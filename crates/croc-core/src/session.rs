@@ -53,8 +53,8 @@
 use croc_pake::{CurveKind, EPHEMERAL_LEN, Initiator, PakeError};
 use croc_pakekey::{self as pakekey, Keys, PakeKeyError};
 use croc_protocol::{
-    IP_REQUEST, IncomingManifest, KIND_PAKE1, ManifestError, ManifestLimits, ManifestPayloads, Message, MessageType,
-    ProbeMessage, Randomness, RemoteFileRequest, SenderInfo, SessionKey, encode_endpoints, encode_manifest,
+    Feature, IncomingManifest, KIND_PAKE1, ManifestError, ManifestLimits, ManifestPayloads, Message, MessageType,
+    ProbeMessage, Randomness, RemoteFileRequest, SenderInfo, SessionKey, encode_manifest,
 };
 use zeroize::Zeroize;
 
@@ -157,6 +157,11 @@ pub enum Effect {
         ranges: Vec<i64>,
         /// 并行流数。
         streams: u8,
+        /// 对端是否声明了 `per-file-compression-v1`。
+        ///
+        /// `false` 时**必须无视文件的 `IsCompressed` 一律压缩**——那是对老对端的
+        /// 兼容路径，Go 的 `currentFileUsesCompression` 就是这么写的。
+        peer_per_file_compression: bool,
     },
     /// 上报一个进展事件。
     Emit(Event),
@@ -330,21 +335,6 @@ impl State {
     }
 }
 
-/// 局域网探测的应答状态（**只有发送方会用到**）。
-///
-/// 探测有自己的用途串（`local-ip-probe`）与自己的密钥，与正式传输的那套完全独立——
-/// 所以它必须单独存，不能塞进 `PakeState`。
-struct LocalProbe {
-    /// 探测密钥，用来加解密 `ips?` 与 IP 列表。
-    key: [u8; croc_protocol::ENCRYPTION_KEY_LEN],
-}
-
-impl Drop for LocalProbe {
-    fn drop(&mut self) {
-        self.key.zeroize();
-    }
-}
-
 /// 进行中的 PAKE。
 ///
 /// 两端留的东西不一样（接收方要留着 [`Initiator`] 走 `accept_response`，发送方派生完
@@ -378,7 +368,12 @@ pub struct Session {
     /// 当前正在传的文件下标，收尾事件里要带出去。
     current_file: u64,
     /// 局域网探测的应答状态；`None` 表示还没开始或已经答完。
-    local_probe: Option<LocalProbe>,
+    /// 对端是否声明了 `per-file-compression-v1`。
+    ///
+    /// 两端的来源不同（**照抄 Go**）：接收方从清单的 `SenderInfo.Features` 读
+    /// （`croc.go:2460`），发送方从 `recipientready` 的 `Features` 读
+    /// （`croc.go:3009`）。它决定压缩开关是按文件走还是"一律压缩"。
+    peer_per_file_compression: bool,
     limits: ManifestLimits,
 }
 
@@ -406,6 +401,20 @@ impl Drop for SessionConfigOwned {
     fn drop(&mut self) {
         self.passphrase.zeroize();
     }
+}
+
+/// 握手载荷里要声明的那**唯一**一个能力。
+///
+/// Go 的发送方在 `SenderInfo.Features`、接收方在 `recipientready` 的 `Features`
+/// 里都只放这一个（`croc.go:3112` 与 `:3233`）——**不是** PAKE 那五个。
+///
+/// 它的含义是"我懂逐文件压缩开关"：对端看到它，才会按每个文件的 `IsCompressed`
+/// 决定压不压；看不到就退回"一律压缩"的老对端行为（见
+/// [`croc_engine` 的压缩判定]）。漏了它，Go 会按老规矩把每个块都压上，
+/// 而我们按清单里的 `c:false` 不去解压——解出来就是一堆 DEFLATE 字节，
+/// 前 8 字节被当成偏移，写盘必然越界。
+fn compression_feature() -> Vec<String> {
+    vec![Feature::PerFileCompression.as_str().to_owned()]
 }
 
 /// PAKE 协议版本号，转成 `Message.version` 要的 `i64`。
@@ -448,7 +457,7 @@ impl Session {
             manifest: Some(payloads),
             sender_info: Some(Box::new(manifest)),
             current_file: 0,
-            local_probe: None,
+            peer_per_file_compression: false,
             limits: ManifestLimits::default(),
         })
     }
@@ -469,7 +478,7 @@ impl Session {
             manifest: None,
             sender_info: None,
             current_file: 0,
-            local_probe: None,
+            peer_per_file_compression: false,
             limits: ManifestLimits::default(),
         })
     }
@@ -522,6 +531,15 @@ impl Session {
     #[must_use]
     pub const fn is_secured(&self) -> bool {
         self.session.is_encrypted()
+    }
+
+    /// 对端是否声明了 `per-file-compression-v1`。
+    ///
+    /// 数据面的压缩判定要用它：没声明 ⇒ 一律压缩（老对端），声明了 ⇒ 看文件的
+    /// `IsCompressed`。见 [`Effect::SendFile`] 的说明。
+    #[must_use]
+    pub const fn peer_per_file_compression(&self) -> bool {
+        self.peer_per_file_compression
     }
 
     /// 数据面用的流量密钥。
@@ -599,7 +617,7 @@ impl Session {
         // 正式 PAKE 之前还有一段**不属于消息层**的东西：局域网探测（`pake1`/`pake2`/
         // `ips?`）与裸帧 `handshake`。它们不 DEFLATE、可能是裸 JSON、也可能用探测密钥
         // 加密——全都不该拿去 `self.session.open()`。
-        if let Some(effects) = self.try_local_probe(payload, randomness)? {
+        if let Some(effects) = self.try_local_probe(payload) {
             return Ok(effects);
         }
         let message = self.session.open(payload)?;
@@ -626,82 +644,55 @@ impl Session {
 
     /// 处理正式 PAKE 之前的那几帧。**只有发送方需要**。
     ///
-    /// Go 的接收方在连上中继之后默认先做一次局域网探测（除非 `--no-local` 或给了
-    /// `--ip`）：它发 `pake1`，等 `pake2`，再问 `ips?`。不答这一段，Go 的接收方会
-    /// 卡在那里等 `pake2`，而我们会把那段裸 JSON 当成 `Message` 去解压，报
-    /// `corrupt deflate stream`——两个方向都断在第一帧上。
+    /// 这段不是消息层：Go 的接收方连上中继之后默认先做一次局域网探测（除非
+    /// `--no-local` 或给了 `--ip`），发的是**裸 JSON**（`SimpleMessage`），既没有
+    /// DEFLATE 也没有消息层加密。不认出来就会被当成 `Message` 去解，报
+    /// `corrupt deflate stream`。
     ///
-    /// 返回 `None` 表示"这不是探测帧"，调用方继续走正常的消息路径。
+    /// # 我们**只吃掉、不回**
     ///
-    /// # Errors
+    /// 我们没有内建局域网中继，能回的答案永远是"空地址列表"——那正是 `--no-local`
+    /// 的意思。而**回一个过期的答案是致命的**：对端只等 500 ms
+    /// （`localProbeResponseTimeout`，Go `croc.go:374`），超时后它就往下走、发
+    /// `handshake` 与 `pake`；我们此时才把 `pake2` 发过去，对端会拿它当 `pake` 的
+    /// 应答去解压，握手当场报废。
     ///
-    /// 曲线名不认识、SPAKE2 失败、密钥编排失败。
-    fn try_local_probe(
-        &mut self,
-        payload: &[u8],
-        randomness: &mut impl Randomness,
-    ) -> Result<Option<Vec<Effect>>, SessionError> {
+    /// 什么时候会过期：发送方**算完哈希才连中继**（清单要带哈希，见 `send()`），而
+    /// 几万个文件的哈希在 Windows 上要十几秒——对端那 500 ms 早过完了。实测 2 万个
+    /// 空文件时，我们进读循环时探测帧已经在缓冲里躺了 17 秒。
+    ///
+    /// 沉默则永远安全：Go 的接收方把探测的失败**丢掉**（`croc.go:2166` 那次
+    /// `Send(handshakeRequest)` 会把 `err` 覆盖掉），照常走中继路径。代价是对端多等
+    /// 500 ms——这正是 Go 自己加 `--no-local` 时的表现。
+    ///
+    /// 将来真做了本地中继（见 `docs/agent/plan/04-cli-plan.md` §1.5），必须**同时**让
+    /// 发送方尽早进入读循环（Go 把算哈希放进后台 goroutine、与连中继并行，
+    /// `croc.go:1792`），否则回过去的仍然是过期答案。
+    ///
+    /// 返回 `None` 表示"这不是探测帧"，调用方继续走正常的消息路径；
+    /// `Some(空效果)` 表示"这是探测流量，已经吃掉"。
+    fn try_local_probe(&mut self, payload: &[u8]) -> Option<Vec<Effect>> {
         // 裸帧 `handshake`：接收方在 PAKE 之前发的"我到了"。发送方什么都不用做，
         // 等 `pake` 就是。两种角色都可能收到它。
         if payload == HANDSHAKE {
-            return Ok(Some(Vec::new()));
+            return Some(Vec::new());
         }
-        // 我们是接收方时不主动探测（等价于 Go 的 `--no-local`）：本项目还没有本地中继，
-        // 探到了也没得连，白白多两个往返。
+        // 我们是接收方时不主动探测（等价于 Go 的 `--no-local`）。
         if self.config.role != Role::Sender || !matches!(self.state, State::Idle) {
-            return Ok(None);
+            return None;
         }
-
-        // 已经派生过探测密钥：这一帧应该是加密的 `ips?`。
-        if let Some(probe) = &self.local_probe {
-            let Ok(plain) = croc_protocol::decrypt(payload, &probe.key) else {
-                return Ok(None);
-            };
-            if plain != IP_REQUEST {
-                return Ok(None);
-            }
-            // 回一个**空**地址列表。我们没有本地中继，接收方看到 `len(ips) <= 1`
-            // 就会回落到中继路径——这正是 Go 的 `--no-local` 发送方的行为。
-            let body = encode_endpoints(0, &[])?;
-            let nonce = croc_protocol::random::nonce(randomness);
-            let frame = croc_protocol::encrypt(&body, &probe.key, &nonce)?;
-            self.local_probe = None;
-            return Ok(Some(vec![Effect::Send(frame)]));
-        }
-
-        // `pake1`：探测的发起方是接收方，我们是应答方。
+        // `pake1`：探测的发起方是接收方，我们是应答方——**认出它、吃掉它、不回**。
+        // 上面的说明讲了为什么不能回。
         if !ProbeMessage::looks_like_probe(payload) {
-            return Ok(None);
+            return None;
         }
         let Ok(message) = ProbeMessage::from_bytes(payload) else {
-            return Ok(None);
+            return None;
         };
         if message.kind != KIND_PAKE1 {
-            return Ok(None);
+            return None;
         }
-
-        let curve = CurveKind::from_name(&message.curve)?;
-        let mut exchange =
-            pakekey::responder(&self.config.passphrase, curve, pakekey::PURPOSE_LOCAL_PROBE, &self.config.room)?;
-        exchange.accept_request(&message.bytes, croc_protocol::random::array::<EPHEMERAL_LEN>(randomness))?;
-        let responder = exchange.public_bytes().into_bytes();
-        let mut salt = vec![0u8; pakekey::SALT_SIZE];
-        randomness.fill(&mut salt);
-
-        // 注意用途串是 `local-ip-probe`，与正式传输的 `peer-transfer` 不是一套密钥。
-        let keys = Self::derive_keys(
-            &self.config.room,
-            pakekey::PURPOSE_LOCAL_PROBE,
-            exchange.session_key(),
-            curve,
-            &message.bytes,
-            &responder,
-            &salt,
-        )?;
-        let reply = ProbeMessage::pake2(responder, salt, protocol_version(), curve.name());
-        self.local_probe = Some(LocalProbe { key: *keys.encryption_key() });
-
-        Ok(Some(vec![Effect::Send(reply.to_bytes()?)]))
+        Some(Vec::new())
     }
 
     /// `pake`：两端都走这里，方向由角色决定。
@@ -872,6 +863,8 @@ impl Session {
                     return Err(SessionError::UnexpectedMessage { kind: kind.to_string(), state: "collecting" });
                 };
                 let info = incoming.finish(message.num, &message.bytes)?;
+                // 对端在清单里声明它懂逐文件压缩（`croc.go:2460`）。
+                self.peer_per_file_compression = croc_protocol::supports(&info.features, Feature::PerFileCompression);
                 self.state = State::AwaitingDecision;
                 Ok(vec![Effect::Emit(Event::Manifest(Box::new(info)))])
             }
@@ -879,6 +872,7 @@ impl Session {
             (MessageType::FileInfo, State::AwaitingManifest) => {
                 let incoming = IncomingManifest::start(&message.bytes, self.limits)?;
                 let info = incoming.finish(0, &[])?;
+                self.peer_per_file_compression = croc_protocol::supports(&info.features, Feature::PerFileCompression);
                 self.state = State::AwaitingDecision;
                 Ok(vec![Effect::Emit(Event::Manifest(Box::new(info)))])
             }
@@ -924,7 +918,8 @@ impl Session {
             machine_id: self.config.machine_id.clone(),
             external_ip: self.config.external_ip.clone(),
             reconnect_version: 0,
-            features: self.config.features.clone(),
+            // **只声明这一个**，不是 PAKE 那五个——照抄 Go 的 `croc.go:3233`。
+            features: compression_feature(),
         };
         let message = Message::new(MessageType::RecipientReady).with_bytes(request.to_bytes()?);
         Ok(vec![Effect::Send(self.encode(&message, randomness)?)])
@@ -965,6 +960,8 @@ impl Session {
         let request = RemoteFileRequest::from_bytes(&message.bytes)?;
         let index = u64::try_from(request.files_to_transfer_current_num).unwrap_or(0);
         self.current_file = index;
+        // 对端在 `recipientready` 里声明它懂逐文件压缩（`croc.go:3009`）。
+        self.peer_per_file_compression = croc_protocol::supports(&request.features, Feature::PerFileCompression);
 
         let mut effects = Vec::new();
         if !request.external_ip.is_empty() {
@@ -974,6 +971,7 @@ impl Session {
             index,
             ranges: request.current_file_chunk_ranges,
             streams: self.config.data_streams(),
+            peer_per_file_compression: self.peer_per_file_compression,
         });
         Ok(effects)
     }
@@ -1142,7 +1140,7 @@ mod tests {
         for effect in effects {
             match effect {
                 Effect::Send(frame) => sink.wire.push(frame),
-                Effect::SendFile { index, ranges, streams } => sink.transfers.push((index, ranges, streams)),
+                Effect::SendFile { index, ranges, streams, .. } => sink.transfers.push((index, ranges, streams)),
                 Effect::Emit(event) => sink.events.push(event),
                 Effect::Finish(result) => sink.outcome = Some(result),
             }
@@ -1339,12 +1337,64 @@ mod tests {
             effects
                 .into_iter()
                 .filter_map(|effect| match effect {
-                    Effect::SendFile { index, ranges, streams } => Some((index, ranges, streams)),
+                    Effect::SendFile { index, ranges, streams, .. } => Some((index, ranges, streams)),
                     _ => None,
                 })
                 .collect::<Vec<_>>(),
             expected
         );
+    }
+
+    #[test]
+    fn both_sides_declare_the_per_file_compression_feature() {
+        // Go 的发送方在 `SenderInfo.Features`、接收方在 `recipientready` 的 `Features`
+        // 里都**只放这一个**（`croc.go:3112` / `:3233`）。对端看到它才按文件的
+        // `IsCompressed` 走；看不到就退回"一律压缩"的老对端行为——漏了它，Go 会把
+        // 每个块都压上，而我们按清单里的 `c:false` 不去解压，解出来是一堆 DEFLATE
+        // 字节，前 8 字节被当成偏移，写盘必然越界。
+        let declared = compression_feature();
+        assert_eq!(declared, vec![croc_protocol::Feature::PerFileCompression.as_str().to_owned()]);
+        assert_eq!(declared, vec!["per-file-compression-v1".to_owned()], "线路上的名字是硬契约");
+
+        // **它不是 PAKE 能力列表**——这两个载荷用的是各自的列表，别搞混。
+        let pake = croc_protocol::declare(croc_protocol::TailcatDeclaration::Unsupported);
+        assert!(!pake.contains(&"per-file-compression-v1".to_owned()));
+    }
+
+    #[test]
+    fn a_peer_without_the_feature_forces_compression() {
+        // 对端没声明 `per-file-compression-v1` ⇒ `Effect::SendFile` 必须带上
+        // `peer_per_file_compression: false`，让引擎退回"一律压缩"。
+        let mut sender = Session::new_sender(&config(Role::Sender, PASSPHRASE), manifest()).expect("构造");
+        let mut rng = Counting::new(0);
+        sender.session = SessionKey::Aead([0x5a; croc_protocol::ENCRYPTION_KEY_LEN]);
+        sender.state = State::Transferring;
+
+        let request = RemoteFileRequest { files_to_transfer_current_num: 0, ..RemoteFileRequest::default() };
+        let message = Message::new(MessageType::RecipientReady).with_bytes(request.to_bytes().expect("编码"));
+        let nonce = croc_protocol::random::nonce(&mut rng);
+        let frame = SessionKey::Aead([0x5a; croc_protocol::ENCRYPTION_KEY_LEN]).seal(&message, &nonce).expect("封包");
+        let effects = sender.handle(InEvent::Frame(frame), &mut rng).expect("应能处理");
+        let declared = effects.into_iter().find_map(|effect| match effect {
+            Effect::SendFile { peer_per_file_compression, .. } => Some(peer_per_file_compression),
+            _ => None,
+        });
+        assert_eq!(declared, Some(false), "对端没声明时必须是 false");
+
+        // 声明了就是 true。
+        let request = RemoteFileRequest {
+            files_to_transfer_current_num: 0,
+            features: vec![croc_protocol::Feature::PerFileCompression.as_str().to_owned()],
+            ..RemoteFileRequest::default()
+        };
+        let message = Message::new(MessageType::RecipientReady).with_bytes(request.to_bytes().expect("编码"));
+        let frame = SessionKey::Aead([0x5a; croc_protocol::ENCRYPTION_KEY_LEN]).seal(&message, &nonce).expect("封包");
+        let effects = sender.handle(InEvent::Frame(frame), &mut rng).expect("应能处理");
+        let declared = effects.into_iter().find_map(|effect| match effect {
+            Effect::SendFile { peer_per_file_compression, .. } => Some(peer_per_file_compression),
+            _ => None,
+        });
+        assert_eq!(declared, Some(true), "对端声明后必须是 true");
     }
 
     #[test]
@@ -1376,6 +1426,35 @@ mod tests {
         effects.remove(0);
         let pake = first_frame(effects);
         assert!(sender.handle(InEvent::Frame(pake), &mut rng).is_ok(), "handshake 之后应能正常处理 pake");
+    }
+
+    #[test]
+    fn the_sender_swallows_a_local_probe_without_answering_it() {
+        // 对端的局域网探测是**裸 JSON**（`SimpleMessage`），不是消息层的东西；不认出来
+        // 就会被当 `Message` 去解，报 `corrupt deflate stream`。
+        //
+        // 但我们**只吃、不回**：回一个过期的 `pake2` 会让对端拿它当 `pake` 的应答去解，
+        // 握手当场报废（见 `try_local_probe` 的说明）。这里把"不回"钉住。
+        let mut sender = Session::new_sender(&config(Role::Sender, PASSPHRASE), manifest()).expect("构造");
+        let mut rng = Counting::new(0);
+        let probe = croc_protocol::ProbeMessage {
+            bytes: vec![1, 2, 3],
+            kind: croc_protocol::KIND_PAKE1.to_owned(),
+            version: 2,
+            curve: "p256".to_owned(),
+            ..croc_protocol::ProbeMessage::default()
+        };
+        let frame = probe.to_bytes().expect("编码");
+        assert_eq!(sender.handle(InEvent::Frame(frame), &mut rng), Ok(Vec::new()), "探测帧要被吃掉，且**不许回**");
+        assert_eq!(sender.stage(), Stage::Idle, "吃完探测之后仍在等 pake");
+
+        // 紧接着的 pake 必须还能正常处理——这正是"不回"要保住的东西。
+        let mut receiver = Session::new_receiver(&config(Role::Receiver, PASSPHRASE)).expect("构造");
+        let mut receiver_rng = Counting::new(0x80);
+        let mut effects = receiver.handle(InEvent::PeerConnected, &mut receiver_rng).expect("配对");
+        effects.remove(0);
+        let pake = first_frame(effects);
+        assert!(sender.handle(InEvent::Frame(pake), &mut rng).is_ok(), "探测之后应能正常处理 pake");
     }
 
     #[test]
