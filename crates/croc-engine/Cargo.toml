@@ -15,6 +15,9 @@ croc-protocol.workspace = true
 croc-core.workspace = true
 croc-net.workspace = true
 croc-pake.workspace = true
+# `--local`：把中继嵌进发送方进程里。
+croc-relay.workspace = true
+socket2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 thiserror.workspace = true

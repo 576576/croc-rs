@@ -589,6 +589,8 @@ dependencies = [
  "croc-net",
  "croc-pake",
  "croc-protocol",
+ "croc-relay",
+ "socket2",
  "thiserror 2.0.21",
  "time",
  "tokio",

@@ -28,12 +28,10 @@ pub const DEFAULT_PASSPHRASE: &str = "pass123";
 pub const TAILSCALE_PENDING_NOTE: &str =
     "note: tailscale data plane is not available yet (pending upstream tailcat-rs); using relay";
 
-/// `--local` 尚未实现时的报错。
+/// `--transport` 与 `--local` 冲突时的报错（Go 版同文，`src/cli/cli.go:700`）。
 ///
-/// 之所以**报错**而不是"接受但忽略"：`--local` 的语义是"只走局域网、不碰公网中继"，
-/// 是个隐私开关。悄悄把它降级成公网中继，等于把用户明确拒绝的事做了。
-pub const LOCAL_UNAVAILABLE: &str =
-    "croc-rs: --local（仅局域网）尚未实现：本实现还没有内建局域网中继；请去掉该参数，或改用 --no-local 显式走中继";
+/// `--local` 与 `--no-local` 的互斥交给 clap（`conflicts_with`），不在这里重复一句。
+pub const TRANSPORT_CONFLICT: &str = "croc-rs: --transport must be auto for local-only transfers";
 
 /// 数据面选择。
 ///
@@ -146,17 +144,17 @@ struct Global {
 
     /// 只走局域网连接（不碰公网中继）。
     ///
-    /// ⚠️ 尚未实现——本实现还没有内建局域网中继，给了这个参数会**报错退出**。
-    /// 详见 [`LOCAL_UNAVAILABLE`]。
-    #[arg(long, global = true)]
+    /// 发送方起一个**只活在这次传输里**的中继，用 UDP 组播把端口喊出去
+    /// （`239.255.255.250:9999`，载荷 `croc` + 端口），接收方组播找到它再连。
+    /// 见 `croc_engine::local`。
+    #[arg(long, global = true, conflicts_with = "no_local")]
     local: bool,
 
     /// 禁用局域网直连（只走中继）。
     ///
-    /// 目前是**恒等开关**：本实现还没有本地中继，所以发送方对局域网探测一律回空地址
-    /// 列表（等价 Go 的 `--no-local`），接收方也不主动探测。留着它是为了命令行兼容——
-    /// 用户脚本里带了这个参数不该报"未知参数"。
-    #[arg(long, global = true)]
+    /// 发送方不起内建中继、也不广播。留着它是为了命令行兼容——用户脚本里带了这个
+    /// 参数不该报"未知参数"。
+    #[arg(long, global = true, conflicts_with = "local")]
     no_local: bool,
 
     /// 什么都不打印。
@@ -267,6 +265,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     paths,
                     hash_algorithm: args.hash,
                     no_compress: cli.global.no_compress,
+                    local: cli.global.local,
                     machine_id,
                     events,
                 })),
@@ -299,6 +298,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     out_dir: cli.global.out,
                     preferences: Preferences { overwrite: cli.global.overwrite, rename: cli.global.rename },
                     no_compress: cli.global.no_compress,
+                    local: cli.global.local,
                     machine_id,
                     confirm,
                     events,
@@ -386,10 +386,7 @@ fn validate_transport(local: bool, transport: Transport) -> Result<(), &'static 
     // 这条与 Go 版同文（`src/cli/cli.go:700`）。先查它，免得用户同时踩两个坑
     // 却只看到第二个。
     if local && transport != Transport::Auto {
-        return Err("croc-rs: --transport must be auto for local-only transfers");
-    }
-    if local {
-        return Err(LOCAL_UNAVAILABLE);
+        return Err(TRANSPORT_CONFLICT);
     }
     Ok(())
 }
@@ -431,7 +428,13 @@ fn write_text_artifact(text: &str) -> Result<PathBuf, String> {
 fn print_send_instructions(request: &SendRequest) {
     println!("口令码：{}", request.code);
     println!("让对方执行：");
-    println!("  croc-rs --relay {} {}", request.relay, request.code);
+    // `--local` 时中继就是本端，喊出去的端口每次都不同，对端是靠组播找过来的——
+    // 打印一个 `--relay` 只会让人拿一个下次就失效的地址。
+    if request.local {
+        println!("  croc-rs --local {}", request.code);
+    } else {
+        println!("  croc-rs --relay {} {}", request.relay, request.code);
+    }
 }
 
 /// 交互式确认。
@@ -517,11 +520,11 @@ mod tests {
     }
 
     #[test]
-    fn local_only_is_rejected_never_silently_downgraded() {
-        // `--local` 是隐私开关：不能悄悄降级成公网中继，只能报错。
-        let error = validate_transport(true, Transport::Auto).expect_err("--local 应报错");
-        assert_eq!(error, LOCAL_UNAVAILABLE);
-        assert!(error.starts_with("croc-rs: "), "报错要带程序名前缀");
+    fn local_only_is_accepted_but_still_needs_auto_transport() {
+        // `--local` 现在真的能用了：不该再报"未实现"。
+        assert_eq!(validate_transport(true, Transport::Auto), Ok(()));
+        // 但它仍然与显式的 `--transport` 互斥——Go 版同文（src/cli/cli.go:700）。
+        assert!(validate_transport(true, Transport::Relay).is_err());
     }
 
     #[test]

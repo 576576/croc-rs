@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::data::{DataPlane, receive_file, stream_count};
 use crate::error::EngineError;
 use crate::files::{self, Plan, Sink};
+use crate::local;
 use crate::relay;
 use crate::{EngineEvent, EventSink, emit};
 
@@ -39,6 +40,8 @@ pub struct ReceiveRequest {
     pub preferences: Preferences,
     /// `--no-compress`：对端压了也不解（等价 Go 的同名开关）。
     pub no_compress: bool,
+    /// `--local`：只走局域网——先组播找出发送方，用它的地址当中继，**不连公网中继**。
+    pub local: bool,
     /// 本端机器指纹。
     pub machine_id: String,
     /// 收到清单后问一句；`None` 表示直接接受。
@@ -77,7 +80,15 @@ pub struct Summary {
 ///
 /// 中继连不上、口令不对、协议违规、写盘失败，或者被取消。
 pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Result<Summary, EngineError> {
-    let mut link = relay::connect(&request.relay, &request.relay_password, &request.components.room_name).await?;
+    // `--local`：组播找发送方，拿它的地址当中继。找不到就是"局域网里没人在发"，
+    // 直接失败——不能悄悄退回公网中继，那正是用户用 `--local` 明确拒绝的事。
+    let relay_address = if request.local {
+        emit(&request.events, EngineEvent::Status("looking for the sender on the local network…".to_owned()));
+        local::find_peer(local::DISCOVERY_TIMEOUT).await?
+    } else {
+        request.relay.clone()
+    };
+    let mut link = relay::connect(&relay_address, &request.relay_password, &request.components.room_name).await?;
     let ports = link.data_ports();
     if ports.is_empty() {
         return Err(EngineError::Relay("the relay banner carried no data ports".to_owned()));
@@ -102,7 +113,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
     // **数据连接整个传输只建一次**：数据端口的房间名是 `{room}-{j}`，一个房间只容得下
     // 两端各一条连接；每条文件重建一次就会撞上自己上一条文件留下的连接，中继回 `room full`。
     let data_plane = Arc::new(DataPlane::new(
-        request.relay.clone(),
+        relay_address,
         request.relay_password.clone(),
         request.components.room_name.clone(),
         ports.clone(),

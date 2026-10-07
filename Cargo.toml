@@ -118,6 +118,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time"
 # 取消令牌。所有 `select!` 都必须带 `cancelled()` 分支，否则 Ctrl-C 会留下半截文件。
 tokio-util = { version = "0.7", features = ["rt"] }
 bytes = "1"
+# 只为 `--local` 的组播监听设置 `SO_REUSEADDR`：`std::net::UdpSocket` 不暴露它，
+# 而同一台机器上发送方与接收方常常同时在收同一个组播端口。
+socket2 = "0.6"
 # OS 随机源。选 `getrandom` 而不是 `rand`：Android 上同样可用，且不带任何额外抽象。
 getrandom = "0.3"
 

@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::data::{ChunkQueue, DataPlane, send_file, stream_count};
 use crate::error::EngineError;
 use crate::files;
+use crate::local;
 use crate::relay;
 use crate::{EngineEvent, EventSink, emit};
 
@@ -34,6 +35,8 @@ pub struct SendRequest {
     pub paths: Vec<PathBuf>,
     /// 哈希算法（目前只支持 `xxhash`）。
     pub hash_algorithm: String,
+    /// `--local`：只走局域网——本端起一个内建中继，**不连公网中继**。
+    pub local: bool,
     /// 关掉压缩。
     pub no_compress: bool,
     /// 本端机器指纹。
@@ -69,15 +72,34 @@ pub struct Summary {
 ///
 /// 中继连不上、对端拒绝、协议违规、读文件失败，或者被取消。
 pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Summary, EngineError> {
-    // 清单在连中继之前就准备好：算哈希要读一遍全部文件，出问题（路径不存在、算法不支持）
-    // 应当在这一步就暴露，而不是等对端等在那儿的时候才失败。
+    // `--local`：本端自己当中继，连自己的回环地址，端口由组播喊出去给对端。
+    // 中继得先起来才有端口可喊，所以这一步在连中继与算哈希之前。
+    // 它一直活到 `send()` 返回（drop 即停），正好覆盖整次传输。
+    let local_relay = if request.local {
+        Some(local::announce(&request.relay_password, local::LOCAL_DATA_PORTS, cancel.child_token()).await?)
+    } else {
+        None
+    };
+    let relay_address = local_relay.as_ref().map_or_else(|| request.relay.clone(), local::LocalRelay::loopback_address);
+
+    // 算哈希与连中继**并行**（Go 把前者丢进后台 goroutine，`croc.go:1792`）。
+    // 清单要带哈希，所以得读一遍全部文件；大目录在 Windows 上十几秒，串在连接之前
+    // 就会让我们进房间进得晚——对端那段时间只能干等，它的局域网探测也会因等不到
+    // 应答而超时（见 `Session::try_local_probe()`）。
     //
-    // 代价是**我们进房间进得晚**：几万个文件的哈希在 Windows 上要十几秒，对端那段时间
-    // 只能干等。这也正是我们不能回对端局域网探测的原因（见 `Session::try_local_probe()`
-    // 的说明）——回过去的必然是过期答案。Go 反过来：连中继与算哈希并行
-    // （`croc.go:1792`），所以它的探测应答总是及时。将来要做本地中继，就得改成 Go 那样。
+    // 坏路径依旧早暴露：任一边先出错就立刻返回，另一半被 drop，半开的中继连接随之关掉。
     emit(&request.events, EngineEvent::Status("hashing the files…".to_owned()));
-    let (mut entries, empty_folders) = files::collect(&request.paths, &request.hash_algorithm)?;
+    let paths = request.paths.clone();
+    let algorithm = request.hash_algorithm.clone();
+    // `collect` 是同步的阻塞式文件 IO，直接放在 async 上下文里会把 worker 线程占住，
+    // 连中继的 future 就没机会推进——并行也就名存实亡。
+    let hashing = tokio::task::spawn_blocking(move || files::collect(&paths, &algorithm));
+    let connecting = relay::connect(&relay_address, &request.relay_password, &request.components.room_name);
+    let (manifest, mut link) = tokio::try_join!(
+        async { hashing.await.map_err(|error| EngineError::Config(format!("the hashing task {error}")))? },
+        connecting,
+    )?;
+    let (mut entries, empty_folders) = manifest;
     let compress = !request.no_compress;
     for entry in &mut entries {
         // 逐文件压缩开关：接收方靠这个字段决定要不要解压，所以必须随清单一起过去。
@@ -86,7 +108,6 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     let total_bytes: u64 = entries.iter().filter_map(|entry| u64::try_from(entry.info.size).ok()).sum();
     let info = files::sender_info(&entries, empty_folders, &request.machine_id);
 
-    let mut link = relay::connect(&request.relay, &request.relay_password, &request.components.room_name).await?;
     let ports = link.data_ports();
     if ports.is_empty() {
         return Err(EngineError::Relay("the relay banner carried no data ports".to_owned()));
@@ -114,7 +135,7 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     // 两端各一条连接，每条文件重建一次就会撞上自己上一条文件留下的连接。
     // 连接留在池子里直到 `send()` 返回，正好等价于 Go 的 `c.dataConns`。
     let data_plane = Arc::new(DataPlane::new(
-        request.relay.clone(),
+        relay_address,
         request.relay_password.clone(),
         request.components.room_name.clone(),
         ports.clone(),
