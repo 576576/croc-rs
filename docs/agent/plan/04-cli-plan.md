@@ -27,7 +27,7 @@
 | `--zip` | ✅ | 文件夹打包 |
 | `--text, -t` | ✅ | 发送文本 |
 | `--hash` (xxhash/imohash/md5/highway) | ✅ | 默认 xxhash |
-| `--transport` (auto/derp/relay) | ✅ `auto`/`relay`；`derp` ⏸ pending（提示后按 relay） | 见 §1.4 |
+| `--transport` (auto/derp/relay) | ✅ `auto`/`relay` 等价（还没有局域网中继）；`derp` ⏸ pending（提示后按 relay） | 见 §1.4 |
 | `--ts-authkey` | ⏸ pending | 解除 pending 后启用，环境变量 `CROC_TS_AUTHKEY` |
 | `--no-local` | ✅ | |
 | `--no-multi` | ✅ | 禁用多端口复用 |
@@ -46,7 +46,7 @@
 | `--stdout` | ✅ | |
 | `--no-compress` | ✅ | |
 | `--ask` | ✅ | |
-| `--local` | ✅ | |
+| `--local` | ⏸ v1.1 | 参数已接受，但**报错退出**：还没有内建局域网中继。见 §1.5 |
 | `--ignore-stdin` | ✅ | |
 | `--overwrite` | ✅ | |
 | `--rename` | ✅ | |
@@ -85,6 +85,42 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 依据：Go 版 `resolveTransportMode()` 在 `tailcattransport.Available() == false` 时降级为 `relay` 并返回 `downgraded=true`（`src/croc/croc.go:160-165`），`transport_unsupported.go` 在 Android 上返回 `ErrUnsupported`。我们的 pending 行为与之等价——**对端看不出区别**。
 
 解除 pending 后按 [08-tailscale.md](08-tailscale.md) §3 执行，届时 CLI 侧新增 `--ts-authkey`。
+
+### 1.5 `--local` —— ⏸ v1.1（参数已接受，但报错退出）
+
+`--local` 在 Go 里的语义是 `OnlyLocal`：**只走局域网，不碰公网中继**。它需要两件事：
+
+1. 发送端起一个**内嵌中继**（`127.0.0.1:<随机端口>`，控制口 + 数据口）；
+2. 接收端用 **UDP 组播**（默认 `239.255.255.250`）发现这个端口——载荷是 `"croc" + 端口`
+   （Go 版 `broadcastOnLocalNetwork()`，`src/croc/croc.go:1438`）。
+
+两者都还没有。当前的 CLI 行为是**报错退出**：
+
+```
+$ croc-rs --local aaa-bbb-ccc
+croc-rs: --local（仅局域网）尚未实现：本实现还没有内建局域网中继；请去掉该参数，或改用 --no-local 显式走中继
+```
+
+**为什么报错而不是"接受但忽略"**：`--local` 是个隐私开关——用户明确要求不经过公网中继。
+把它悄悄降级成公网中继，等于把用户拒绝的事做了，比直接失败更糟。
+
+配套的两条规则：
+
+| 组合 | 行为 |
+|------|------|
+| `--local --transport auto` | 报错（尚未实现） |
+| `--local --transport relay` / `derp` | 报错 `--transport must be auto for local-only transfers`（**与 Go 同文**，`src/cli/cli.go:700`） |
+
+顺带：对端的局域网探测我们**只吃掉、不回**。探测是裸 JSON（`SimpleMessage`），不认出来
+就会被当 `Message` 去解压，报 `corrupt deflate stream`；但**回**一个过期的 `pake2` 更糟——
+对端只等 500 ms（`localProbeResponseTimeout`），超时后它已经往下走、在等 `pake` 的应答，
+这时收到 `pake2` 会拿去解压，握手当场报废。发送方"算完哈希才连中继"，几万文件的哈希在
+Windows 上要十几秒，那 500 ms 必然过完。沉默则永远安全：Go 的接收方把探测失败丢掉、
+照常走中继路径，代价只是多等 500 ms——与 Go 自己加 `--no-local` 时一样。
+见 `crates/croc-core/src/session.rs` 的 `try_local_probe()`。
+
+> 将来做本地中继时**必须同时**让发送方尽早进入读循环（Go 是把算哈希放进后台 goroutine、
+> 与连中继并行，`croc.go:1792`），否则回过去的仍然是过期答案。
 
 ---
 

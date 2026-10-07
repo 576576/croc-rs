@@ -51,14 +51,14 @@
 | I4 | Rust | Go | Go relay | 100 MB | 一致 |
 | I5 | Go | Rust | Go relay | 100 MB | 一致 |
 | I6 | Rust | Go | 官方 relay | 1 MB（需网络，标 `#[ignore]`） | 一致 |
-| I7 | Rust | Rust | Rust relay | 文件夹 + 空目录 + symlink | 树结构一致 |
+| I7 | Rust | Rust **与** Go | Rust relay | 文件夹 + 空目录 + symlink | 两个方向的树结构都一致 |
 | I8 | Rust | Go | Rust relay | 文本（`--text`） | 内容一致 |
 | I9 | Rust | Go | Rust relay | 断点续传（传 50% 时 kill，重传） | 最终一致 |
 | I10 | Rust | Go | Rust relay | 同名文件 → 覆盖 / 重命名 / 拒绝 | 三种策略行为一致 |
 | I11 | Rust | Go | Rust relay | 压缩开启/关闭 | 一致 |
-| I12 | Rust | Go | 局域网本地直连 | 不走中继 | 一致 |
+| I12 | Rust | Go | 局域网本地直连 | 不走中继 | ⏸ 未实现：`--local` 报错退出（见 [04](04-cli-plan.md) §1.5），harness 里显式 SKIP |
 | I13 | Rust | Go | Rust relay | 10 万文件清单 | 不 OOM，一致 |
-| I14 | Rust | Go | Rust relay | 错误密码 | 双方都报"密码错误"，不崩溃 |
+| I14 | Rust | Go | Rust relay | 错误的中继口令 | 接收端非零退出、无文件落地、双方不崩 |
 | I15 | Rust | Go | Rust relay | 传输中对端 Ctrl-C | 优雅退出，无残留 .part 文件 |
 | I16 | Rust `--transport derp` | Go `--transport derp` | Go relay | 桌面 | ⏸ pending：提示后**降级 relay 传输成功** |
 | I17 | Rust `--transport derp` | Rust `--transport derp` | Rust relay | 桌面 | 同上（pending 期间不区分对端） |
@@ -113,10 +113,19 @@
 - 起一个 Rust relay（本地端口），跑矩阵；
 - 失败时保留双方日志（**注意先脱敏**）。
 
-**互通矩阵目前只在本地跑**（`cargo xtask ci-interop`）。它没有进 `lint.yml`，因为矩阵里的
-I12（`--local`）、I16–I18（`--transport derp`）、I9（断点续传）依赖尚未实现或尚未实测的
-能力，跑起来必然红——一个恒红的门禁比没有门禁更糟。**矩阵全绿之后把它加回 `lint.yml`**，
-在那之前它是本项目的头号缺口（见 [09](09-build-and-ci.md) §8 的检查清单）。
+**互通矩阵目前只在本地跑**（`cargo xtask ci-interop`），没进 `lint.yml`。它是本项目的
+头号缺口（见 [09](09-build-and-ci.md) §8 的检查清单）。
+
+之前不进 CI 的理由是"矩阵里的 I12（`--local`）、I16–I18（`--transport derp`）、
+I9（断点续传）依赖尚未实现的能力，跑起来必然红"。**这个理由已经不成立**：
+I9 与 I16–I18 均已通过，I12 是唯一没实现的，而它在 harness 里会**显式 SKIP 并打印理由**
+（`skip_unimplemented()`），不再是恒红的假信号。所以现在只差"把它挂进 `lint.yml`"这一步。
+
+> 踩过的坑：这份 harness 在真正跑通之前一直是**没被执行过**的（README 里那句"只在本地跑"
+> 掩盖了它一次都没跑过的事实）。第一次真跑就暴露了三个 bug：`begin_case` 没建 `send/recv`
+> 目录（`make_file` 直接 FileNotFound）、`[ ... ] || sender_status=$?` 把 `$?` 取成了 `[`
+> 自己的退出码（发送端恒判失败）、以及中继密码根本没从 `--pass` 传进 `relay_cmd`。
+> **教训：harness 也要有"第一次跑通"的记录，否则它只是看起来像门禁。**
 
 ### 3.1 本地必须能跑完等价检查
 

@@ -244,9 +244,13 @@ jobs:
 ```
 
 **互通矩阵不在 CI 里，只在本地跑**（`cargo xtask ci-interop`）。它不是"太慢"，而是
-矩阵里的 I12（`--local`）、I16–I18（`--transport derp`）、I9（断点续传）依赖尚未实现
-或尚未实测的能力，跑起来必然红。一个恒红的门禁比没有门禁更糟——它会逼着人学会
-无视红灯。**矩阵全绿之后加回 `lint.yml`**，在那之前它是本项目的头号缺口。
+当初的理由"矩阵里的 I12（`--local`）、I16–I18（`--transport derp`）、I9（断点续传）
+依赖尚未实现的能力，跑起来必然红"——而一个恒红的门禁比没有门禁更糟，它会逼着人学会
+无视红灯。
+
+**现在这个理由已经不成立**：I9 与 I16–I18 均已通过；I12 是唯一没实现的，harness 里由
+`skip_unimplemented()` **显式 SKIP 并打印理由**，不再是假信号。剩下要做的只是把它挂进
+`lint.yml`（`CROC_INTEROP_SKIP_NETWORK=1` 跳过需要外网的 I6）。
 
 > 顺带记一个踩过的坑：`continue-on-error` 的 job **依然会拖住整个可复用工作流**，
 > 而 `build` 的 `needs: [prep, lint]` 等的是**整个 lint**。第一次推 CI 时
