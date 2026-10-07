@@ -193,9 +193,20 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                 Plan::Receive(ranges) => (files::open_sink(&entry, &request.out_dir, None)?, ranges),
             };
 
+            emit(
+                &request.events,
+                EngineEvent::Status(format!(
+                    "准备接收 {}（{} 块 / {} 字节），建立 {} 条数据连接…",
+                    entry.name,
+                    ranges.count(u64::try_from(entry.size).unwrap_or(0)),
+                    ranges.bytes(u64::try_from(entry.size).unwrap_or(0)),
+                    stream_count(ports.len())
+                )),
+            );
             // **先建数据连接再发 recipientready**：对端一收到请求就会立刻开始发数据，
             // 数据端口上还没连上就会白丢几块（中继不会为缺席的端口缓冲）。
             let conns = connect_data_streams(&request, &ports).await?;
+            emit(&request.events, EngineEvent::Status(format!("数据连接已就绪（{} 条）", conns.len())));
             effects =
                 session.handle(InEvent::RequestFile { index, ranges: ranges.as_wire().to_vec() }, &mut randomness)?;
             spawn_receive(conns, sink, entry.clone(), ranges, session.data_key(), &data_tx, &cancel)?;

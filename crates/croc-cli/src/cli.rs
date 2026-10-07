@@ -103,6 +103,14 @@ struct Global {
     #[arg(long, global = true)]
     no_compress: bool,
 
+    /// 禁用局域网直连（只走中继）。
+    ///
+    /// 目前是**恒等开关**：本实现还没有本地中继，所以发送方对局域网探测一律回空地址
+    /// 列表（等价 Go 的 `--no-local`），接收方也不主动探测。留着它是为了命令行兼容——
+    /// 用户脚本里带了这个参数不该报"未知参数"。
+    #[arg(long, global = true)]
+    no_local: bool,
+
     /// 什么都不打印。
     #[arg(long, global = true)]
     quiet: bool,
