@@ -194,6 +194,7 @@ pub async fn receive(
         curve: parse_curve(args.curve.as_deref())?,
         out_dir: PathBuf::from(args.out_dir.unwrap_or_else(|| ".".to_owned())),
         preferences: Preferences { overwrite: args.overwrite, rename: args.rename },
+        no_compress: false,
         machine_id: machine_id(),
         // GUI 里"收不收"由前端的确认弹窗决定，这里给一个恒真的回调；
         // 真正的交互在清单到达之前就完成了（用户是主动点"接收"的）。

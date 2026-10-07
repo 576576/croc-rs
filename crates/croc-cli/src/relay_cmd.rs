@@ -96,16 +96,18 @@ impl RelayArgs {
 }
 
 /// 跑起来。
-pub async fn run(args: RelayArgs, cancel: CancellationToken) -> ExitCode {
+///
+/// `password` 由调用方从全局 `--pass` 传进来（它已经解析过 `CROC_PASS` 环境变量与默认值）。
+/// **不要在这里再读一次环境变量**——那样 `croc-rs --pass x relay` 会被悄悄忽略，
+/// 症状是对端一律 `bad password`。
+pub async fn run(args: RelayArgs, password: &str, cancel: CancellationToken) -> ExitCode {
     let ports = args.resolved_ports();
     if ports.len() < 2 {
         eprintln!("croc-rs relay: 至少要两个端口（一个控制 + 至少一个数据）");
         return ExitCode::FAILURE;
     }
 
-    // 中继密码从全局 `--pass` 来；这里读环境变量是为了让 `relay` 子命令单独也能用。
-    let password = std::env::var("CROC_PASS").unwrap_or_else(|_| crate::cli::DEFAULT_PASSPHRASE.to_owned());
-    let config = args.config(&password, &ports);
+    let config = args.config(password, &ports);
     let relay = Arc::new(Relay::new(config));
 
     let host = if args.host.is_empty() { "0.0.0.0" } else { args.host.as_str() };
@@ -177,5 +179,13 @@ mod tests {
         let config = args().config("secret", &ports);
         assert_eq!(config.banner(), "9009,9010,9011");
         assert_eq!(config.password(), "secret");
+    }
+
+    #[test]
+    fn the_password_comes_from_the_caller_not_the_environment() {
+        // 曾经的 bug：这里自己读 `CROC_PASS`，于是 `croc-rs --pass x relay` 被忽略，
+        // 对端一律 `bad password`。现在密码是入参，`args.config()` 只做搬运。
+        let config = args().config("from-the-flag", &[9009, 9010]);
+        assert_eq!(config.password(), "from-the-flag");
     }
 }

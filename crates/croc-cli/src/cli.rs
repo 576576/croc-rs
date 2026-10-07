@@ -20,6 +20,36 @@ pub const DEFAULT_RELAY: &str = "croc.schollz.com:9009";
 /// croc 的默认中继密码。
 pub const DEFAULT_PASSPHRASE: &str = "pass123";
 
+/// Tailscale 数据面尚未就绪时打给用户看的提示。
+///
+/// Go 版的原文是 `Tailcat is unavailable in this build; using the croc relay instead.`
+/// （`src/cli/cli.go:573`）。我们用自己的一句话，因为我们的降级理由是"上游还没稳"，
+/// 而不是"这个构建没编进去"——见 `docs/agent/plan/08-tailscale.md` §2。
+pub const TAILSCALE_PENDING_NOTE: &str =
+    "note: tailscale data plane is not available yet (pending upstream tailcat-rs); using relay";
+
+/// `--local` 尚未实现时的报错。
+///
+/// 之所以**报错**而不是"接受但忽略"：`--local` 的语义是"只走局域网、不碰公网中继"，
+/// 是个隐私开关。悄悄把它降级成公网中继，等于把用户明确拒绝的事做了。
+pub const LOCAL_UNAVAILABLE: &str =
+    "croc-rs: --local（仅局域网）尚未实现：本实现还没有内建局域网中继；请去掉该参数，或改用 --no-local 显式走中继";
+
+/// 数据面选择。
+///
+/// `auto` 与 `relay` 目前等价——本实现还没有局域网中继，`auto` 的"先试局域网"这一支
+/// 恒为假。`derp` 是 ⏸ pending：提示后按 `relay` 处理，**不是错误、不影响退出码**
+/// （对齐 Go 版 `resolveTransportMode()` 在 `tailcatAvailable == false` 时的降级）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Transport {
+    /// 自动：局域网优先，否则走中继。
+    Auto,
+    /// 强制走中继。
+    Relay,
+    /// Tailscale DERP —— ⏸ pending，提示后按中继处理。
+    Derp,
+}
+
 /// 顶层命令行。
 #[derive(Debug, Parser)]
 #[command(
@@ -53,7 +83,11 @@ enum Command {
 #[derive(Debug, clap::Args)]
 struct SendArgs {
     /// 要发送的文件或目录。
-    #[arg(required = true, value_name = "PATH")]
+    ///
+    /// 不设 `required`：`send --text` 不需要路径（Go 版同样允许
+    /// `croc send --text hello`）。"至少得有个东西可发"这条规则放在
+    /// [`validate_sources`] 里查，才能给出比 clap 默认文案更清楚的提示。
+    #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
 
     /// 自定义口令码（至少 6 个字符）。
@@ -103,6 +137,20 @@ struct Global {
     #[arg(long, global = true)]
     no_compress: bool,
 
+    /// 数据面：`auto`（默认）/ `relay` / `derp`。
+    ///
+    /// `derp` 目前是 **pending** 状态：打一条 `note:` 后按 `relay` 处理，不影响退出码。
+    /// 理由见 `docs/agent/plan/08-tailscale.md`。
+    #[arg(long, value_enum, default_value_t = Transport::Auto, global = true)]
+    transport: Transport,
+
+    /// 只走局域网连接（不碰公网中继）。
+    ///
+    /// ⚠️ 尚未实现——本实现还没有内建局域网中继，给了这个参数会**报错退出**。
+    /// 详见 [`LOCAL_UNAVAILABLE`]。
+    #[arg(long, global = true)]
+    local: bool,
+
     /// 禁用局域网直连（只走中继）。
     ///
     /// 目前是**恒等开关**：本实现还没有本地中继，所以发送方对局域网探测一律回空地址
@@ -135,7 +183,18 @@ pub enum Action {
     /// 接收。
     Receive(Box<ReceiveRequest>),
     /// 自建中继。
-    Relay(crate::relay_cmd::RelayArgs),
+    Relay(Box<RelayRequest>),
+}
+
+/// 自建中继的请求。
+///
+/// 密码单独拎出来，是因为它来自**全局** `--pass`，不属于 `relay` 子命令自己的参数
+/// （Go 版也是这样：`--pass` 是全局 flag，`relay` 只认 `--host`/`--ports`）。
+pub struct RelayRequest {
+    /// 子命令参数。
+    pub args: crate::relay_cmd::RelayArgs,
+    /// 中继密码（已解析过 `CROC_PASS` 与默认值）。
+    pub password: String,
 }
 
 /// 解析 argv。
@@ -146,6 +205,17 @@ pub enum Action {
 /// [`ExitCode::FAILURE`]，并且已经把原因打到 stderr 上了。
 pub fn parse() -> Result<Parsed, ExitCode> {
     let cli = Cli::parse();
+
+    if let Err(reason) = validate_transport(cli.global.local, cli.global.transport) {
+        eprintln!("{reason}");
+        return Err(ExitCode::FAILURE);
+    }
+    // 降级提示在 `--quiet` 下要吞掉——Go 的 `writeTailcatRelayFallbackWarning()`
+    // 也是先看 `quiet`（`src/cli/cli.go:581`）。
+    if cli.global.transport == Transport::Derp && !cli.global.quiet {
+        eprintln!("{TAILSCALE_PENDING_NOTE}");
+    }
+
     let curve = match CurveKind::from_name(&cli.global.curve) {
         Ok(curve) => curve,
         Err(error) => {
@@ -158,9 +228,16 @@ pub fn parse() -> Result<Parsed, ExitCode> {
     let machine_id = machine_id();
 
     match cli.command {
-        Some(Command::Relay(args)) => Ok(Parsed { debug: cli.global.debug, action: Action::Relay(args) }),
+        Some(Command::Relay(args)) => {
+            let password = cli.global.pass.clone();
+            Ok(Parsed { debug: cli.global.debug, action: Action::Relay(Box::new(RelayRequest { args, password })) })
+        }
         Some(Command::Send(args)) => {
             let mut paths = args.paths;
+            if let Err(reason) = validate_sources(&paths, args.text.as_deref()) {
+                eprintln!("{reason}");
+                return Err(ExitCode::FAILURE);
+            }
             if let Some(text) = args.text {
                 // `--text`：与 Go 一样落到一个 `croc-stdin-<时间戳>` 临时文件上。
                 // 接收方靠这个名字前缀识别"这是文本传输"。
@@ -221,6 +298,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     curve,
                     out_dir: cli.global.out,
                     preferences: Preferences { overwrite: cli.global.overwrite, rename: cli.global.rename },
+                    no_compress: cli.global.no_compress,
                     machine_id,
                     confirm,
                     events,
@@ -236,7 +314,7 @@ pub async fn run(parsed: Parsed) -> ExitCode {
     spawn_signal_handler(cancel.clone());
 
     match parsed.action {
-        Action::Relay(args) => crate::relay_cmd::run(args, cancel).await,
+        Action::Relay(request) => crate::relay_cmd::run(request.args, &request.password, cancel).await,
         Action::Send(request) => {
             print_send_instructions(&request);
             match croc_engine::send(*request, cancel).await {
@@ -298,6 +376,30 @@ fn sink(global: &Global) -> EventSink {
         // 免得一个没设计过的事件把终端刷花。
         _ => {}
     })
+}
+
+/// 校验数据面相关的参数组合。
+///
+/// `Err` 里是**已经可以整行打到 stderr** 的字符串。抽成纯函数是为了能脱开
+/// `std::env::args()` 测这两条规则。
+fn validate_transport(local: bool, transport: Transport) -> Result<(), &'static str> {
+    // 这条与 Go 版同文（`src/cli/cli.go:700`）。先查它，免得用户同时踩两个坑
+    // 却只看到第二个。
+    if local && transport != Transport::Auto {
+        return Err("croc-rs: --transport must be auto for local-only transfers");
+    }
+    if local {
+        return Err(LOCAL_UNAVAILABLE);
+    }
+    Ok(())
+}
+
+/// `send` 至少要有个东西可发：一个路径，或者一段 `--text`。
+fn validate_sources(paths: &[PathBuf], text: Option<&str>) -> Result<(), &'static str> {
+    if paths.is_empty() && text.is_none() {
+        return Err("croc-rs: send 需要至少一个路径，或者一段 --text 文本");
+    }
+    Ok(())
 }
 
 /// 生成（或校验）口令码。返回 `(原始码, 协议输入)`。
@@ -396,5 +498,48 @@ mod tests {
         assert!(croc_core::policy::is_text_artifact(true, &name), "{name} 应被识别为文本传输的临时文件");
         assert_eq!(std::fs::read_to_string(&path).expect("读"), "hello");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn derp_degrades_to_relay_without_failing() {
+        // pending 期间 `derp` 不是错误：解析照常通过，退出码不受影响。
+        assert_eq!(validate_transport(false, Transport::Derp), Ok(()));
+        assert_eq!(validate_transport(false, Transport::Auto), Ok(()));
+        assert_eq!(validate_transport(false, Transport::Relay), Ok(()));
+    }
+
+    #[test]
+    fn the_pending_note_names_the_reason() {
+        // 文案是我们与用户的契约（`docs/agent/plan/04-cli-plan.md` §1.4），改它要同步改文档。
+        assert!(TAILSCALE_PENDING_NOTE.starts_with("note: "), "降级提示必须以 note: 开头");
+        assert!(TAILSCALE_PENDING_NOTE.contains("tailcat-rs"), "要说清 pending 的对象");
+        assert!(TAILSCALE_PENDING_NOTE.ends_with("using relay"), "要说清实际走了什么");
+    }
+
+    #[test]
+    fn local_only_is_rejected_never_silently_downgraded() {
+        // `--local` 是隐私开关：不能悄悄降级成公网中继，只能报错。
+        let error = validate_transport(true, Transport::Auto).expect_err("--local 应报错");
+        assert_eq!(error, LOCAL_UNAVAILABLE);
+        assert!(error.starts_with("croc-rs: "), "报错要带程序名前缀");
+    }
+
+    #[test]
+    fn local_conflicts_with_an_explicit_transport_like_go() {
+        // Go 版原文：`--transport must be auto for local-only transfers`（src/cli/cli.go:700）。
+        for transport in [Transport::Relay, Transport::Derp] {
+            let error = validate_transport(true, transport).expect_err("应报互斥");
+            assert!(error.contains("--transport must be auto for local-only transfers"), "{error}");
+        }
+    }
+
+    #[test]
+    fn send_accepts_text_without_a_path_but_needs_something() {
+        // Go 允许 `croc send --text hello`；我们的 `paths` 因此不能是 clap 的必填项。
+        assert_eq!(validate_sources(&[], Some("hello")), Ok(()));
+        assert_eq!(validate_sources(&[PathBuf::from("a.bin")], None), Ok(()));
+        assert_eq!(validate_sources(&[PathBuf::from("a.bin")], Some("hello")), Ok(()));
+        let error = validate_sources(&[], None).expect_err("两样都没有应报错");
+        assert!(error.starts_with("croc-rs: "), "报错要带程序名前缀");
     }
 }
