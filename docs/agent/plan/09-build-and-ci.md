@@ -61,19 +61,27 @@ path = "src/main.rs"
 ```
 
 ```
-croc-rs-{VER}{通道段}-{TGT}.{ext}
-crocw-rs-{VER}{通道段}-{TGT}.{ext}
+croc-rs-{VER}{通道段}-{TGT}.{ext}      ← 桌面：包里同时装 croc-rs 与 crocw-rs
+crocw-rs-{VER}{通道段}-{TGT}.apk       ← Android：只有 GUI，本来就是单独一个文件
 
 例：
-croc-rs-1.0.0-linux-x64.tar.gz
+croc-rs-1.0.0-linux-x64.tar.gz         （内含 croc-rs、crocw-rs、LICENSE、README.md）
 croc-rs-r1205-alpha.12345-windows-x64.zip
-crocw-rs-1.0.0-beta.12345-windows-x64.zip
 crocw-rs-1.0.0-android-arm64.apk
 ```
 
 - `TGT`：`windows-x64` / `windows-arm64` / `linux-x64` / `linux-arm64` / `macos-x64` / `macos-arm64` / `android-arm64` / `android-x64`。
 - Windows 上 `croc-rs.exe` 是 console subsystem，`crocw-rs.exe` 由 Tauri 产出（windows subsystem，不弹控制台）。
 - **形态开关不进文件名**（我们只有一个形态，不像 Suwayomi 有 `+jre`）。
+
+### 3.0 为什么两个二进制共用同一个包
+
+`croc-rs` 与 `crocw-rs` **共用同一套协议后端**（`croc-core` + `croc-engine`），
+因此它们的版本必须一致——分开出包就给了"CLI 是 r17、GUI 是 r19"这种组合存在
+的机会，而那正是互传时最难查的一类问题（"为什么我这边连不上你那边"）。
+
+一个 target 一个归档，名字用 CLI 的（它是主入口），里面两个二进制都在。
+唯一例外是 Android：它只有 GUI，出的是 APK，本来就是单独一个文件。
 
 ### 3.1 产物形态开关（dispatch 输入）
 

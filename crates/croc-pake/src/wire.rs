@@ -43,6 +43,38 @@ pub const FIELD_Y_X: &str = "Y\u{1d64}";
 /// `"Y"` + U+1D65。
 pub const FIELD_Y_Y: &str = "Y\u{1d65}";
 
+/// Go 的 `Pake` 里那些**公开编码中恒为 `null`** 的字段。
+///
+/// 这是本项目踩过的最贵的一个坑，所以写清楚：
+///
+/// Go 的 `Pake.Bytes()` 是 `json.Marshal(p.Public())`，而 `Public()` 返回的是一个
+/// **完整的 `Pake` 结构体**（只填了 Role/U/V/X/Y，其余留零值）。`Pake` 的字段
+/// **没有 `json` tag、也没有 `omitempty`**，所以 `encoding/json` 会把**每一个导出
+/// 字段**都编出来——包括那 12 个 `nil` 的私有量，它们全都变成 `null`。
+///
+/// 这串字节**直接进 PAKE 转录**（`pakekey.Context.Initiator` / `Responder` 就是它），
+/// 所以少一个字段、多一个字段、顺序差一点，派生出的密钥就完全不同——表现是
+/// "双方都算完了但谁也解不开对方的话"。
+///
+/// 顺序必须与 Go 的**结构体声明顺序**一致（`encoding/json` 按声明顺序输出）。
+/// 未导出字段（`curve` / `curveName` / `idA` / `idB` / `withIDs`）不出现。
+/// 注意下标用的是 **U+1D64 / U+1D65（ᵤ / ᵥ）**，不是 α/β：Go 里写的是
+/// `Vpwᵤ, Vpwᵥ`、`Upwᵤ, Upwᵥ`、`Zᵤ, Zᵥ`；只有 `Aα` 那一族用 U+03B1。
+pub const TRAILING_NULL_FIELDS: [&str; 12] = [
+    "P",                 // *big.Int
+    "Pw",                // []byte
+    "Vpw\u{1d64}",       // *big.Int
+    "Vpw\u{1d65}",       // *big.Int
+    "Upw\u{1d64}",       // *big.Int
+    "Upw\u{1d65}",       // *big.Int
+    "A\u{03b1}",         // []byte
+    "A\u{03b1}\u{1d64}", // *big.Int
+    "A\u{03b1}\u{1d65}", // *big.Int
+    "Z\u{1d64}",         // *big.Int
+    "Z\u{1d65}",         // *big.Int
+    "K",                 // []byte
+];
+
 /// `pake.Pake` 的公开部分。
 ///
 /// `x`/`y` 为 `None` 对应 Go 里的 `nil *big.Int`，编码成 `null`。B 方在 `Update`
@@ -77,6 +109,12 @@ impl PublicState {
         push_field(&mut out, FIELD_X_Y, self.x.as_ref().map(AffinePoint::y));
         push_field(&mut out, FIELD_Y_X, self.y.as_ref().map(AffinePoint::x));
         push_field(&mut out, FIELD_Y_Y, self.y.as_ref().map(AffinePoint::y));
+        // Go 的 `Public()` 只填 Role/U/V/X/Y，其余 12 个导出字段是零值——但它们
+        // **照样会被编出来**（没有 `omitempty`），而且这些字节要进转录。见上面
+        // `TRAILING_NULL_FIELDS` 的注释。
+        for name in TRAILING_NULL_FIELDS {
+            push_field(&mut out, name, None);
+        }
         out.push('}');
         out
     }
@@ -363,11 +401,42 @@ mod tests {
     }
 
     #[test]
+    fn the_trailing_null_fields_are_always_emitted() {
+        // Go 的 `Public()` 返回整个 `Pake` 结构体，`json.Marshal` 又没有 `omitempty`，
+        // 于是 21 个导出字段全都会出现。这些字节**进 PAKE 转录**，少一个都不行。
+        let state = PublicState {
+            role: 0,
+            u: AffinePoint::new(BigInt::from(1u32), BigInt::from(2u32)),
+            v: AffinePoint::new(BigInt::from(3u32), BigInt::from(4u32)),
+            x: None,
+            y: None,
+        };
+        let json = state.encode();
+        // 字面量写死（而不是从 TRAILING_NULL_FIELDS 拼），这样常量写错时这条会红。
+        let expected_tail = concat!(
+            ",\"P\":null,\"Pw\":null,",
+            "\"Vpw\u{1d64}\":null,\"Vpw\u{1d65}\":null,",
+            "\"Upw\u{1d64}\":null,\"Upw\u{1d65}\":null,",
+            "\"A\u{03b1}\":null,\"A\u{03b1}\u{1d64}\":null,\"A\u{03b1}\u{1d65}\":null,",
+            "\"Z\u{1d64}\":null,\"Z\u{1d65}\":null,",
+            "\"K\":null}"
+        );
+        assert!(json.ends_with(expected_tail), "{json}");
+        assert_eq!(json.matches(':').count(), 21, "Go 的导出字段恰好 21 个：{json}");
+    }
+
+    #[test]
     fn encoding_matches_go_field_order_and_names() {
-        let expected = format!(
-            "{{\"Role\":0,\"{}\":5,\"{}\":12,\"{}\":7,\"{}\":8,\"{}\":1,\"{}\":2,\"{}\":null,\"{}\":null}}",
+        // 逐字节钉住：9 个有值的字段在前，然后 12 个恒为 `null` 的尾随字段。
+        // Go 那边是 `json.Marshal(p.Public())`，`Pake` 没有 `omitempty`。
+        let mut expected = format!(
+            "{{\"Role\":0,\"{}\":5,\"{}\":12,\"{}\":7,\"{}\":8,\"{}\":1,\"{}\":2,\"{}\":null,\"{}\":null",
             FIELD_U_X, FIELD_U_Y, FIELD_V_X, FIELD_V_Y, FIELD_X_X, FIELD_X_Y, FIELD_Y_X, FIELD_Y_Y
         );
+        for name in TRAILING_NULL_FIELDS {
+            expected.push_str(&format!(",\"{name}\":null"));
+        }
+        expected.push('}');
         assert_eq!(sample().encode(), expected);
     }
 

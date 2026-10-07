@@ -44,6 +44,7 @@ pub mod json;
 pub mod manifest;
 pub mod message;
 pub mod payload;
+pub mod probe;
 pub mod random;
 pub mod relay;
 
@@ -60,6 +61,7 @@ pub use message::{
     decode_plain_with_limit, encode_encrypted, encode_encrypted_with_limit, encode_plain, encode_plain_with_limit,
 };
 pub use payload::{Chunk, FileInfo, RemoteFileRequest, SenderInfo};
+pub use probe::{IP_REQUEST, KIND_PAKE1, KIND_PAKE2, ProbeMessage, encode_endpoints};
 pub use random::Randomness;
 pub use relay::{
     Admission, ClientHandshake, ClientSession, ClientStep, RelayError, RelayKey, ServerHandshake, ServerOutcome,

@@ -77,7 +77,25 @@ pub fn parse_data_ports(banner: &str) -> Vec<u16> {
 /// 连不上、超时、口令不对、房间已满、被限流，或者对端不是 croc 中继。
 pub async fn connect(host_port: &str, password: &str, room: &RoomName) -> Result<RelayLink, EngineError> {
     let (host, port) = split_host_port(host_port)?;
-    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host.as_str(), port)))
+    // **先把数字 IP 直接解析成 `SocketAddr`**，不要交给 `ToSocketAddrs`。
+    // Windows 上 `getaddrinfo("127.0.0.1")` 会绕一圈 DNS 客户端，实测每次 ~370ms——
+    // 数据面要连 5 条连接，那就是 1.8 秒的纯等待，足以让对端先超时。
+    // 主机名（`croc.schollz.com`）仍然走解析。
+    let target = match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => std::net::SocketAddr::new(ip, port),
+        Err(_) => tokio::net::lookup_host((host.as_str(), port))
+            .await
+            .map_err(|error| EngineError::RelayUnreachable {
+                address: host_port.to_owned(),
+                reason: error.to_string(),
+            })?
+            .next()
+            .ok_or_else(|| EngineError::RelayUnreachable {
+                address: host_port.to_owned(),
+                reason: "the host name resolved to nothing".to_owned(),
+            })?,
+    };
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target))
         .await
         .map_err(|_| EngineError::RelayUnreachable {
             address: host_port.to_owned(),

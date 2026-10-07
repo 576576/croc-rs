@@ -53,8 +53,8 @@
 use croc_pake::{CurveKind, EPHEMERAL_LEN, Initiator, PakeError};
 use croc_pakekey::{self as pakekey, Keys, PakeKeyError};
 use croc_protocol::{
-    IncomingManifest, ManifestError, ManifestLimits, ManifestPayloads, Message, MessageType, Randomness,
-    RemoteFileRequest, SenderInfo, SessionKey, encode_manifest,
+    IP_REQUEST, IncomingManifest, KIND_PAKE1, ManifestError, ManifestLimits, ManifestPayloads, Message, MessageType,
+    ProbeMessage, Randomness, RemoteFileRequest, SenderInfo, SessionKey, encode_endpoints, encode_manifest,
 };
 use zeroize::Zeroize;
 
@@ -97,6 +97,20 @@ pub enum Stage {
     /// 结束。
     Done,
 }
+
+/// 接收方在 PAKE 之前先发的那个**裸帧**。
+///
+/// 它不是 [`Message`]——帧体就是这 9 个字节，不走 JSON、不走 DEFLATE、也不加密。
+/// Go 侧是 `croc.go` 的 `handshakeRequest = []byte("handshake")`：
+///
+/// - 接收方连上中继、注册完房间之后，**第一件事**就是把它发出去；
+/// - 发送方的 `senderWaitForHandshake` 循环读帧，看到它就跳出等待、开始处理 `pake`；
+/// - 发送方**不回任何东西**。
+///
+/// 这一步的用途是"我到了，你可以开始了"。少了它，Go 的发送方会一直卡在
+/// `senderWaitForHandshake` 里，而 Rust 的发送方会把 `"handshake"` 当成一条
+/// JSON 消息去解压，报 `corrupt deflate stream`——两个方向都通不了。
+pub const HANDSHAKE: &[u8] = b"handshake";
 
 /// 进入状态机的事件——**全部是已经发生的事实**，不是待办。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -316,6 +330,21 @@ impl State {
     }
 }
 
+/// 局域网探测的应答状态（**只有发送方会用到**）。
+///
+/// 探测有自己的用途串（`local-ip-probe`）与自己的密钥，与正式传输的那套完全独立——
+/// 所以它必须单独存，不能塞进 `PakeState`。
+struct LocalProbe {
+    /// 探测密钥，用来加解密 `ips?` 与 IP 列表。
+    key: [u8; croc_protocol::ENCRYPTION_KEY_LEN],
+}
+
+impl Drop for LocalProbe {
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
+}
+
 /// 进行中的 PAKE。
 ///
 /// 两端留的东西不一样（接收方要留着 [`Initiator`] 走 `accept_response`，发送方派生完
@@ -348,6 +377,8 @@ pub struct Session {
     sender_info: Option<Box<SenderInfo>>,
     /// 当前正在传的文件下标，收尾事件里要带出去。
     current_file: u64,
+    /// 局域网探测的应答状态；`None` 表示还没开始或已经答完。
+    local_probe: Option<LocalProbe>,
     limits: ManifestLimits,
 }
 
@@ -417,6 +448,7 @@ impl Session {
             manifest: Some(payloads),
             sender_info: Some(Box::new(manifest)),
             current_file: 0,
+            local_probe: None,
             limits: ManifestLimits::default(),
         })
     }
@@ -437,6 +469,7 @@ impl Session {
             manifest: None,
             sender_info: None,
             current_file: 0,
+            local_probe: None,
             limits: ManifestLimits::default(),
         })
     }
@@ -557,10 +590,18 @@ impl Session {
 
         self.pake = PakeState::Initiating { exchange: Box::new(exchange), initiator };
         self.state = State::AwaitingPakeResponse;
-        Ok(vec![Effect::Send(self.encode(&message, randomness)?)])
+        // 顺序要紧：先裸帧 `handshake`，紧接着才是 `pake`。两者之间没有往返——
+        // 对端的发送方一看到 `handshake` 就跳出等待循环，随即在流里读到 `pake`。
+        Ok(vec![Effect::Send(HANDSHAKE.to_vec()), Effect::Send(self.encode(&message, randomness)?)])
     }
 
     fn on_frame(&mut self, payload: &[u8], randomness: &mut impl Randomness) -> Result<Vec<Effect>, SessionError> {
+        // 正式 PAKE 之前还有一段**不属于消息层**的东西：局域网探测（`pake1`/`pake2`/
+        // `ips?`）与裸帧 `handshake`。它们不 DEFLATE、可能是裸 JSON、也可能用探测密钥
+        // 加密——全都不该拿去 `self.session.open()`。
+        if let Some(effects) = self.try_local_probe(payload, randomness)? {
+            return Ok(effects);
+        }
         let message = self.session.open(payload)?;
         let kind = message.kind.clone().unwrap_or(MessageType::Unknown(String::new()));
         match kind {
@@ -581,6 +622,86 @@ impl Session {
             MessageType::Finished => Ok(self.on_finished(randomness)?),
             other => Err(SessionError::UnexpectedMessage { kind: other.to_string(), state: self.state.name() }),
         }
+    }
+
+    /// 处理正式 PAKE 之前的那几帧。**只有发送方需要**。
+    ///
+    /// Go 的接收方在连上中继之后默认先做一次局域网探测（除非 `--no-local` 或给了
+    /// `--ip`）：它发 `pake1`，等 `pake2`，再问 `ips?`。不答这一段，Go 的接收方会
+    /// 卡在那里等 `pake2`，而我们会把那段裸 JSON 当成 `Message` 去解压，报
+    /// `corrupt deflate stream`——两个方向都断在第一帧上。
+    ///
+    /// 返回 `None` 表示"这不是探测帧"，调用方继续走正常的消息路径。
+    ///
+    /// # Errors
+    ///
+    /// 曲线名不认识、SPAKE2 失败、密钥编排失败。
+    fn try_local_probe(
+        &mut self,
+        payload: &[u8],
+        randomness: &mut impl Randomness,
+    ) -> Result<Option<Vec<Effect>>, SessionError> {
+        // 裸帧 `handshake`：接收方在 PAKE 之前发的"我到了"。发送方什么都不用做，
+        // 等 `pake` 就是。两种角色都可能收到它。
+        if payload == HANDSHAKE {
+            return Ok(Some(Vec::new()));
+        }
+        // 我们是接收方时不主动探测（等价于 Go 的 `--no-local`）：本项目还没有本地中继，
+        // 探到了也没得连，白白多两个往返。
+        if self.config.role != Role::Sender || !matches!(self.state, State::Idle) {
+            return Ok(None);
+        }
+
+        // 已经派生过探测密钥：这一帧应该是加密的 `ips?`。
+        if let Some(probe) = &self.local_probe {
+            let Ok(plain) = croc_protocol::decrypt(payload, &probe.key) else {
+                return Ok(None);
+            };
+            if plain != IP_REQUEST {
+                return Ok(None);
+            }
+            // 回一个**空**地址列表。我们没有本地中继，接收方看到 `len(ips) <= 1`
+            // 就会回落到中继路径——这正是 Go 的 `--no-local` 发送方的行为。
+            let body = encode_endpoints(0, &[])?;
+            let nonce = croc_protocol::random::nonce(randomness);
+            let frame = croc_protocol::encrypt(&body, &probe.key, &nonce)?;
+            self.local_probe = None;
+            return Ok(Some(vec![Effect::Send(frame)]));
+        }
+
+        // `pake1`：探测的发起方是接收方，我们是应答方。
+        if !ProbeMessage::looks_like_probe(payload) {
+            return Ok(None);
+        }
+        let Ok(message) = ProbeMessage::from_bytes(payload) else {
+            return Ok(None);
+        };
+        if message.kind != KIND_PAKE1 {
+            return Ok(None);
+        }
+
+        let curve = CurveKind::from_name(&message.curve)?;
+        let mut exchange =
+            pakekey::responder(&self.config.passphrase, curve, pakekey::PURPOSE_LOCAL_PROBE, &self.config.room)?;
+        exchange.accept_request(&message.bytes, croc_protocol::random::array::<EPHEMERAL_LEN>(randomness))?;
+        let responder = exchange.public_bytes().into_bytes();
+        let mut salt = vec![0u8; pakekey::SALT_SIZE];
+        randomness.fill(&mut salt);
+
+        // 注意用途串是 `local-ip-probe`，与正式传输的 `peer-transfer` 不是一套密钥。
+        let keys = Self::derive_keys(
+            &self.config.room,
+            pakekey::PURPOSE_LOCAL_PROBE,
+            exchange.session_key(),
+            curve,
+            &message.bytes,
+            &responder,
+            &salt,
+        )?;
+        let reply = ProbeMessage::pake2(responder, salt, protocol_version(), curve.name());
+        self.local_probe = Some(LocalProbe { key: *keys.encryption_key() });
+
+        Ok(Some(vec![Effect::Send(reply.to_bytes()?)]))
     }
 
     /// `pake`：两端都走这里，方向由角色决定。
@@ -604,6 +725,7 @@ impl Session {
 
                 let keys = Self::derive_keys(
                     &self.config.room,
+                    pakekey::PURPOSE_TRANSFER,
                     exchange.session_key(),
                     curve,
                     &message.bytes,
@@ -646,6 +768,7 @@ impl Session {
                 };
                 let keys = Self::derive_keys(
                     &self.config.room,
+                    pakekey::PURPOSE_TRANSFER,
                     shared,
                     self.config.curve,
                     &initiator,
@@ -899,6 +1022,7 @@ impl Session {
     /// 的时候拿到派生结果——`derive_keys` 只需要房间名，不需要整个会话。
     fn derive_keys(
         room: &str,
+        purpose: &str,
         shared: Option<[u8; EPHEMERAL_LEN]>,
         curve: CurveKind,
         initiator: &[u8],
@@ -906,10 +1030,7 @@ impl Session {
         salt: &[u8],
     ) -> Result<Keys, SessionError> {
         let shared = shared.ok_or(SessionError::ConfirmationFailed)?;
-        Ok(pakekey::derive(
-            &shared,
-            &pakekey::Context { purpose: pakekey::PURPOSE_TRANSFER, room, curve, initiator, responder, salt },
-        )?)
+        Ok(pakekey::derive(&shared, &pakekey::Context { purpose, room, curve, initiator, responder, salt })?)
     }
 
     /// 把派生出的流量密钥装进会话，并立刻丢掉中间材料。
@@ -1056,8 +1177,18 @@ mod tests {
 
         apply(sender.handle(InEvent::PeerConnected, &mut sender_rng).expect("配对"), &mut sender_sink);
         to_receiver.append(&mut sender_sink.wire);
-        apply(receiver.handle(InEvent::PeerConnected, &mut receiver_rng).expect("配对"), &mut receiver_sink);
+        let mut effects = receiver.handle(InEvent::PeerConnected, &mut receiver_rng).expect("配对");
+        // 接收方的第一条帧必须是裸帧 `handshake`——少了它 Go 的发送方会一直卡在
+        // `senderWaitForHandshake` 里。这条断言是"两向互通"的最小护栏。
+        match effects.first() {
+            Some(Effect::Send(frame)) => assert_eq!(frame.as_slice(), HANDSHAKE, "接收方必须先发 handshake 裸帧"),
+            other => panic!("接收方的第一条效果应是 handshake 帧，实得 {other:?}"),
+        }
+        effects.remove(0);
+        apply(effects, &mut receiver_sink);
         to_sender.append(&mut receiver_sink.wire);
+        // 裸帧也喂给发送方：它必须吃掉，而不是当成 JSON 去解压。
+        to_sender.insert(0, HANDSHAKE.to_vec());
 
         // 引擎侧的文件循环状态：还剩几个文件要传。
         let mut pending_files: Vec<u64> = vec![0, 1];
@@ -1217,13 +1348,48 @@ mod tests {
     }
 
     #[test]
+    fn the_receiver_opens_with_a_bare_handshake_frame() {
+        // Go 的 `senderWaitForHandshake` 在读到 `handshake` 之前不处理任何消息，
+        // 所以漏了这一步就是"两个方向都连不上"。
+        let mut receiver = Session::new_receiver(&config(Role::Receiver, PASSPHRASE)).expect("构造");
+        let mut rng = Counting::new(0);
+        let effects = receiver.handle(InEvent::PeerConnected, &mut rng).expect("配对");
+        assert_eq!(effects.first(), Some(&Effect::Send(HANDSHAKE.to_vec())));
+        assert_eq!(HANDSHAKE, b"handshake", "Go 侧是 handshakeRequest = []byte(handshake)");
+        // 第二条才是 `pake`——两者之间没有往返。
+        assert!(matches!(effects.get(1), Some(Effect::Send(_))), "handshake 之后应紧跟 pake");
+    }
+
+    #[test]
+    fn the_sender_swallows_the_bare_handshake_frame() {
+        // 发送方收到 `handshake` 必须当无事发生。以前这里会把它当 JSON 去解压，
+        // 报 `corrupt deflate stream`，于是 Go→Rust 的方向直接断在第一帧上。
+        let mut sender = Session::new_sender(&config(Role::Sender, PASSPHRASE), manifest()).expect("构造");
+        let mut rng = Counting::new(0);
+        assert_eq!(sender.handle(InEvent::Frame(HANDSHAKE.to_vec()), &mut rng), Ok(Vec::new()));
+        assert_eq!(sender.stage(), Stage::Idle, "吃掉 handshake 之后仍在等 pake");
+
+        // 紧接着的 pake 必须还能正常处理。
+        let mut receiver = Session::new_receiver(&config(Role::Receiver, PASSPHRASE)).expect("构造");
+        let mut receiver_rng = Counting::new(0x80);
+        let mut effects = receiver.handle(InEvent::PeerConnected, &mut receiver_rng).expect("配对");
+        effects.remove(0);
+        let pake = first_frame(effects);
+        assert!(sender.handle(InEvent::Frame(pake), &mut rng).is_ok(), "handshake 之后应能正常处理 pake");
+    }
+
+    #[test]
     fn a_wrong_passphrase_fails_the_confirmation() {
         let mut sender = Session::new_sender(&config(Role::Sender, PASSPHRASE), manifest()).expect("构造");
         let mut receiver = Session::new_receiver(&config(Role::Receiver, b"wrong-passphrase")).expect("构造");
         let mut sender_rng = Counting::new(0x10);
         let mut receiver_rng = Counting::new(0x80);
 
-        let pake = first_frame(receiver.handle(InEvent::PeerConnected, &mut receiver_rng).expect("配对"));
+        let mut effects = receiver.handle(InEvent::PeerConnected, &mut receiver_rng).expect("配对");
+        // 第 0 条是裸帧 `handshake`，第 1 条才是 `pake`。
+        assert_eq!(effects.first(), Some(&Effect::Send(HANDSHAKE.to_vec())));
+        effects.remove(0);
+        let pake = first_frame(effects);
         let reply = first_frame(sender.handle(InEvent::Frame(pake), &mut sender_rng).expect("发送方应能回 pake"));
         let confirm = first_frame(receiver.handle(InEvent::Frame(reply), &mut receiver_rng).expect("接收方应能算密钥"));
         assert_eq!(
