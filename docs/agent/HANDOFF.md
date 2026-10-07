@@ -1,14 +1,37 @@
-# 交接记录 · 2026-10-07
+# 交接记录 · 2026-10-07（同日追加：仓库形态调整）
 
 给下一个接手的人（或下一个模型）。**只写"现在是什么样、怎么复现、哪里是坑"**，
 方案与决策见 [`plan/`](plan/README.md)。
 
 ---
 
+## 0. 同日追加：仓库形态调整
+
+这一轮没有动协议实现，动的是仓库边界与许可证。
+
+| 变化 | 结果 |
+|---|---|
+| **互通矩阵不进 CI** | 从"头号缺口"改成**有意的决定**，理由从"挂了会恒红"换成"挂了不划算"（同机双实现、分钟级、有环境竞态）。`lint.yml` 保持 5 个 job 不变 |
+| **Go 代码全部移出主仓库** | `tools/gen-golden/` → 平级的 `croc-playground/tools/gen-golden/`（独立 git 仓库）。主仓库现在 `git ls-files \| grep '\.go$'` 为空 |
+| **本地矩阵的 Go 版来源** | `cargo xtask ci-interop` 现在按 `CROC_GO_BIN` → `../croc-playground/croc.exe` → 现编 `../croc` 的顺序找 |
+| **许可证 GPL-3 → LGPL-3.0-only** | 只改了 `LICENSE`、`Cargo.toml` 与文档措辞，**不涉及代码** |
+
+**顺带修掉一个真 bug**（之前一直没人碰到）：`cargo xtask ci-interop` 在 Windows 上
+**从来没跑通过**。`Command::new("bash")` 命中的是 `C:\Windows\System32\bash.exe`（**WSL 的
+bash**），它把 `D:\repo\run.sh` 的反斜杠当转义符，报 `No such file or directory` ——
+看着像脚本不见了，其实是 bash 选错了。现在 `resolve_bash()` 显式找 Git for Windows 的
+bash，路径也转成正斜杠；找不到就报清楚原因（可用 `CROC_INTEROP_BASH` 指定）。
+
+上一轮那个 16/0/2 是在 Git Bash 里直接 `bash tests/interop/run.sh` 跑的，
+**绕过了 `xtask`** —— 又一次"文档写了 ≠ 验证过了"。修完之后经`ci-interop` 复跑，
+仍是 **通过 16 · 失败 0 · 跳过 2**（3分 33 秒）。
+
+---
+
 ## 1. 当前状态一句话
 
-**互通矩阵全绿**：`tests/interop/run.sh` 跑出 **通过 16 · 失败 0 · 跳过 2**
-（跳过的是 I6「需要外网」与 I12「`--local` 未实现」）。
+**互通矩阵全绿**：`cargo xtask ci-interop` 跑出 **通过 16 · 失败 0 · 跳过 2**
+（跳过的是 I6「需要外网」与 I12「`--local` 未实现」），耗时约 3.5 分钟。
 
 这是本项目第一次真正跑通这份 harness——在此之前它**一次都没被执行过**，
 README 里"只在本地跑"那句话掩盖了这件事。第一次真跑就暴露了 harness 自身三个 bug
@@ -134,18 +157,20 @@ README 里"只在本地跑"那句话掩盖了这件事。第一次真跑就暴�
 
 ## 5. 待办（按建议顺序）
 
-1. **把互通矩阵挂进 `lint.yml`**（`CROC_INTEROP_SKIP_NETWORK=1`）。
-   之前不挂的理由是"矩阵里有一批用例必然红"，**现在不成立了**：
-   只剩 I12 会显式 SKIP。这是当前的头号缺口。
+1. **发送方并行化**：`files::collect` 与 `relay::connect` 并行（Go `croc.go:1792`）。
+   纯性能，但也是 `--local` 与 §2.4 的前置条件。
 2. **`--local`（内建局域网中继）**：需要内嵌 relay + UDP 组播发现
    （Go 的 `broadcastOnLocalNetwork()`，载荷 `"croc" + 端口`）。
    做它**必须同时**把发送方改成"连中继与算哈希并行"，理由见 §2.4。
-3. **发送方并行化**：`files::collect` 与 `relay::connect` 并行（Go `croc.go:1792`）。
-   纯性能，但也是 §2.4 的前置条件。
-4. **`--transport derp` 的 Tailscale 数据面**：⏸ 等上游 tailcat-rs。
-5. **`--git` / `--exclude` / `--qrcode` / `--socks5` / `--throttleUpload` 等**：
+3. **`--git` / `--exclude` / `--qrcode` / `--socks5` / `--throttleUpload` 等**：
    `plan/04-cli-plan.md` §1.2/§1.3 标了 ✅ 但**还没实现**——那张表是目标态，
    不是现状。动手前先核一遍。
+4. **`--transport derp` 的 Tailscale 数据面**：⏸ 等上游 tailcat-rs。
+
+**互通矩阵不进 CI，这是有意的**（不是待办）。理由见
+`plan/09-build-and-ci.md` §5.3：矩阵要在同一台机器上同时有 Rust 版与 Go 版，
+每个用例还各自起中继与两端进程；挂进 `lint.yml` 只会让它变成发布链路上一段又慢
+又不稳的环节。它真正的用途是"改了协议字节之后本地跑一遍"。
 
 ---
 
@@ -156,8 +181,12 @@ README 里"只在本地跑"那句话掩盖了这件事。第一次真跑就暴�
 # 2. 编 Rust 版
 cargo build --release -p croc-cli
 
-# 3. 跑矩阵（Go 版二进制路径自己换）
-CROC_GO_BIN=/d/Desktop/croc.exe CROC_INTEROP_SKIP_NETWORK=1 bash tests/interop/run.sh
+# 3. 跑矩阵。Go 版二进制放在平级的 croc-playground/ 里（croc.exe）；
+#    没有的话 ci-interop 会退回用 ../croc 源码现编一份。
+cargo xtask ci-interop
+
+# 或者直接给脚本指路：
+CROC_GO_BIN=../croc-playground/croc.exe CROC_INTEROP_SKIP_NETWORK=1 bash tests/interop/run.sh
 
 # 期望：通过 16 · 失败 0 · 跳过 2
 ```
@@ -168,13 +197,17 @@ CROC_GO_BIN=/d/Desktop/croc.exe CROC_INTEROP_SKIP_NETWORK=1 bash tests/interop/r
 
 ```bash
 cargo xtask ci-lint      # fmt / clippy / test / purity / deps —— 必须 5 项全绿
-cargo xtask ci-interop   # 矩阵（默认跳外网）
+cargo xtask ci-interop   # 矩阵（默认跳外网；只在本地跑，不进 CI）
 ```
 
 ---
 
 ## 7. 环境备忘（这台机器上踩过的）
 
+- **`bash` 在这台机器上指向 WSL**：`which bash` 给的是 Git Bash 的 `/bin/bash`，但
+  `C:\Windows\System32\bash.exe`（WSL）也在 `PATH` 里且优先级更高。**Rust 子进程
+  按 `PATH` 找会选到WSL 那个**，于是 Windows 路径里的反斜杠被当转义符。凡是 Rust 代码
+  要起 bash，都得显式指Git for Windows 的 `bash.exe`，别写 `Command::new("bash")`。
 - **Windows + Defender 下文件打开很贵**：2 万空文件 `files::collect` ≈ 17 s；
   Go 版同场景 ≈ 98 s。所以**别拿"几万文件"的用例去判断实现效率**，
   先怀疑环境。
@@ -191,3 +224,8 @@ cargo xtask ci-interop   # 矩阵（默认跳外网）
   否则 `cargo build` 报 `os error 5`（后台中继还占着文件）。
 - 命令行里带 `${...}` 的字符串会被外层预处理器拒掉（`Bad substitution`），
   即便写在带引号的 heredoc 里也一样——避免在命令里拼 shell 变量展开。
+- **带 CJK 的多行文本用 Python 脚本改，别塞进 heredoc**：shell 传参时的编码转换会吃掉
+  字符，症状是文件里出现 U+FFFD 替换字符。改完扫一遍确认没有：
+  `grep -rl $'\ufffd' --include='*.md' --include='*.rs' .`。
+- **`Edit` 工具改CRLF 文件会因精确匹配失败**：先读文件确认实际行尾，或直接用 Python
+  按字节处理（`read_bytes().decode('utf-8')` → 替换 → `write_bytes`）。
