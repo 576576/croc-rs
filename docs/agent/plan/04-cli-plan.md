@@ -131,7 +131,7 @@ Windows 上要十几秒，那 500 ms 必然过完。沉默则永远安全：Go �
 | # | 任务 | 产出 | 验收 |
 |---|------|------|------|
 | C0.1 | 初始化 workspace，定 crate 骨架，CI 跑 `cargo fmt/clippy/test` | 空 crate 编译通过 | CI 绿 |
-| C0.2 | 写 `tools/gen-golden/*.go`，抓取 Go 版曲线/PAKE/codephrase 向量 | `tests/golden/*.json` | 向量文件入库 |
+| C0.2 | 写 `croc-playground/tools/gen-golden`（Go，**不在本仓库**），抓取 Go 版曲线/PAKE/codephrase 向量 | `tests/golden/*.json` | 向量文件入库 |
 | C0.3 | 抓一次完整中继握手 + 一次 1 KB 传输的 pcap | `tests/golden/*.bin` | 可用脚本回放 |
 | C0.4 | `croc-siec`：SIEC255 + p256/p384/p521 算术 | crate | golden 全绿 |
 | C0.5 | `croc-pake`：曲线常量点、Init/Update/SessionKey、wire JSON | crate | golden 全绿（**含 wire 字节级比对**） |

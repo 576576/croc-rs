@@ -8,11 +8,11 @@
 
 //! 与 Go 参考实现的黄金向量比对。
 //!
-//! 向量由 `tools/gen-golden`（Go 程序，直接用 `tscholl2/siec` 与 `crypto/elliptic`）
+//! 向量由 `croc-playground/tools/gen-golden`（Go 程序，直接用 `tscholl2/siec` 与 `crypto/elliptic`）
 //! 生成到 `tests/golden/curves.json`。**文件不存在时本测试会跳过**并打印提示——
 //! 这样没有 Go 工具链的机器也能跑 `cargo test`，而一旦生成过向量，比对就是硬断言。
 //!
-//! 生成方式见 `tools/gen-golden/README.md`。
+//! 生成方式见 `tests/golden/README.md`。
 
 use std::path::PathBuf;
 
@@ -39,7 +39,9 @@ fn bytes(case: &Value, key: &str) -> Vec<u8> {
 #[test]
 fn curve_arithmetic_matches_the_go_reference() {
     let Some(golden) = load("curves.json") else {
-        eprintln!("跳过：tests/golden/curves.json 不存在。先运行 tools/gen-golden 生成（需要 Go 工具链）。");
+        eprintln!(
+            "跳过：tests/golden/curves.json 不存在。先运行 croc-playground/tools/gen-golden 生成（需要 Go 工具链）。"
+        );
         return;
     };
     let cases = golden["cases"].as_array().expect("cases 应为数组");

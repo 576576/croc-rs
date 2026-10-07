@@ -8,10 +8,10 @@
 
 //! 与 Go 参考实现（croc 的 `src/pakekey`）的黄金向量比对。
 //!
-//! 向量由 `tools/gen-golden` 生成到 `tests/golden/pakekey.json`，覆盖五条曲线 ×
-//! 三种用途。参与者身份不在文件里——它由 `purpose`/`room` 推出，正好顺带验证
-//! [`croc_pakekey::identities`] 的编码与 Go 一致。**文件不存在时跳过**，见
-//! `tools/gen-golden/README.md`。
+//! 向量由 `croc-playground/tools/gen-golden` 生成到 `tests/golden/pakekey.json`，
+//! 覆盖五条曲线 × 三种用途。参与者身份不在文件里——它由 `purpose`/`room` 推出，
+//! 正好顺带验证 [`croc_pakekey::identities`] 的编码与 Go 一致。
+//! **文件不存在时跳过**，见 `tests/golden/README.md`。
 
 use std::path::PathBuf;
 
@@ -36,7 +36,9 @@ fn ephemeral(case: &Value, key: &str) -> [u8; EPHEMERAL_LEN] {
 #[test]
 fn key_schedule_matches_the_go_reference() {
     let Some(golden) = load("pakekey.json") else {
-        eprintln!("跳过：tests/golden/pakekey.json 不存在。先运行 tools/gen-golden 生成（需要 Go 工具链）。");
+        eprintln!(
+            "跳过：tests/golden/pakekey.json 不存在。先运行 croc-playground/tools/gen-golden 生成（需要 Go 工具链）。"
+        );
         return;
     };
     let cases = golden["cases"].as_array().expect("cases 应为数组");

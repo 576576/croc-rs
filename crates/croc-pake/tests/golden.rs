@@ -8,9 +8,9 @@
 
 //! 与 Go 参考实现（`schollz/pake` v3.2.0）的黄金向量比对。
 //!
-//! 向量由 `tools/gen-golden` 生成到 `tests/golden/pake.json`，包含五条曲线各一组
-//! 「α = 0x11×32 / β = 0x12×32」的完整握手。**文件不存在时跳过**，见
-//! `tools/gen-golden/README.md`。
+//! 向量由 `croc-playground/tools/gen-golden` 生成到 `tests/golden/pake.json`，
+//! 包含五条曲线各一组「α = 0x11×32 / β = 0x12×32」的完整握手。
+//! **文件不存在时跳过**，见 `tests/golden/README.md`。
 
 use std::path::PathBuf;
 
@@ -34,7 +34,9 @@ fn ephemeral(case: &Value, key: &str) -> [u8; EPHEMERAL_LEN] {
 #[test]
 fn spake2_matches_the_go_reference() {
     let Some(golden) = load("pake.json") else {
-        eprintln!("跳过：tests/golden/pake.json 不存在。先运行 tools/gen-golden 生成（需要 Go 工具链）。");
+        eprintln!(
+            "跳过：tests/golden/pake.json 不存在。先运行 croc-playground/tools/gen-golden 生成（需要 Go 工具链）。"
+        );
         return;
     };
     let cases = golden["cases"].as_array().expect("cases 应为数组");
