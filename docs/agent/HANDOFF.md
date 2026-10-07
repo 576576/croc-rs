@@ -123,6 +123,10 @@ README 里"只在本地跑"那句话掩盖了这件事。第一次真跑就暴�
 
 另外：Git for Windows 的 `TMPDIR` 是 Windows 形式（`C:\...`），直接喂给 `rm -rf`
 会被安全删除策略拒掉（`SAFE_DELETE_INVALID_PATH`），已加 `cygpath -u`。
+- 退出时的 `rm -rf "$WORK"` 仍可能对 I13 的部分文件报 `Permission denied`：
+  发送方刚退出，Windows 还没释放句柄。**这是收尾竞态，不是用例失败**——
+  看到满屏 `Permission denied` 而最后一行是 `matrix rc=0`，就说明矩阵是绿的；
+  进程退干净之后手工 `rm -rf` 即可。
 
 **教训**：harness 也要有"第一次跑通"的记录，否则它只是**看起来像**门禁。
 
