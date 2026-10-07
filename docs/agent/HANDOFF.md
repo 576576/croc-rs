@@ -179,7 +179,12 @@ cargo xtask ci-interop   # 矩阵（默认跳外网）
   Go 版同场景 ≈ 98 s。所以**别拿"几万文件"的用例去判断实现效率**，
   先怀疑环境。
 - `git push` 需要 `-c http.version=HTTP/1.1` 并重试（代理 `127.0.0.1:6208`
-  会间歇性对 `github.com` 返回 502）。
+  会间歇性对 `github.com` 返回 502；有时会连续几十秒全是 502，多试几轮）。
+  **直连不通**，必须走这个代理。
+- ⚠️ 写重试循环时别用 `if git push ... | tail -3; then`——**管道退出码是 `tail` 的**，
+  恒为 0，于是"推失败"会被判成成功。用 `if out=$(git push ... 2>&1); then`，
+  或者 `set -o pipefail`。这和 §4 第 2 条是同一类错误：**看错了退出码的来源**。
+  推完用 `gh api repos/576576/croc-rs/commits/main --jq '.sha[0:7]'` 核对远端 HEAD。
 - 仓库是**私有的**：`gh api` 能用，匿名 `api.github.com` 会返回 404。
   核对远端状态用 `gh api repos/576576/croc-rs/commits/main --jq '.sha'`。
 - 重编 `croc-rs.exe` 前先 `taskkill //F //IM croc-rs.exe //T`，
