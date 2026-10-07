@@ -29,6 +29,7 @@ CROC_GO_BIN=/usr/local/bin/croc-go bash tests/interop/run.sh
 | `CROC_INTEROP_SKIP_NETWORK` | 空 | 非空则跳过 I6（官方 relay，需外网） |
 | `CROC_INTEROP_TIMEOUT` | `180` | 等发送方退出的超时（秒） |
 | `CROC_INTEROP_KEEP` | 空 | 非空则保留临时工作目录，便于翻日志 |
+| `CROC_INTEROP_FORCE_UNIMPLEMENTED` | 空 | 非空则连"依赖尚未实现的能力"的用例也照跑（预期红） |
 
 ## 约定
 
@@ -37,12 +38,14 @@ CROC_GO_BIN=/usr/local/bin/croc-go bash tests/interop/run.sh
 - **每个用例自起一个 relay**，端口从 31000 起找一段连续 5 个空闲端口（控制口 + 4 个数据口）。
 - **崩溃与报错要分清**：`no_crash` 检查日志里有没有 `panic` / `SIGSEGV` 之类，
   "优雅报错"算通过（I14 错误密码就是这种用例），"崩了"一律算失败。
+- **未实现的用例显式 SKIP，并打印理由**：`skip_unimplemented <id> <理由>`。
+  当前只有 I12（`--local`）走这条路。**跳过不等于通过**，结尾会单列一张跳过清单——
+  恒红的门禁会让人学会无视红灯，静默跳过则会让人以为已经做完了，两者都要避免。
 
 ## CI
 
-**目前没进 CI**，只在本地跑（`cargo xtask ci-interop`）。矩阵里的 I12（`--local`）、
-I16–I18（`--transport derp`）、I9（断点续传）依赖尚未实现或尚未实测的能力，跑起来必然红，
-而恒红的门禁会逼着人学会无视红灯。
+**目前没进 CI**，只在本地跑（`cargo xtask ci-interop`）。
 
-**矩阵全绿之后把它加回 `lint.yml`**（`CROC_INTEROP_SKIP_NETWORK=1` 跳过需要外网的 I6）。
-在那之前，互通测试是**手工门禁**：改动协议层之后必须自己跑一遍。
+不进的理由曾经是"矩阵里有一批用例依赖尚未实现的能力，跑起来必然红"。**现在不成立了**：
+I9（断点续传）与 I16–I18（`--transport derp` 降级）都已通过，只剩 I12（`--local`）
+显式 SKIP。**下一步就是把它挂进 `lint.yml`**（带 `CROC_INTEROP_SKIP_NETWORK=1`）。

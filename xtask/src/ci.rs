@@ -123,11 +123,15 @@ pub fn interop() -> ExitCode {
     let rust_bin_str = rust_bin.to_string_lossy().into_owned();
 
     println!("\n=== 互通矩阵 ===");
+    // 默认跳过需要外网的 I6（官方 relay）——本地门禁不该因为网络抖动变红，CI 里也是
+    // 这么跑的。想真跑 I6 就显式把 CROC_INTEROP_SKIP_NETWORK 设成空串。
+    let skip_network = std::env::var("CROC_INTEROP_SKIP_NETWORK").unwrap_or_else(|_| "1".to_owned());
     let passed = Command::new("bash")
         .arg(root.join("tests").join("interop").join("run.sh"))
         .current_dir(&root)
         .env("CROC_GO_BIN", &go_bin_str)
         .env("CROC_RS_BIN", &rust_bin_str)
+        .env("CROC_INTEROP_SKIP_NETWORK", skip_network)
         .status()
         .is_ok_and(|status| status.success());
     steps.push(Step { title: "tests/interop/run.sh", passed });
