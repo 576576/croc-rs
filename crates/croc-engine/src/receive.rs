@@ -42,6 +42,11 @@ pub struct ReceiveRequest {
     pub no_compress: bool,
     /// `--local`：只走局域网——先组播找出发送方，用它的地址当中继，**不连公网中继**。
     pub local: bool,
+    /// `--no-multi`：禁用多端口复用，只用一条数据流。
+    ///
+    /// 必须与发送方**一致**：流数不在握手里协商，两端各自按中继 banner 推导，只有一端
+    /// 设了的话两边的数据面对不上。
+    pub no_multi: bool,
     /// 本端机器指纹。
     pub machine_id: String,
     /// 收到清单后问一句；`None` 表示直接接受。
@@ -95,7 +100,8 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
     }
     emit(&request.events, EngineEvent::Status("connecting…".to_owned()));
 
-    let streams = stream_count(ports.len());
+    let ports_to_use = if request.no_multi { 1 } else { ports.len() };
+    let streams = stream_count(ports_to_use);
     let session_config = SessionConfig {
         role: Role::Receiver,
         room: request.components.room_name.as_str(),
@@ -189,7 +195,14 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                 .get(usize::try_from(index).unwrap_or(usize::MAX))
                 .ok_or_else(|| EngineError::Config(format!("file #{index} vanished")))?
                 .clone();
-            let plan = files::plan(&entry, &request.out_dir, request.preferences, info.sending_text, true)?;
+            let plan = files::plan(
+                &entry,
+                &request.out_dir,
+                request.preferences,
+                info.sending_text,
+                info.hash_algorithm.as_str(),
+                true,
+            )?;
 
             // 不需要数据面的三种直接结算，继续挑下一个。
             let (sink, ranges) = match plan {
@@ -223,7 +236,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                     ranges.count(u64::try_from(entry.size).unwrap_or(0)),
                     ranges.bytes(u64::try_from(entry.size).unwrap_or(0)),
                     entry.is_compressed,
-                    stream_count(ports.len())
+                    streams
                 )),
             );
             // **先拿到数据连接再发 recipientready**：对端一收到请求就会立刻开始发数据，
@@ -295,7 +308,14 @@ fn plan_files(request: &ReceiveRequest, info: &SenderInfo) -> Result<(Vec<u64>, 
     }
 
     for (index, entry) in info.files_to_transfer.iter().enumerate() {
-        let plan = files::plan(entry, &request.out_dir, request.preferences, info.sending_text, true)?;
+        let plan = files::plan(
+            entry,
+            &request.out_dir,
+            request.preferences,
+            info.sending_text,
+            info.hash_algorithm.as_str(),
+            true,
+        )?;
         match plan {
             Plan::AlreadyCurrent => {
                 planned.skipped += 1;

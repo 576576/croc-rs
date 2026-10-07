@@ -35,9 +35,15 @@ pub const MULTICAST_GROUP_V4: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 /// 组播端口。Go 用的 `peerdiscovery` 默认值是 9999。
 pub const MULTICAST_PORT: u16 = 9999;
 
-/// 内建中继开几条数据端口。取中继的默认数据端口数，让 `--local` 与自建中继的
-/// 并行流数一致。
+/// GUI 起内建中继时默认开几条数据端口（等价 `--transfers` 的默认值 4）。
+///
+/// 取中继的默认数据端口数，让 `--local` 与自建中继的并行流数一致。
 pub const LOCAL_DATA_PORTS: usize = croc_relay::DEFAULT_DATA_PORTS.len();
+
+/// `--port` 给了之后往后扫多少个端口位找空位。
+///
+/// 与 Go 的 `FindOpenPorts` 同值（`src/utils/utils.go:642`，那里也是扫 200 个位置）。
+const PORT_SEARCH_LIMIT: usize = 200;
 
 /// 发送方广播的前缀。对端靠它认出"这是 croc 在喊，后面跟着端口"。
 const BEACON_PREFIX: &str = "croc";
@@ -120,25 +126,57 @@ impl Drop for LocalRelay {
     }
 }
 
+/// 绑一个端口：`advance` 为真时从 `*candidate` 起往后找，否则交给内核分配。
+///
+/// 找端口时**上限是 [`PORT_SEARCH_LIMIT`] 个**：一段端口全被占满时不该在这里转一整天，
+/// 报个错让用户换个 `--port` 更好。
+async fn bind_next(candidate: &mut u16, advance: bool) -> Result<(TcpListener, u16), EngineError> {
+    if !advance {
+        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+            .await
+            .map_err(|error| EngineError::Relay(format!("cannot bind a local relay port: {error}")))?;
+        let port = listener.local_addr().map_err(|error| EngineError::Relay(error.to_string()))?.port();
+        return Ok((listener, port));
+    }
+    let start = *candidate;
+    for _ in 0..PORT_SEARCH_LIMIT {
+        let port = *candidate;
+        if let Ok(listener) = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
+            *candidate = candidate.saturating_add(1);
+            return Ok((listener, port));
+        }
+        *candidate =
+            candidate.checked_add(1).ok_or_else(|| EngineError::Relay("no free port left above --port".to_owned()))?;
+    }
+    Err(EngineError::Relay(format!("no free port in the {PORT_SEARCH_LIMIT} ports above {start}")))
+}
+
 /// 起一个内建中继。
 ///
-/// 端口由内核分配（`0.0.0.0:0`），所以不会跟机器上别的服务抢——代价是每次传输的
-/// 端口都不同，这也正是要靠组播把端口喊出去的原因。
+/// `base_port` 为 `None` 时端口由内核分配（`0.0.0.0:0`），不会跟机器上别的服务抢——
+/// 代价是每次传输的端口都不同，这也正是要靠组播把端口喊出去的原因。
+///
+/// 给了 `base_port`（`--port`）就从它开始往后找：Go 的 `--port` 是"基准端口"而不是
+/// 硬要求（`utils.FindOpenPorts`，`croc.go:1404`），被占了就顺延。硬绑一个被占的端口
+/// 而报错，会让"--port 9009"在跑过一次之后就再也用不了。
 ///
 /// # Errors
 ///
 /// 端口绑不上，或者数据端口不够 `streams` 个。
-pub async fn start_local_relay(password: &str, streams: usize) -> Result<LocalRelay, EngineError> {
-    // 控制端口 + `streams` 个数据端口。Go 用 `--ports` 的个数，我们按数据面的并行流数，
-    // 两者在默认配置下都是 4。
+pub async fn start_local_relay(
+    password: &str,
+    streams: usize,
+    base_port: Option<u16>,
+) -> Result<LocalRelay, EngineError> {
+    // 控制端口 + `streams` 个数据端口。`streams` 就是 `--transfers`，Go 那边端口数组
+    // 的长度同样是 `transfers + 1`（`src/cli/cli.go:642`）。
     let count = streams + 1;
     let mut listeners = Vec::with_capacity(count);
     let mut ports = Vec::with_capacity(count);
+    let mut candidate = base_port.unwrap_or(0);
     for _ in 0..count {
-        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
-            .await
-            .map_err(|error| EngineError::Relay(format!("cannot bind a local relay port: {error}")))?;
-        ports.push(listener.local_addr().map_err(|error| EngineError::Relay(error.to_string()))?.port());
+        let (listener, port) = bind_next(&mut candidate, base_port.is_some()).await?;
+        ports.push(port);
         listeners.push(listener);
     }
 
@@ -295,8 +333,13 @@ fn parse_beacon(payload: &[u8]) -> Option<u16> {
 /// # Errors
 ///
 /// 中继起不来。
-pub async fn announce(password: &str, streams: usize, stop: CancellationToken) -> Result<LocalRelay, EngineError> {
-    let mut relay = start_local_relay(password, streams).await?;
+pub async fn announce(
+    password: &str,
+    streams: usize,
+    base_port: Option<u16>,
+    stop: CancellationToken,
+) -> Result<LocalRelay, EngineError> {
+    let mut relay = start_local_relay(password, streams, base_port).await?;
     // 广播同时受两件事约束：用户取消（`stop`），以及本次传输结束（`relay` 被 drop）。
     relay.beacon = stop.child_token();
     advertise(relay.control_port(), relay.beacon.clone());
@@ -347,12 +390,31 @@ mod tests {
 
     #[tokio::test]
     async fn a_local_relay_binds_a_control_port_and_data_ports() {
-        let mut relay = start_local_relay("pass", 2).await.expect("relay starts");
+        let mut relay = start_local_relay("pass", 2, None).await.expect("relay starts");
         assert_ne!(relay.control_port(), 0);
         assert_eq!(relay.data_ports().len(), 2);
         // 中继真的在听：能连上控制端口。
         let probe = tokio::net::TcpStream::connect(relay.loopback_address()).await;
         assert!(probe.is_ok(), "the control port must accept connections: {probe:?}");
+        relay.shutdown();
+    }
+
+    /// `--port` 是"基准端口"：从它开始往后排，且被占了会顺延而不是报错。
+    #[tokio::test]
+    async fn port_starts_at_the_base_and_skips_occupied_ones() {
+        // 先探一个当前空闲的端口当 base（拿到就放手，下面再验证它确实被用上了）。
+        let probe = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await.expect("bind");
+        let base = probe.local_addr().expect("addr").port();
+        drop(probe);
+        let Some(next) = base.checked_add(1) else { return };
+        // 占住 base+1，逼数据端口顺延。
+        let Ok(_squatter) = TcpListener::bind((Ipv4Addr::UNSPECIFIED, next)).await else { return };
+
+        let mut relay = start_local_relay("pass", 2, Some(base)).await.expect("relay starts");
+        assert_eq!(relay.control_port(), base, "控制端口应当就落在 --port 上");
+        let ports = relay.data_ports();
+        assert_eq!(ports.len(), 2);
+        assert!(ports.iter().all(|port| *port != next), "被占的端口必须跳过：{ports:?}");
         relay.shutdown();
     }
 }

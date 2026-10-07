@@ -161,9 +161,9 @@ fn entry_for(path: &Path, folder_remote: &str, algorithm: &str) -> Result<Source
         )));
     }
 
-    let bytes = fs::read(path).map_err(|error| EngineError::file(path, error))?;
-    let digest = hash::hash_for_algorithm(algorithm, &bytes)
-        .ok_or_else(|| EngineError::UnsupportedHash(algorithm.to_owned()))?;
+    // 走 `hash_file` 而不是"读全文再喂给 `hash_for_algorithm`"：imohash 只采样头/中/尾，
+    // 把整个文件读进内存等于把它唯一的优点抹掉，大文件上还多占一份内存。
+    let digest = hash::hash_file(algorithm, path)?;
 
     Ok(SourceEntry {
         path: path.to_path_buf(),
@@ -172,7 +172,7 @@ fn entry_for(path: &Path, folder_remote: &str, algorithm: &str) -> Result<Source
             folder_remote: folder_remote.to_owned(),
             folder_source: parent_of(path),
             hash: digest,
-            size: i64::try_from(bytes.len()).unwrap_or(i64::MAX),
+            size: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
             mod_time: metadata
                 .modified()
                 .ok()
@@ -202,13 +202,24 @@ fn folder_info(path: &Path, base: &Path) -> Result<FileInfo, EngineError> {
 
 /// 把收集结果组装成线路上的清单。
 #[must_use]
-pub fn sender_info(files: &[SourceEntry], empty_folders: Vec<FileInfo>, machine_id: &str) -> SenderInfo {
+/// 构造清单。
+///
+/// `algorithm` 是 `--hash` 给的算法名，**必须原样告诉对端**：接收方按清单里的名字
+/// 重算哈希来比对。写死成 `xxhash` 的话，用 `--hash md5` 发送时接收方会拿 md5 的
+/// 结果去比 xxhash 的摘要，于是每个文件都判成"内容不同"而整个重传——不报错，只是
+/// 白传一遍。
+pub fn sender_info(
+    files: &[SourceEntry],
+    empty_folders: Vec<FileInfo>,
+    machine_id: &str,
+    algorithm: &str,
+) -> SenderInfo {
     SenderInfo {
         total_number_folders: folder_count(files, &empty_folders),
         files_to_transfer: files.iter().map(|entry| entry.info.clone()).collect(),
         empty_folders_to_transfer: empty_folders,
         machine_id: machine_id.to_owned(),
-        hash_algorithm: croc_protocol::payload::HashAlgorithm::Xxhash,
+        hash_algorithm: croc_protocol::payload::HashAlgorithm::from(algorithm),
         // **必须声明这一个能力**（Go 的 `croc.go:3112` 也只放它）。
         // 接收方靠它决定"按文件标志压缩"还是退回"一律压缩"的老对端行为——
         // 不声明的话，Go 的接收方会把每个块都当压缩的来解，而我们的清单里
@@ -303,6 +314,9 @@ pub enum Plan {
 /// 决策本身是纯的（[`croc_core::policy::decide`]），这里只负责把文件系统的事实探好
 /// 再喂给它——这正是把策略抽成纯函数换来的东西。
 ///
+/// `algorithm` 是**清单里**的哈希算法（`SenderInfo::hash_algorithm`）：判断"本地这个
+/// 同名文件是不是就是要传的那份"必须用发送方算摘要时的同一个算法，否则两边永远对不上。
+///
 /// # Errors
 ///
 /// 探测目标路径时出错。
@@ -311,6 +325,7 @@ pub fn plan(
     out_dir: &Path,
     preferences: Preferences,
     sending_text: bool,
+    algorithm: &str,
     accepted: bool,
 ) -> Result<Plan, EngineError> {
     let destination = destination_of(info, out_dir)?;
@@ -320,12 +335,13 @@ pub fn plan(
     let same_size = metadata.as_ref().is_ok_and(|m| i64::try_from(m.len()).ok() == Some(info.size));
 
     // 只有"同名同大小"才值得去算哈希——不同大小必然不同。
+    // 走 `hash_file` 而不是读全文：`imohash` 只采样头/中/尾，读全文等于把它的意义抹掉。
     let hashes_equal = destination_exists
         && same_size
         && info.size > 0
         && !info.is_symlink()
         && local_is_regular
-        && fs::read(&destination).is_ok_and(|bytes| hash::xxh64_bytes(&bytes) == info.hash);
+        && hash::hash_file(algorithm, &destination).is_ok_and(|digest| digest == info.hash);
 
     let situation = Situation {
         destination_exists,
@@ -782,11 +798,25 @@ mod tests {
         let file = dir.join("x.bin");
         fs::write(&file, b"x").expect("写");
         let (files, empty) = collect(&[file], "xxhash").expect("收集");
-        let info = sender_info(&files, empty, "machine");
+        let info = sender_info(&files, empty, "machine", "xxhash");
         assert_eq!(info.machine_id, "machine");
         assert_eq!(info.hash_algorithm, croc_protocol::payload::HashAlgorithm::Xxhash);
         assert_eq!(info.files_to_transfer.len(), 1);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `--hash` 的名字必须原样进清单，否则接收方按错算法重算、把每个文件都判成
+    /// "内容不同"而重传——不报错，只是白传一遍。
+    #[test]
+    fn the_sender_info_forwards_the_requested_algorithm() {
+        for (name, expected) in [
+            ("md5", croc_protocol::payload::HashAlgorithm::Md5),
+            ("imohash", croc_protocol::payload::HashAlgorithm::Imohash),
+            ("highway", croc_protocol::payload::HashAlgorithm::Highway),
+        ] {
+            let info = sender_info(&[], Vec::new(), "machine", name);
+            assert_eq!(info.hash_algorithm, expected, "{name} 应原样进清单");
+        }
     }
 
     #[test]
@@ -794,7 +824,12 @@ mod tests {
         let dir = temp_dir("hash");
         let file = dir.join("x.bin");
         fs::write(&file, b"x").expect("写");
-        assert!(matches!(collect(&[file], "md5"), Err(EngineError::UnsupportedHash(_))));
+        // 四种受支持的算法都得能算。
+        for name in ["xxhash", "md5", "imohash", "highway"] {
+            assert!(collect(std::slice::from_ref(&file), name).is_ok(), "{name} 应当被支持");
+        }
+        // 不在名单里的名字要**报错**，不能静默退化成 xxhash——那会让对端拿到对不上的摘要。
+        assert!(matches!(collect(&[file], "sha256"), Err(EngineError::UnsupportedHash(_))));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -864,7 +899,25 @@ mod tests {
         };
         fs::write(dir.join("x.bin"), content).expect("预置");
 
-        let plan = plan(&info, &dir, Preferences::default(), false, true).expect("决策");
+        let plan = plan(&info, &dir, Preferences::default(), false, "xxhash", true).expect("决策");
+        assert_eq!(plan, Plan::AlreadyCurrent);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_local_comparison_uses_the_algorithm_from_the_manifest() {
+        let dir = temp_dir("plan-algorithm");
+        let content = b"same bytes";
+        // 清单里带的是 md5 摘要。本地比对要是写死 xxhash，这里就永远认不出"内容相同"，
+        // 于是每次传输都把已经存在的文件重传一遍。
+        let info = FileInfo {
+            name: "x.bin".to_owned(),
+            size: i64::try_from(content.len()).unwrap(),
+            hash: hash::hash_for_algorithm("md5", content).expect("md5"),
+            ..FileInfo::default()
+        };
+        fs::write(dir.join("x.bin"), content).expect("预置");
+        let plan = plan(&info, &dir, Preferences::default(), false, "md5", true).expect("决策");
         assert_eq!(plan, Plan::AlreadyCurrent);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -873,7 +926,7 @@ mod tests {
     fn a_fresh_destination_requests_the_whole_file() {
         let dir = temp_dir("plan-fresh");
         let info = FileInfo { name: "new.bin".to_owned(), size: 100, hash: vec![1], ..FileInfo::default() };
-        let plan = plan(&info, &dir, Preferences::default(), false, true).expect("决策");
+        let plan = plan(&info, &dir, Preferences::default(), false, "xxhash", true).expect("决策");
         assert_eq!(plan, Plan::Receive(ChunkRanges::whole()));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -884,7 +937,8 @@ mod tests {
         let info = FileInfo { name: "x.bin".to_owned(), size: 100, hash: vec![1], ..FileInfo::default() };
         fs::write(dir.join("x.bin"), b"old").expect("预置");
         fs::write(dir.join("x (1).bin"), b"old").expect("预置");
-        let plan = plan(&info, &dir, Preferences { overwrite: false, rename: true }, false, true).expect("决策");
+        let plan =
+            plan(&info, &dir, Preferences { overwrite: false, rename: true }, false, "xxhash", true).expect("决策");
         assert_eq!(plan, Plan::Renamed("x (2).bin".to_owned()));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -894,7 +948,7 @@ mod tests {
         let dir = temp_dir("plan-decline");
         let info = FileInfo { name: "x.bin".to_owned(), size: 100, hash: vec![1], ..FileInfo::default() };
         fs::write(dir.join("x.bin"), b"old").expect("预置");
-        let plan = plan(&info, &dir, Preferences::default(), false, false).expect("决策");
+        let plan = plan(&info, &dir, Preferences::default(), false, "xxhash", false).expect("决策");
         assert_eq!(plan, Plan::Declined);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -903,7 +957,10 @@ mod tests {
     fn empty_files_and_symlinks_bypass_the_data_plane() {
         let dir = temp_dir("plan-empty");
         let empty = FileInfo { name: "e.bin".to_owned(), size: 0, ..FileInfo::default() };
-        assert_eq!(plan(&empty, &dir, Preferences::default(), false, true).expect("决策"), Plan::CreateDirectly);
+        assert_eq!(
+            plan(&empty, &dir, Preferences::default(), false, "xxhash", true).expect("决策"),
+            Plan::CreateDirectly
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -25,3 +25,7 @@ tracing.workspace = true
 zeroize.workspace = true
 # `ModTime` 内部是 `OffsetDateTime`；从 `SystemTime` 转过来要用它。
 time.workspace = true
+# `--hash` 的四种算法（xxhash 是自己实现的，见 `hash.rs` 的模块说明）。
+md-5.workspace = true
+highway.workspace = true
+imohash.workspace = true

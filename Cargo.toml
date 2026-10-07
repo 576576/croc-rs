@@ -106,6 +106,13 @@ base64 = "0.22"
 # 自己写一个 civil-date 转换是能写，但没必要——`time` 是纯 Rust、no_std 可用、
 # Android 上没问题，且它的 `serde-well-known` 正好提供 RFC3339 编解码。
 time = { version = "0.3", features = ["serde-well-known"] }
+# ---- `--hash` 的四种算法 ----
+# 全部是纯 Rust：核心 crate 要交叉编译到 Android，见 `xtask/src/deps.rs`。
+# `md-5` 是 RustCrypto 的实现，`highway` 是 Google HighwayHash 的原生 Rust 移植，
+# `imohash` 是 Go 同名库的移植（含 murmur3-128）。版本用兼容范围，具体版本以 Cargo.lock 为准。
+md-5 = "0.10"
+highway = "1"
+imohash = "0.1"
 
 # ---- 基础工具 ----
 thiserror = "2"

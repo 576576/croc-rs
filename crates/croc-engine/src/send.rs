@@ -33,10 +33,24 @@ pub struct SendRequest {
     pub curve: croc_pake::CurveKind,
     /// 要发送的路径（文件或目录）。
     pub paths: Vec<PathBuf>,
-    /// 哈希算法（目前只支持 `xxhash`）。
+    /// 哈希算法：`xxhash` / `md5` / `imohash` / `highway`。
     pub hash_algorithm: String,
     /// `--local`：只走局域网——本端起一个内建中继，**不连公网中继**。
     pub local: bool,
+    /// `--port`：`--local` 下内建中继的**基准**端口（被占就顺延）。
+    ///
+    /// 只在 `--local` 下有意义：连外部中继时端口由中继的 banner 说了算，Go 也是这样
+    /// （`croc.go:1521` 之后 `--port` 给的数组会被覆盖掉）。
+    pub relay_base_port: Option<u16>,
+    /// `--transfers`：`--local` 下内建中继开几个数据端口，也就是数据面并行几条流。
+    ///
+    /// 同样只在 `--local` 下有意义，理由同上。
+    pub transfers: usize,
+    /// `--no-multi`：禁用多端口复用，只用一条数据流。
+    ///
+    /// 两端要**各自**设：流数不在握手里协商，各自按中继 banner 推导，只有一端设了的话
+    /// 两边的数据面对不上。Go 只把它挂在 `send` 子命令上（`src/cli/cli.go:101`）。
+    pub no_multi: bool,
     /// 关掉压缩。
     pub no_compress: bool,
     /// 本端机器指纹。
@@ -75,8 +89,14 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     // `--local`：本端自己当中继，连自己的回环地址，端口由组播喊出去给对端。
     // 中继得先起来才有端口可喊，所以这一步在连中继与算哈希之前。
     // 它一直活到 `send()` 返回（drop 即停），正好覆盖整次传输。
+    // `--transfers` 决定内建中继开几个数据端口；`--no-multi` 只要一条流。
+    // 走外部中继时这两个值都用不上（端口由中继 banner 给），所以只在 `--local` 下算。
+    let local_streams = if request.no_multi { 1 } else { request.transfers.max(1) };
     let local_relay = if request.local {
-        Some(local::announce(&request.relay_password, local::LOCAL_DATA_PORTS, cancel.child_token()).await?)
+        Some(
+            local::announce(&request.relay_password, local_streams, request.relay_base_port, cancel.child_token())
+                .await?,
+        )
     } else {
         None
     };
@@ -106,7 +126,7 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         entry.info.is_compressed = compress && entry.info.size > 0;
     }
     let total_bytes: u64 = entries.iter().filter_map(|entry| u64::try_from(entry.info.size).ok()).sum();
-    let info = files::sender_info(&entries, empty_folders, &request.machine_id);
+    let info = files::sender_info(&entries, empty_folders, &request.machine_id, &request.hash_algorithm);
 
     let ports = link.data_ports();
     if ports.is_empty() {
@@ -114,7 +134,9 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     }
     emit(&request.events, EngineEvent::Status("waiting for the recipient…".to_owned()));
 
-    let streams = stream_count(ports.len());
+    // `--no-multi` 把 banner 里的多个数据端口砍成一个，与 Go 的 `croc.go:1522` 一致。
+    let ports_to_use = if request.no_multi { 1 } else { ports.len() };
+    let streams = stream_count(ports_to_use);
     let session_config = SessionConfig {
         role: Role::Sender,
         room: request.components.room_name.as_str(),

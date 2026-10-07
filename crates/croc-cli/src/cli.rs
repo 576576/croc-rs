@@ -35,8 +35,9 @@ pub const TRANSPORT_CONFLICT: &str = "croc-rs: --transport must be auto for loca
 
 /// 数据面选择。
 ///
-/// `auto` 与 `relay` 目前等价——本实现还没有局域网中继，`auto` 的"先试局域网"这一支
-/// 恒为假。`derp` 是 ⏸ pending：提示后按 `relay` 处理，**不是错误、不影响退出码**
+/// `auto` 与 `relay` 目前等价——本实现默认不开局域网直连（等价 Go 的 `--no-local`），
+/// 所以 `auto` 的"先试局域网"这一支恒为假；要走局域网得显式给 `--local`。
+/// `derp` 是 ⏸ pending：提示后按 `relay` 处理，**不是错误、不影响退出码**
 /// （对齐 Go 版 `resolveTransportMode()` 在 `tailcatAvailable == false` 时的降级）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Transport {
@@ -96,9 +97,27 @@ struct SendArgs {
     #[arg(short = 't', long)]
     text: Option<String>,
 
-    /// 哈希算法（目前只支持 xxhash）。
+    /// 哈希算法：`xxhash`（默认）/ `md5` / `imohash` / `highway`。
+    ///
+    /// `imohash` 只采样文件的头、中、尾各 2 MiB，所以大文件上快得多，代价是
+    /// "只有采样区不同"的改动可能漏检。
     #[arg(long, default_value = "xxhash")]
     hash: String,
+
+    /// `--local` 下内建中继的**基准**端口（被占了会往后顺延）。
+    ///
+    /// 只在 `--local` 下有意义：连外部中继时端口由中继的 banner 说了算，Go 也是这样
+    /// （`croc.go:1521` 之后 `--port` 给的数组会被覆盖）。
+    #[arg(long, default_value = "9009", value_parser = clap::value_parser!(u16).range(1..))]
+    port: u16,
+
+    /// `--local` 下内建中继开几个数据端口（也就是数据面并行几条流）。
+    ///
+    /// 只在 `--local` 下有意义，理由同 [`Self::port`]。
+    ///
+    /// 上限 8 是数据面的硬上限（`croc_engine::data::MAX_STREAMS`）：再多路也没人听。
+    #[arg(long, default_value = "4", value_parser = clap::value_parser!(u16).range(1..=8))]
+    transfers: u16,
 }
 
 #[derive(Debug, clap::Args)]
@@ -156,6 +175,13 @@ struct Global {
     /// 参数不该报"未知参数"。
     #[arg(long, global = true, conflicts_with = "local")]
     no_local: bool,
+
+    /// 禁用多端口复用（只用一条数据流）。
+    ///
+    /// 两端要**各自**设：流数不在握手里协商，收发两端各自按中继的 banner 推导，只有一
+    /// 端设了的话两边的数据面对不上。Go 只把它挂在 `send` 子命令上（`src/cli/cli.go:101`）。
+    #[arg(long, global = true)]
+    no_multi: bool,
 
     /// 什么都不打印。
     #[arg(long, global = true)]
@@ -236,6 +262,10 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                 eprintln!("{reason}");
                 return Err(ExitCode::FAILURE);
             }
+            if let Err(reason) = validate_hash(&args.hash) {
+                eprintln!("{reason}");
+                return Err(ExitCode::FAILURE);
+            }
             if let Some(text) = args.text {
                 // `--text`：与 Go 一样落到一个 `croc-stdin-<时间戳>` 临时文件上。
                 // 接收方靠这个名字前缀识别"这是文本传输"。
@@ -266,6 +296,10 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     hash_algorithm: args.hash,
                     no_compress: cli.global.no_compress,
                     local: cli.global.local,
+                    relay_base_port: Some(args.port),
+                    // 已经由 clap 的 range 限到 1..=8。
+                    transfers: usize::from(args.transfers),
+                    no_multi: cli.global.no_multi,
                     machine_id,
                     events,
                 })),
@@ -299,6 +333,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     preferences: Preferences { overwrite: cli.global.overwrite, rename: cli.global.rename },
                     no_compress: cli.global.no_compress,
                     local: cli.global.local,
+                    no_multi: cli.global.no_multi,
                     machine_id,
                     confirm,
                     events,
@@ -397,6 +432,20 @@ fn validate_sources(paths: &[PathBuf], text: Option<&str>) -> Result<(), &'stati
         return Err("croc-rs: send 需要至少一个路径，或者一段 --text 文本");
     }
     Ok(())
+}
+
+/// `--hash` 的算法名必须提前校验。
+///
+/// 放在这里而不是等 `files::collect` 报错：几万个文件的哈希要算十几秒，让用户在
+/// 那之后才看到"算法名拼错了"是很糟糕的体验。
+///
+/// 与 Go 的 `receiveHashAlgorithm`（`progressive_hash.go:20`）同一组名字，少了
+/// `imohash-v2`——那是渐进式哈希的协商项，本实现没有谈那条能力。
+fn validate_hash(algorithm: &str) -> Result<(), String> {
+    if croc_engine::hash::ALGORITHMS.contains(&algorithm) {
+        return Ok(());
+    }
+    Err(format!("croc-rs: 不支持的哈希算法 {algorithm:?}，可用：{}", croc_engine::hash::ALGORITHMS.join(" / ")))
 }
 
 /// 生成（或校验）口令码。返回 `(原始码, 协议输入)`。
@@ -544,5 +593,37 @@ mod tests {
         assert_eq!(validate_sources(&[PathBuf::from("a.bin")], Some("hello")), Ok(()));
         let error = validate_sources(&[], None).expect_err("两样都没有应报错");
         assert!(error.starts_with("croc-rs: "), "报错要带程序名前缀");
+    }
+
+    #[test]
+    fn only_the_algorithm_names_go_accepts_are_accepted() {
+        // Go 的 `HashFile` 是精确 switch（`src/utils/utils.go:210`），名字对不上就报
+        // "unspecified algorithm"——所以我们这里也精确匹配，不做大小写折叠。
+        for name in ["xxhash", "md5", "imohash", "highway"] {
+            assert_eq!(validate_hash(name), Ok(()), "{name} 应当被接受");
+        }
+        for wrong in ["sha256", "XXHASH", ""] {
+            let error = validate_hash(wrong).expect_err("未知算法名应当被拒绝");
+            assert!(error.starts_with("croc-rs: "), "报错要带程序名前缀");
+        }
+        // 报错得说清是哪个名字不对，否则用户看不出拼错在哪。
+        assert!(validate_hash("sha256").expect_err("应报错").contains("sha256"));
+    }
+
+    #[test]
+    fn port_and_transfers_are_bounded() {
+        // `--transfers` 的上限是数据面的硬上限（`croc_engine::data::MAX_STREAMS` = 8）。
+        for bad in ["0", "9"] {
+            let parsed = Cli::try_parse_from(["croc-rs", "send", "a.bin", "--transfers", bad]);
+            assert!(parsed.is_err(), "--transfers {bad} 应当被 clap 拒掉");
+        }
+        // `--port` 0 不是合法端口。
+        let parsed = Cli::try_parse_from(["croc-rs", "send", "a.bin", "--port", "0"]);
+        assert!(parsed.is_err(), "--port 0 应当被 clap 拒掉");
+        // 默认值要与 Go 的 flag 一致：9009 / 4（`src/cli/cli.go:103`）。
+        let parsed = Cli::try_parse_from(["croc-rs", "send", "a.bin"]).expect("默认值应当能解析");
+        let Some(Command::Send(args)) = parsed.command else { panic!("应当是 send 子命令") };
+        assert_eq!(args.port, 9009);
+        assert_eq!(args.transfers, 4);
     }
 }

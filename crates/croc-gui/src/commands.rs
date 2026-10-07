@@ -158,8 +158,12 @@ pub async fn send(
         paths: args.paths.into_iter().map(PathBuf::from).collect(),
         hash_algorithm: "xxhash".to_owned(),
         no_compress: args.no_compress,
-        // GUI 还没有 `--local` 的开关：默认走中继。
+        // GUI 还没有 `--local` 的开关：默认走中继。下面三个只影响 `--local` 下的内建
+        // 中继，所以这里的取值不会被用到。
         local: false,
+        relay_base_port: None,
+        transfers: croc_engine::local::LOCAL_DATA_PORTS,
+        no_multi: false,
         machine_id: machine_id(),
         events,
     };
@@ -199,6 +203,7 @@ pub async fn receive(
         no_compress: false,
         // GUI 还没有 `--local` 的开关：默认走中继。
         local: false,
+        no_multi: false,
         machine_id: machine_id(),
         // GUI 里"收不收"由前端的确认弹窗决定，这里给一个恒真的回调；
         // 真正的交互在清单到达之前就完成了（用户是主动点"接收"的）。
