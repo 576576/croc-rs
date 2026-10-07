@@ -38,6 +38,7 @@ CROC_INTEROP_KEEP="${CROC_INTEROP_KEEP:-}"
 LOG_DIR="$ROOT/target/interop-logs"
 WORK=""
 RELAY_PID=""
+RELAY_PIDS=()
 RELAY_BASE=""
 RELAY_PASS="interop-relay-pass"
 # 两端共用的固定 codephrase（三词格式）。固定下来是为了失败可复现，也便于日志脱敏。
@@ -204,6 +205,9 @@ start_relay() {  # <rust|go> <logfile>
     "$CROC_GO_BIN" --pass "$RELAY_PASS" relay --host 127.0.0.1 --ports "$ports" >"$log" 2>&1 &
   fi
   RELAY_PID=$!
+  # 累计记一份：`stop_relay` 只收当前这个，而 `$RELAY_PID` 会被下一个用例覆盖——
+  # 漏写一次 `stop_relay`，那个中继就再也没人收，退出码却仍是绿的。
+  RELAY_PIDS+=("$RELAY_PID")
 
   if ! wait_for_port 127.0.0.1 "$base" 20; then
     echo "relay（$kind）20 秒内没有监听 127.0.0.1:$base，日志见 $log" >&2
@@ -731,6 +735,32 @@ case_i19() {
   finish_case "$result"
 }
 
+# I20 Rust → Go，--hash md5：接收方本地**已有同内容文件**，Go 拿它自己算的 md5 判定
+# "不需要传"，于是发送方报 0 字节。摘要只要差一个字节，这里就会退化成真传输。
+#
+# 这是**跨实现**的摘要一致性验证——单测里钉的是 Go 生成的静态向量，这条走的是活的两端。
+# 另外三种算法不在这里各跑一遍：`croc-engine/src/hash.rs` 的单测已用 Go 生成的向量钉住。
+case_i20() {
+  begin_case I20 "Rust → Go，--hash md5，接收方已有同内容文件（摘要跨实现一致）" || return 0
+  local result=1
+  if start_relay rust "$WORK/relay-rust.log"; then
+    local r; r="$(relay_addr "$RELAY_BASE")"
+    make_file "$CASE_DIR/send/payload.bin" 262144
+    cp "$CASE_DIR/send/payload.bin" "$CASE_DIR/recv/payload.bin"
+    transfer "$CASE_DIR" "" \
+      "$CROC_RS_BIN" --relay "$r" --pass "$RELAY_PASS" --yes --quiet \
+        send --hash md5 --code "$CODE" payload.bin -- \
+      "$CROC_GO_BIN" --relay "$r" --pass "$RELAY_PASS" --yes --quiet "$CODE"
+    # 判定看的是**发送方**报的字节数（Rust 自己的文案，比解析 Go 的输出稳）：0 才说明
+    # Go 一个字节都没要——也就是它自己算出来的 md5 与我们清单里的一致。
+    if [ $? -eq 0 ] && grep -q "0 字节" "$CASE_DIR/sender.log"; then
+      result=0
+    fi
+  fi
+  stop_relay
+  finish_case "$result"
+}
+
 # I13 Rust → Go，Rust relay，10 万文件清单
 case_i13() {
   begin_case I13 "Rust → Go，Rust relay，10 万文件清单" || return 0
@@ -879,6 +909,12 @@ case_derp() {  # <id> <发送方> <接收方> <relay kind> <描述后缀>
 
 cleanup() {
   stop_relay
+  # 兜底：把本次跑过的中继全部收掉。`stop_relay` 只认 `$RELAY_PID`（当前这个），
+  # 用例漏写一次它，那份中继就会一直留在进程表里——而矩阵的退出码照样是绿的。
+  local pid
+  for pid in ${RELAY_PIDS[@]+"${RELAY_PIDS[@]}"}; do
+    kill "$pid" 2>/dev/null
+  done
   if [ -z "$CROC_INTEROP_KEEP" ] && [ -n "$WORK" ] && [ -d "$WORK" ]; then
     rm -rf "$WORK"
   fi
@@ -920,6 +956,7 @@ main() {
   case_i14
   case_i15
   case_i19
+  case_i20
   case_derp I16 "$CROC_RS_BIN" "$CROC_GO_BIN" go   "Rust 发送 / Go 接收 / Go relay"
   case_derp I17 "$CROC_RS_BIN" "$CROC_RS_BIN" rust "Rust 两端 / Rust relay"
   case_derp I18 "$CROC_RS_BIN" "$CROC_GO_BIN" rust "Rust 发送 / Go 接收 / Rust relay"

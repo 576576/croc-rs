@@ -56,13 +56,15 @@
 | I9 | Rust | Go | Rust relay | 断点续传（传 50% 时 kill，重传） | 最终一致 |
 | I10 | Rust | Go | Rust relay | 同名文件 → 覆盖 / 重命名 / 拒绝 | 三种策略行为一致 |
 | I11 | Rust | Go | Rust relay | 压缩开启/关闭 | 一致 |
-| I12 | Rust | Go | 局域网本地直连 | 不走中继 | ⏸ 未实现：`--local` 报错退出（见 [04](04-cli-plan.md) §1.5），harness 里显式 SKIP |
+| I12 | Rust | Go | 局域网本地直连 | 不走中继 | ⏸ 单机上 Go 侧发现不到（`AllowSelf=false` 会丢掉源 IP 是本机的广播，见 [04](04-cli-plan.md) §1.5），harness 里显式 SKIP |
 | I13 | Rust | Go | Rust relay | 10 万文件清单 | 不 OOM，一致 |
 | I14 | Rust | Go | Rust relay | 错误的中继口令 | 接收端非零退出、无文件落地、双方不崩 |
 | I15 | Rust | Go | Rust relay | 传输中对端 Ctrl-C | 优雅退出，无残留 .part 文件 |
 | I16 | Rust `--transport derp` | Go `--transport derp` | Go relay | 桌面 | ⏸ pending：提示后**降级 relay 传输成功** |
 | I17 | Rust `--transport derp` | Rust `--transport derp` | Rust relay | 桌面 | 同上（pending 期间不区分对端） |
 | I18 | Rust `--transport derp` | Go | — | Android | 同上，不崩溃 |
+| I19 | Rust | Rust | 局域网本地直连 | 不走中继 | 内容一致（不经 Go 的组播发现，单机能跑） |
+| I20 | Rust `--hash md5` | Go | Rust relay | 接收方本地已有同内容文件 | 发送方报 **0 字节**——Go 拿自己算的 md5 认定"不需要传"，即摘要跨实现一致 |
 
 ### 2.3 Golden 向量的维护
 
@@ -118,14 +120,8 @@
   只会把一段慢且依赖外部产物的环节塞进 `build` 的 `needs`。
 
 早先"不挂"的理由是"矩阵里有一批用例依赖尚未实现的能力，跑起来必然红"——那个理由
-确实已经不成立（I9 与 I16–I18 均已通过，I12 由 `skip_unimplemented()` 显式 SKIP 并
-打印理由）。**但结论没变，理由换了**：不是"挂了就恒红"，而是"挂了也不划算"。
-
-> 踩过的坑：这份 harness 在真正跑通之前一直是**没被执行过**的（README 里那句"只在本地跑"
-> 掩盖了它一次都没跑过的事实）。第一次真跑就暴露了三个 bug：`begin_case` 没建 `send/recv`
-> 目录（`make_file` 直接 FileNotFound）、`[ ... ] || sender_status=$?` 把 `$?` 取成了 `[`
-> 自己的退出码（发送端恒判失败）、以及中继密码根本没从 `--pass` 传进 `relay_cmd`。
-> **教训：harness 也要有"第一次跑通"的记录，否则它只是看起来像门禁。**
+确实已经不成立（I9 与 I16–I18 均已通过；I12 仍然 SKIP，但理由已换成"单机上 Go 侧
+发现不到本机广播"，不是"没实现"）。**但结论没变，理由换了**：不是"挂了就恒红"，而是"挂了也不划算"。
 
 > 踩过的坑：这份 harness 在真正跑通之前一直是**没被执行过**的（README 里那句"只在本地跑"
 > 掩盖了它一次都没跑过的事实）。第一次真跑就暴露了三个 bug：`begin_case` 没建 `send/recv`

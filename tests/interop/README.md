@@ -1,6 +1,6 @@
 # 互通测试（Rust ↔ Go）
 
-`run.sh` 跑 I1–I19 互通矩阵，定义见 [07-risks-and-testing.md](../../docs/agent/plan/07-risks-and-testing.md) §2.2。
+`run.sh` 跑 I1–I20 互通矩阵，定义见 [07-risks-and-testing.md](../../docs/agent/plan/07-risks-and-testing.md) §2.2。
 这是本项目的**生命线测试** —— 协议字节必须与 Go 版 croc v11.5.4 逐字节兼容。
 
 ## 怎么跑
@@ -40,7 +40,8 @@ CROC_GO_BIN=../croc-playground/croc.exe bash tests/interop/run.sh
 - **崩溃与报错要分清**：`no_crash` 检查日志里有没有 `panic` / `SIGSEGV` 之类，
   "优雅报错"算通过（I14 错误密码就是这种用例），"崩了"一律算失败。
 - **跳过的用例显式 SKIP，并打印理由**：`skip_unimplemented <id> <理由>`。
-  当前是 I12（`--local`，跨机器才能验证）与 I6（`CROC_INTEROP_SKIP_NETWORK` 非空时）。
+  当前是 I12（`--local`：Go 的 `peerdiscovery` 默认 `AllowSelf=false`，会丢掉源 IP 是本机
+  的广播，得两台机器才能验）与 I6（`CROC_INTEROP_SKIP_NETWORK` 非空时）。
   **跳过不等于通过**，结尾会单列一张跳过清单——恒红的门禁会让人学会无视红灯，
   静默跳过则会让人以为已经做完了，两者都要避免。
 
@@ -66,6 +67,11 @@ CROC_GO_BIN=../croc-playground/croc.exe bash tests/interop/run.sh
    当转义符，报 `No such file or directory`（看着像脚本不见了）。
    `xtask` 里由 `resolve_bash()` 显式找 Git for Windows 的 `bash.exe`，
    路径经 `to_shell_path()` 转成正斜杠；可用 `CROC_INTEROP_BASH` 覆盖。
+7. **每个用例末尾必须收掉自己起的中继**：`start_relay` 只把 PID 记在 `$RELAY_PID`，
+   写下一个用例时就被覆盖——漏写一次 `stop_relay`，那份中继就再也没人收。症状很隐蔽：
+   矩阵自己照样打完"通过 N · 失败 0"，但残留进程一直挂在进程表里（**把它接在 `| tail`
+   后面时，管道也永远等不到 EOF，看起来像整个矩阵卡死**）。现在 `cleanup` 会兜底收掉
+   本次跑过的全部中继 PID（`RELAY_PIDS`），但这条规约仍然要遵守。
 
 **教训**：harness 也要有"第一次跑通"的记录，否则它只是**看起来像**门禁。
 

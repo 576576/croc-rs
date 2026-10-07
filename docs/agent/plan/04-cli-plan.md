@@ -29,7 +29,7 @@
 |---------|------|------|
 | `--code, -c` | ✅ | 自定义口令码 |
 | `--text, -t` | ✅ | 不要求再给路径 |
-| `--hash` | ⚠️ 只 `xxhash` | `md5` / `imohash` / `highway` **报不支持**，不静默退化成 xxhash（会让对端拿到对不上的摘要） |
+| `--hash` | ✅ 四种 | `xxhash`（默认）/ `md5` / `imohash` / `highway`，摘要与 Go **逐字节一致**。不认识的名字**报错**，不静默退化成 xxhash——那会让对端拿到对不上的摘要 |
 | `--transport` | ✅（全局） | 见 §1.4 |
 | `--no-local` | ✅（全局） | |
 | `--local` | ✅（全局） | 见 §1.5 |
@@ -38,8 +38,8 @@
 | `--exclude` / `--exclude-file` | ❌ | |
 | `--qrcode, -qr` | ❌ | |
 | `--socks5` / `--connect` | ❌ | 经代理（Tor 等） |
-| `--no-multi` | ❌ | 禁用多端口复用 |
-| `--port` / `--transfers` | ⚠️ 只在 `relay` | Go 把它俩放在 send 上；我们只在 `relay` 子命令有 |
+| `--no-multi` | ✅（全局） | 只用一条数据流。见 §1.5 |
+| `--port` / `--transfers` | ✅ | 只在 `--local` 下有效（连外部中继时端口由中继 banner 决定）。见 §1.5 |
 | `--ts-authkey` | ⏸ pending | 见 §1.4 |
 | `--store` | ❌ v2 | |
 
@@ -62,6 +62,7 @@
 | `--curve` | ✅ | p256 / p384 / p521 / siec；`ed25519` 报不支持 |
 | `--local` | ✅ | 见 §1.5 |
 | `--no-local` | ✅ | |
+| `--no-multi` | ✅ | 见 §1.5 |
 | `--transport` | ✅ | 见 §1.4 |
 | `--relay6` | ❌ | |
 | `--ip` | ❌ | |
@@ -101,7 +102,7 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 
 `--local` 在 Go 里的语义是 `OnlyLocal`。实现落在 `crates/croc-engine/src/local.rs`：
 
-1. 发送端起一个**内嵌中继**（`croc-relay` 直接跑在本进程里），端口由内核分配；
+1. 发送端起一个**内嵌中继**（`croc-relay` 直接跑在本进程里）：默认端口由内核分配，给了 `--port` 就从它起往后找空位；
 2. 用 **UDP 组播**把控制端口喊出去：组 `239.255.255.250:9999`，载荷 `"croc" + 端口`
    （Go 版 `broadcastOnLocalNetwork()`，`src/croc/croc.go:1435`）；
 3. 接收端组播 500 ms（Go 的 `receivePeerDiscoveryTimeout`），按载荷拼出 `地址:端口`，
@@ -118,6 +119,25 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 而是单机上 Go 侧发现不到——它得两台机器才能验证。Rust↔Rust 的 `--local` 由 I19 覆盖
 （256 KB，全程未连任何外部中继）。
 
+#### `--port` / `--transfers` / `--no-multi`
+
+| flag | 作用域 | 语义 |
+|------|--------|------|
+| `--port` | `send` | 内嵌中继的**基准**端口，默认 9009（与 Go 的 flag 同值）。被占就顺延，最多往后扫 200 个端口位（Go 的 `FindOpenPorts`，`src/utils/utils.go:642`） |
+| `--transfers` | `send` | **数据端口个数**，默认 4。内嵌中继因此绑 `transfers + 1` 个端口（1 控制 + `transfers` 数据），对应 Go 的 `make([]string, transfersParam+1)`（`src/cli/cli.go:642`） |
+| `--no-multi` | 全局 | 数据面砍成**一条流**（只连第 0 个数据端口），对应 Go 的 `RelayPorts = RelayPorts[:1]`（`croc.go:1522`） |
+
+实测（Rust↔Rust，均 `--local`，256 KB + 5 MB）：`--local --port 9100 --transfers 2` 起内嵌中继后，
+`netstat` 上是 **9100 / 9101 / 9102 三个 LISTENING**（9103 不占）；四种 `--hash` 各自传一遍
+内容均一致，且 `--hash md5` / `--hash imohash` 重传时对方报"跳过 2 个"；`--no-multi` 两端都给时
+传输正常。
+
+⚠️ **`relay` 子命令的 `--transfers` 语义不同**：那里是**端口总数**（默认 5），不是数据端口个数。Go 也是这样（`relay` 用 `make([]string, transfersString)`，`send` 用 `transfersParam+1`），两处不是一回事。
+
+`--port` / `--transfers` 只在 `--local` 下有效——连外部中继时端口由中继的 banner 说了算，Go 同样如此（`croc.go:1521` 之后 `--port` 给的数组会被覆盖）。
+
+`--no-multi` 必须**两端各自**给：流数不在握手里协商，两端各自按 banner 推导。Go 只把它挂在 `send` 上（`src/cli/cli.go:101`），接收方拿不到——这里做成全局，否则它对接收方无从生效。
+
 配套的 CLI 规则：
 
 | 组合 | 行为 |
@@ -132,6 +152,38 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 `pake2` 是致命的**——对端只等 500 ms 就往下走，迟到的 `pake2` 会被当 `pake` 的应答去
 解压，握手当场报废。沉默永远安全：Go 的接收方把探测失败丢掉、照常走中继，代价只是
 多等 500 ms。
+
+### 1.6 `--hash` —— ✅ 四种算法
+
+`xxhash`（默认）/ `md5` / `imohash` / `highway`。`xxhash` 是自己实现的（规格公开且冻结，几十行，少一个依赖就少一个交叉编译变量），
+另外三个用纯 Rust crate。
+
+| 算法 | 摘要长度 | 与 Go 对齐的要点 |
+|------|---------|----------------|
+| `xxhash` | 8 | `xxhash.Sum(nil)` 的 big-endian 编码 |
+| `md5` | 16 | 无坑 |
+| `imohash` | 16 | 采样参数取自 Go 的 `NewCustom(16*16*8*1024, 128*1024)`——**不是** imohash 自己的默认值（16 KiB / 128 KiB）。用默认值算出来的摘要**长度一样、看起来完全正常**，只有对端报"哈希不匹配"才会暴露 |
+| `highway` | 32 | key 硬编码（Go `utils/utils.go:237` 那个 32 字节值），两端必须同一个 |
+
+`imohash` 走**按路径采样**（`hash::hash_file`），不把整个文件读进内存——采样就是它存在的意义。
+
+**哈希算法贯通的不只是清单**：接收方判断"本地这个同名文件是不是就是要传的那份"时，
+必须用**清单里带的算法**重算本地文件（Go 的 `croc.go:2461` → `3419`）。这里曾写死
+`xxh64`，于是 `--hash md5` 下"内容相同"永远认不出来、每次都得重传。
+
+不认识的名字在 CLI 层就报错（`crates/croc-cli/src/cli.rs` 的 `validate_hash`）：算几万个
+文件的哈希要十几秒，不该让用户等到那之后才知道名字拼错。少了 Go 的
+`imohash-v2`：那是渐进式哈希的协商项，本实现没谈那条能力。
+
+验证：
+
+- 单测用 **Go 实测的**向量钉住四种算法：`GO_VECTORS`（空 / `abc` / `hello`）+ `BIG_VECTORS`
+  （1 KB / 300 KB / 9.5 MB——后两个分别卡在 imohash 的 `sample_threshold` 与采样边界上，
+  **采样参数写错只有最大的那个能测出来**）；另有单测保证"按路径采样"与
+  "整块喂内存"给出同一摘要；
+- 跨实现（已进矩阵，I20）：Rust 发 md5 清单 → Go 接收方认定"本地已有"（报 0 字节）；
+  反向 Go 发 → Rust 收，报"跳过 1 个"。摘要只要差一个字节，这两条都会退化成真传输。
+
 ---
 
 ## 2. 分阶段任务分解
