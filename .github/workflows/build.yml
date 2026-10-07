@@ -133,7 +133,7 @@ jobs:
           # 免得真的出一个空包还被发布出去。
           test "$copied" -gt 0 || { echo "::error::pack_cli 与 pack_gui 都是关的"; exit 1; }
 
-          # LICENSE 随二进制分发（GPL-3 的要求），README 顺手带上。
+          # LICENSE 随二进制分发（LGPL-3.0 的要求），README 顺手带上。
           cp LICENSE README.md "$STAGE/" 2>/dev/null || true
 
           if [ "$IS_WIN" = "true" ]; then

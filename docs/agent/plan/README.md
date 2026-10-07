@@ -42,7 +42,7 @@
 | 产物 | **`croc-rs`**（CLI）+ **`crocw-rs`**（GUI，w = window） | 见 [09-build-and-ci.md](09-build-and-ci.md) |
 | CI | 四 workflow：`release`（唯一入口）/ `build` / `lint` / `clear`；**lint 不跟 PR，挂在发布链路上** | 对齐 Suwayomi-next，见 [09-build-and-ci.md](09-build-and-ci.md) |
 | 异步运行时 | Tokio | 生态最全（socks5、组播、Tauri 兼容） |
-| 许可证 | **GPL-3**（与 FlCroc 一致，同为本人项目，无授权障碍）；上游 MIT 署名搁置到打磨阶段 | 见 [07-risks-and-testing.md](07-risks-and-testing.md) §4 |
+| 许可证 | **LGPL-3.0-only**（弱化 copyleft，允许闭源链接）；第三方代码/上游 MIT 署名搁置到打磨阶段 | 见 [07-risks-and-testing.md](07-risks-and-testing.md) §4 |
 | 代码仓库 | 单仓库多 crate（workspace），GUI 在 `crates/croc-gui` + `app/` | 见 [03-architecture.md](03-architecture.md) |
 
 ## 阅读顺序建议

@@ -68,8 +68,8 @@ similar_names = "warn"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-license = "GPL-3.0-only"
-repository = "https://github.com/schollz/croc"
+license = "LGPL-3.0-only"
+repository = "https://github.com/576576/croc-rs"
 authors = ["croc-rs contributors"]
 description = "A Rust rewrite of croc: send files anywhere, simply and securely."
 
