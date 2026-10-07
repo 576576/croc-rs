@@ -7,13 +7,14 @@
 //! 三个子命令对应三个 workflow：
 //!
 //! | 子命令 | 对应 |
-//! |--------|------|
+//!|--------|------|
 //! | `ci-lint` | `lint.yml` 的 fmt / clippy / test / arch |
 //! | `ci-build` | `build.yml` 在本机 target 上的编译与打包 |
-//! | `ci-interop` | `lint.yml` 的 interop job（需本机有 Go 与 croc 源码） |
+//! | `ci-interop` | 与 Go 版的互通矩阵（**不在 CI 里**，见下） |
 //!
 //! MSRV 需要额外工具链，不在这里跑（见 `release.md` §4）。
-//! 互通矩阵**只在本地跑**（`ci-interop`），它还没进 `lint.yml`——原因见 09 §5.3。
+//! 互通矩阵只在本地跑（`ci-interop`），**有意不进 CI** —— 决策与理由见
+//! `docs/agent/plan/09-build-and-ci.md` §5.3。
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -98,10 +99,11 @@ pub fn build() -> ExitCode {
     summarize(&steps)
 }
 
-/// `cargo xtask ci-interop`：跑 `lint.yml` 的 interop job。
+/// `cargo xtask ci-interop`：跑与 Go 版的互通矩阵。
 ///
-/// 需要三样东西：本机的 Go 工具链、Go 版 croc 源码（默认找 `../croc`）、以及能跑的
-/// `tests/interop/run.sh`。缺哪样就明确报出来，不静默跳过。
+/// **不在 CI 里**，这是有意的决定（`docs/agent/plan/09-build-and-ci.md` §5.3）。
+/// 需要两样东西：本机的 Go 版 croc 二进制，以及能跑的 `tests/interop/run.sh`。
+/// 缺哪样就明确报出来，不静默跳过。
 #[must_use]
 pub fn interop() -> ExitCode {
     let root = deps::workspace_root();
@@ -123,11 +125,20 @@ pub fn interop() -> ExitCode {
     let rust_bin_str = rust_bin.to_string_lossy().into_owned();
 
     println!("\n=== 互通矩阵 ===");
-    // 默认跳过需要外网的 I6（官方 relay）——本地门禁不该因为网络抖动变红，CI 里也是
-    // 这么跑的。想真跑 I6 就显式把 CROC_INTEROP_SKIP_NETWORK 设成空串。
+    // 默认跳过需要外网的 I6（官方 relay）——本地门禁不该因为网络抖动变红。
+    // 想真跑 I6 就显式把 CROC_INTEROP_SKIP_NETWORK 设成空串。
     let skip_network = std::env::var("CROC_INTEROP_SKIP_NETWORK").unwrap_or_else(|_| "1".to_owned());
-    let passed = Command::new("bash")
-        .arg(root.join("tests").join("interop").join("run.sh"))
+    let script = root.join("tests").join("interop").join("run.sh");
+    let bash = match resolve_bash() {
+        Ok(bash) => bash,
+        Err(error) => {
+            eprintln!("\ninterop: {error}");
+            steps.push(Step { title: "tests/interop/run.sh", passed: false });
+            return summarize(&steps);
+        }
+    };
+    let passed = Command::new(&bash)
+        .arg(to_shell_path(&script))
         .current_dir(&root)
         .env("CROC_GO_BIN", &go_bin_str)
         .env("CROC_RS_BIN", &rust_bin_str)
@@ -139,9 +150,61 @@ pub fn interop() -> ExitCode {
     summarize(&steps)
 }
 
+/// 找到能跑 `run.sh` 的 bash。
+///
+/// Windows 上不能直接 `Command::new("bash")`：`PATH` 里排在前面的往往是
+/// `C:\Windows\System32\bash.exe`（**WSL 的 bash**），它把 `D:\repo\run.sh` 的反斜杠
+/// 当转义符，路径被吃掉，报的是 `No such file or directory`——看着像脚本不存在，
+/// 其实是 bash 选错了。所以这里显式找 Git for Windows 的 bash。
+fn resolve_bash() -> Result<std::path::PathBuf, String> {
+    if cfg!(windows) {
+        if let Ok(explicit) = std::env::var("CROC_INTEROP_BASH") {
+            let path = std::path::PathBuf::from(explicit);
+            if path.is_file() {
+                return Ok(path);
+            }
+            return Err(format!("CROC_INTEROP_BASH 指向的文件不存在：{}", path.display()));
+        }
+
+        // Git for Windows 的常见安装位置。
+        let mut roots = Vec::new();
+        if let Ok(from_env) = std::env::var("ProgramFiles") {
+            roots.push(std::path::PathBuf::from(from_env).join("Git").join("bin"));
+        }
+        if let Ok(from_env) = std::env::var("ProgramW6432") {
+            roots.push(std::path::PathBuf::from(from_env).join("Git").join("bin"));
+        }
+        if let Ok(from_env) = std::env::var("LOCALAPPDATA") {
+            roots.push(std::path::PathBuf::from(from_env).join("Programs").join("Git").join("bin"));
+        }
+        roots.push(std::path::PathBuf::from(r"C:\Program Files\Git\bin"));
+        roots.push(std::path::PathBuf::from(r"C:\Program Files (x86)\Git\bin"));
+
+        for root in roots {
+            let candidate = root.join("bash.exe");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+        return Err(
+            "找不到 Git for Windows 的 bash（试过 Program Files / LOCALAPPDATA 下的 Git\\bin\\bash.exe）。\r\n        \
+             互通矩阵是 bash 脚本，请安装 Git for Windows，或用 CROC_INTEROP_BASH 显式指一个 bash。\r\n        \
+             注意 C:\\Windows\\System32\\bash.exe 是 WSL 的 bash，不是它。"
+                .to_owned(),
+        );
+    }
+    Ok(std::path::PathBuf::from("bash"))
+}
+
+/// 把路径转成 bash 认的形式。Windows 上是 `D:/a/b.sh`——正斜杠，WSL 与 Git Bash 都认。
+fn to_shell_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 /// 定位 Go 版 `croc` 二进制。
 ///
-/// 顺序：`CROC_GO_BIN` → `../croc` 源码现编 → 报错。
+/// 顺序：`CROC_GO_BIN` → `../croc-playground/croc.exe`（平级的独立仓库，平时把 Go 版
+/// 二进制扔在那儿）→ 用 `../croc` 源码现编 → 报错。
 fn resolve_go_bin(root: &Path) -> Result<std::path::PathBuf, String> {
     if let Ok(value) = std::env::var("CROC_GO_BIN") {
         let path = std::path::PathBuf::from(value);
@@ -151,9 +214,21 @@ fn resolve_go_bin(root: &Path) -> Result<std::path::PathBuf, String> {
         return Err(format!("CROC_GO_BIN 指向的文件不存在：{}", path.display()));
     }
 
+    let sibling = root.parent().unwrap_or(root).join("croc-playground");
+    for name in ["croc.exe", "croc"] {
+        let candidate = sibling.join(name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
     let source = root.parent().unwrap_or(root).join("croc");
     if !source.join("go.mod").is_file() {
-        return Err(format!("找不到 Go 版 croc 源码（期望 {}），也没有设置 CROC_GO_BIN", source.display()));
+        return Err(format!(
+            "找不到 Go 版 croc：既没有 {} 下的 croc[.exe]，也没有 {} 下的源码，也没有设置 CROC_GO_BIN",
+            sibling.display(),
+            source.display()
+        ));
     }
     if Command::new("go").arg("version").stdout(std::process::Stdio::null()).status().is_err() {
         return Err("本机没有 go 命令，无法编译 Go 版 croc".to_owned());
