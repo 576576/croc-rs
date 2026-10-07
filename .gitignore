@@ -21,3 +21,4 @@ crates/croc-gui/gen/
 
 # Tauri 生成的权限 schema。
 crates/croc-gui/gen/schemas/
+/build

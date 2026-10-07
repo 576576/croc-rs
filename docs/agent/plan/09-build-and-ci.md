@@ -255,7 +255,7 @@ I12 由 `skip_unimplemented()` **显式 SKIP 并打印理由**，不再是假信
 |---|---|---|
 | 依赖 | 同一台机器上要有 Rust 版 + Go 版 croc（Go 版在平级的 `croc-playground/`）+ Go 工具链 | runner 上得多编一份 Go 出来，还要拉外部依赖 |
 | 时长 | 每个用例各自起中继、拉起两端进程、传文件，18 个用例是**分钟级** | `build` 的 `needs` 要等它，发布链路整体变慢 |
-| 稳定性 | 端口探测、进程时序、Windows 句柄释放都有竞态（见 `HANDOFF.md` §4） | 偶发红灯，且失败时不在代码而在环境 |
+| 稳定性 | 端口探测、进程时序、Windows 句柄释放都有竞态（见 [`tests/interop/README.md`](../../../../tests/interop/README.md) 的「harness 自身踩过的坑」） | 偶发红灯，且失败时不在代码而在环境 |
 | 用途 | "改了协议字节之后本地跑一遍" | 门禁的职责是挡住坏提交，不是提供验证手段 |
 
 所以它留在本地，由 `cargo xtask ci-interop` 承担。**这个决定可以推翻**——如果哪天
@@ -311,8 +311,41 @@ cargo xtask ci-interop   # = 互通矩阵（只在本地跑，不在 CI 里）
 - [x] `.github/workflows/{release,build,lint,clear}.yml` 四份
 - [x] `docs/agent/release.md`（操作手册；设计推导在本文档）
 - [x] `xtask` 子命令：`purity` / `deps` / `ci-lint` / `ci-build` / `ci-interop`
-- [x] `tests/interop/run.sh` + `tests/interop/README.md`（I1–I18）
+- [x] `tests/interop/run.sh` + `tests/interop/README.md`（I1–I19）
 - [x] `crates/croc-cli`（`croc-rs`）与 `crates/croc-gui`（`crocw-rs`，Tauri 2）落地
 - [x] 打第一个 alpha（推 main 验证自动链路）—— CI 全绿，四个产物都出来了
-- [ ] **互通矩阵加回 `lint.yml`**（等 I12 / I16–I18 / I9 全绿）—— 当前头号缺口
+- [x] 互通矩阵**有意不进 CI**（见 §5.3），由 `cargo xtask ci-interop` 在本地跑
 - [x] `croc-playground/tools/gen-golden` 在有 Go 的机器上跑过一次，产出 `tests/golden/{curves,pake,pakekey}.json`
+
+---
+
+## 9. 本机踩过的坑（Windows 开发机）
+
+这些都是**实际踩过并确认过根因**的，不是猜测。换机器不一定复现，但同类错误会换皮出现。
+
+- **`bash` 有两个**：`which bash` 给的是 Git Bash 的 `/bin/bash`，但
+  `C:\Windows\System32ash.exe`（WSL）也在 `PATH` 里且优先级更高。**Rust 子进程
+  按 `PATH` 找会选到 WSL 那个**，于是 Windows 路径里的反斜杠被当转义符。凡是 Rust 代码
+  要起 bash，都得显式找 Git for Windows 的 `bash.exe`，别写 `Command::new("bash")`。
+- **Windows + Defender 下文件打开很贵**：2 万空文件 `files::collect` ≈ 17 s，
+  Go 版同场景 ≈ 98 s。所以**别拿"几万文件"的用例去判断实现效率**，先怀疑环境。
+- **重编 `croc-rs.exe` 前先 `taskkill //F //IM croc-rs.exe //T`**，否则 `cargo build`
+  报 `os error 5`（后台中继还占着文件）。
+- **`git push` 要重试**：代理 `127.0.0.1:7890` 会间歇性对 `github.com` 失败。
+  用 `git -c http.version=HTTP/1.1 push`（`-c` 必须放在 `push` **之前**），
+  必要时 `env -u HTTPS_PROXY -u HTTP_PROXY ...` 走直连。两条路都试一遍再下结论。
+- ⚠️ 写重试循环时别用 `if git push ... | tail -3; then`——**管道退出码是 `tail` 的**，
+  恒为 0，于是"推失败"会被判成成功。用 `if out=$(git push ... 2>&1); then`，
+  或者 `set -o pipefail`。推完用 `gh api repos/576576/croc-rs/commits/main --jq '.sha'`
+  核对远端 HEAD。
+- 仓库是**私有的**：`gh api` 能用，匿名 `api.github.com` 会返回 404。
+- 全 prerelease 的仓库 `/releases/latest` **返回 404**（它只给正式版），要用
+  `gh api repos/.../releases --jq '.[0]'`。资产名里的版本号也不等于 tag
+  （tag 是 `r26-alpha.<run id>`，资产名是 `croc-rs-r26-...`），按 tag 拼下载 URL 同样 404。
+- 命令行里带 `${...}` 的字符串会被外层预处理器拒掉（`Bad substitution`），
+  即便写在带引号的 heredoc 里也一样——避免在命令里拼 shell 变量展开。
+- **带 CJK 的多行文本用 Python 脚本改，别塞进 heredoc**：shell 传参时的编码转换会吃掉
+  字符，症状是文件里出现 U+FFFD 替换字符。改完扫一遍确认没有：
+  `grep -rl $'\ufffd' --include='*.md' --include='*.rs' .`。
+- **`Edit` 工具改 CRLF 文件会因精确匹配失败**：先读文件确认实际行尾，或直接用 Python
+  按字节处理（`read_bytes().decode('utf-8')` → 替换 → `write_bytes`）。

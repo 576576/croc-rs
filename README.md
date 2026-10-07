@@ -26,9 +26,6 @@
 所以你能用 `croc-rs` 发送、用 `croc` 接收，反过来也一样。实现层按 Rust 惯用法重写，
 不做 Go 的逐行翻译（见 [设计原则](docs/agent/plan/00-overview.md)）。
 
-> ⚠️ **进度**：与 Go 版的互通矩阵 18 个用例里 16 个通过、2 个跳过。
-> `--local`（局域网直连）与 Tailscale 数据面尚未实现，见 [与 Go 版的差距](#与-go-版的差距)。
-
 ## 两个产物
 
 | 产物 | crate | 说明 |
@@ -188,24 +185,8 @@ croc-rs --relay "myrelay.example.com:9009" --pass 你的口令 send [文件]
 
 ## 与 Go 版的差距
 
-还没实现的能力（**列在这里是为了不让人以为已经有了**）：
-
-| 能力 | 状态 |
-|------|------|
-| `--local`（只走局域网，不碰公网中继） | **未实现**。给了会**报错退出**，不会悄悄降级成公网中继——它是隐私开关 |
-| `--transport derp`（Tailscale 数据面） | **pending**。打一条 `note:` 后按 `relay` 处理，不影响退出码。等上游 tailcat-rs |
-| `--exclude` / `--exclude-file` / `--git` | 未实现 |
-| `--qr`（二维码） | 未实现 |
-| `--socks5`（经 Tor 等代理） | 未实现 |
-| `--throttleUpload`（限速） | 未实现 |
-| 剪贴板、`--remember` | 未实现 |
-| `croc ssh` / `croc store` | 未实现 |
-
-`--hash` 目前只支持 `xxhash`。
-
-已实现并有互通矩阵覆盖的：多文件、整个目录、空目录、`--text`、自定义口令码、压缩 /
-`--no-compress`、覆盖与改名策略、四种曲线、自建中继（两端都是 Rust 版，或一 Rust 一 Go）、
-口令错误时的优雅报错。
+哪些 flag 和子命令已经实现、哪些还没有，逐项列在
+[docs/agent/plan/04-cli-plan.md](docs/agent/plan/04-cli-plan.md)。
 
 ## 开发
 

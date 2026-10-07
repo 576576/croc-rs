@@ -21,48 +21,59 @@
 
 ### 1.2 `send` 命令 flag
 
+> ⚠️ **这张表以实际实现为准**（`croc-rs send --help`），不是目标态。此前它把一批
+> 还没做的 flag 标成了 ✅，读起来像"都有了"——核对方式是对着 `cli.rs` 与 `--help`
+> 逐项比，别照抄上游的清单。
+
 | Go flag | Rust | 备注 |
 |---------|------|------|
-| `--code, -c` | ✅ | 自定义三词码 |
-| `--zip` | ✅ | 文件夹打包 |
-| `--text, -t` | ✅ | 发送文本 |
-| `--hash` (xxhash/imohash/md5/highway) | ✅ | 默认 xxhash |
-| `--transport` (auto/derp/relay) | ✅ `auto`/`relay` 等价（还没有局域网中继）；`derp` ⏸ pending（提示后按 relay） | 见 §1.4 |
-| `--ts-authkey` | ⏸ pending | 解除 pending 后启用，环境变量 `CROC_TS_AUTHKEY` |
-| `--no-local` | ✅ | |
-| `--no-multi` | ✅ | 禁用多端口复用 |
-| `--git` | ✅ | 尊重 .gitignore |
-| `--port` / `--transfers` | ✅ | 本地中继/端口数 |
-| `--qrcode, -qr` | ✅ | |
-| `--exclude` / `--exclude-file` | ✅ | |
-| `--socks5` / `--connect` | ✅ | |
+| `--code, -c` | ✅ | 自定义口令码 |
+| `--text, -t` | ✅ | 不要求再给路径 |
+| `--hash` | ⚠️ 只 `xxhash` | `md5` / `imohash` / `highway` **报不支持**，不静默退化成 xxhash（会让对端拿到对不上的摘要） |
+| `--transport` | ✅（全局） | 见 §1.4 |
+| `--no-local` | ✅（全局） | |
+| `--local` | ✅（全局） | 见 §1.5 |
+| `--zip` | ❌ | 文件夹打包 |
+| `--git` | ❌ | 尊重 .gitignore |
+| `--exclude` / `--exclude-file` | ❌ | |
+| `--qrcode, -qr` | ❌ | |
+| `--socks5` / `--connect` | ❌ | 经代理（Tor 等） |
+| `--no-multi` | ❌ | 禁用多端口复用 |
+| `--port` / `--transfers` | ⚠️ 只在 `relay` | Go 把它俩放在 send 上；我们只在 `relay` 子命令有 |
+| `--ts-authkey` | ⏸ pending | 见 §1.4 |
 | `--store` | ❌ v2 | |
 
 ### 1.3 全局 flag
 
+> 同样以 `croc-rs --help` 为准。列出 Go 有而本实现**没有**的，是为了让人一眼看出
+> "这个开关还没接"，而不是等它悄悄被忽略。
+
 | Go flag | Rust | 备注 |
 |---------|------|------|
 | `--yes` | ✅ | |
-| `--stdout` | ✅ | |
 | `--no-compress` | ✅ | |
-| `--ask` | ✅ | |
-| `--local` | ⏸ v1.1 | 参数已接受，但**报错退出**：还没有内建局域网中继。见 §1.5 |
-| `--ignore-stdin` | ✅ | |
 | `--overwrite` | ✅ | |
 | `--rename` | ✅ | |
 | `--quiet` | ✅ | |
 | `--debug` | ✅ | |
-| `--remember` | ✅ | 配置落盘（对齐 `internal/cli` 的 remembered 设置） |
-| `--classic` | ⚠️ | v1 保留参数但仅记录（classic 模式的不安全语义不实现） |
-| `--internal-dns` | ⚠️ v1.1 | 内置 DNS stub resolver |
-| `--disable-clipboard` / `--extended-clipboard` | ✅ | |
-| `--multicast` | ✅ | |
-| `--curve` (默认 p256) | ✅ | 支持 p256/p384/p521/siec；`ed25519` 报不支持 |
-| `--ip` | ✅ | |
-| `--relay` / `--relay6` | ✅ | 环境变量 `CROC_RELAY` / `CROC_RELAY6` |
 | `--out` | ✅ | 接收目录 |
 | `--pass` | ✅ | 环境变量 `CROC_PASS` |
-| `--throttleUpload` | ✅ | 限速，如 `500k` |
+| `--relay` | ✅ | 环境变量 `CROC_RELAY` |
+| `--curve` | ✅ | p256 / p384 / p521 / siec；`ed25519` 报不支持 |
+| `--local` | ✅ | 见 §1.5 |
+| `--no-local` | ✅ | |
+| `--transport` | ✅ | 见 §1.4 |
+| `--relay6` | ❌ | |
+| `--ip` | ❌ | |
+| `--multicast` | ❌ | `--local` 用 Go 的默认组 `239.255.255.250:9999`，暂不可配 |
+| `--remember` | ❌ | 配置落盘 |
+| `--ask` | ❌ | |
+| `--stdout` | ❌ | |
+| `--ignore-stdin` | ❌ | |
+| `--classic` | ❌ | v1 不实现 classic 模式的不安全语义 |
+| `--internal-dns` | ❌ | 内置 DNS stub resolver |
+| `--disable-clipboard` / `--extended-clipboard` | ❌ | 剪贴板整体未实现 |
+| `--throttleUpload` | ❌ | 限速 |
 | `--revoke` | ❌ v2 | 依赖 store |
 
 ### 1.4 `--transport derp` —— ⏸ PENDING
@@ -86,42 +97,41 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 
 解除 pending 后按 [08-tailscale.md](08-tailscale.md) §3 执行，届时 CLI 侧新增 `--ts-authkey`。
 
-### 1.5 `--local` —— ⏸ v1.1（参数已接受，但报错退出）
+### 1.5 `--local` —— ✅ 已实现（只走局域网，不碰公网中继）
 
-`--local` 在 Go 里的语义是 `OnlyLocal`：**只走局域网，不碰公网中继**。它需要两件事：
+`--local` 在 Go 里的语义是 `OnlyLocal`。实现落在 `crates/croc-engine/src/local.rs`：
 
-1. 发送端起一个**内嵌中继**（`127.0.0.1:<随机端口>`，控制口 + 数据口）；
-2. 接收端用 **UDP 组播**（默认 `239.255.255.250`）发现这个端口——载荷是 `"croc" + 端口`
-   （Go 版 `broadcastOnLocalNetwork()`，`src/croc/croc.go:1438`）。
+1. 发送端起一个**内嵌中继**（`croc-relay` 直接跑在本进程里），端口由内核分配；
+2. 用 **UDP 组播**把控制端口喊出去：组 `239.255.255.250:9999`，载荷 `"croc" + 端口`
+   （Go 版 `broadcastOnLocalNetwork()`，`src/croc/croc.go:1435`）；
+3. 接收端组播 500 ms（Go 的 `receivePeerDiscoveryTimeout`），按载荷拼出 `地址:端口`，
+   拿它当中继连上去（Go 的 `discoveredRelayAddresses()`，`src/croc/relay_dial.go:150`）。
 
-两者都还没有。当前的 CLI 行为是**报错退出**：
+**两个坑都是实测出来的**，都写进代码注释了：
 
-```
-$ croc-rs --local aaa-bbb-ccc
-croc-rs: --local（仅局域网）尚未实现：本实现还没有内建局域网中继；请去掉该参数，或改用 --no-local 显式走中继
-```
+| 现象 | 根因 |
+|------|------|
+| 同一台机器上接收端起不来：`EADDRINUSE` | 发送端（Go 版也一样）也占着 9999。监听侧必须 `SO_REUSEADDR` |
+| 单机上 **Rust → Go** 永远发现不到 | Go 的 `peerdiscovery` 默认 `AllowSelf=false`，**把源 IP 是本机的广播丢掉**（`listener.go:130`）。Go 发送 / Go 接收在同一台机器上同样失败，与本实现无关 |
 
-**为什么报错而不是"接受但忽略"**：`--local` 是个隐私开关——用户明确要求不经过公网中继。
-把它悄悄降级成公网中继，等于把用户拒绝的事做了，比直接失败更糟。
+所以 `tests/interop/run.sh` 的 I12（Rust→Go `--local`）**跳过的理由不是"没实现"**，
+而是单机上 Go 侧发现不到——它得两台机器才能验证。Rust↔Rust 的 `--local` 由 I19 覆盖
+（256 KB，全程未连任何外部中继）。
 
-配套的两条规则：
+配套的 CLI 规则：
 
 | 组合 | 行为 |
 |------|------|
-| `--local --transport auto` | 报错（尚未实现） |
+| `--local --transport auto` | 正常走局域网 |
 | `--local --transport relay` / `derp` | 报错 `--transport must be auto for local-only transfers`（**与 Go 同文**，`src/cli/cli.go:700`） |
+| `--local --no-local` | clap 的 `conflicts_with` 报错 |
 
-顺带：对端的局域网探测我们**只吃掉、不回**。探测是裸 JSON（`SimpleMessage`），不认出来
-就会被当 `Message` 去解压，报 `corrupt deflate stream`；但**回**一个过期的 `pake2` 更糟——
-对端只等 500 ms（`localProbeResponseTimeout`），超时后它已经往下走、在等 `pake` 的应答，
-这时收到 `pake2` 会拿去解压，握手当场报废。发送方"算完哈希才连中继"，几万文件的哈希在
-Windows 上要十几秒，那 500 ms 必然过完。沉默则永远安全：Go 的接收方把探测失败丢掉、
-照常走中继路径，代价只是多等 500 ms——与 Go 自己加 `--no-local` 时一样。
-见 `crates/croc-core/src/session.rs` 的 `try_local_probe()`。
-
-> 将来做本地中继时**必须同时**让发送方尽早进入读循环（Go 是把算哈希放进后台 goroutine、
-> 与连中继并行，`croc.go:1792`），否则回过去的仍然是过期答案。
-
+对端的局域网探测仍然**只吃掉、不回**（`crates/croc-core/src/session.rs` 的
+`try_local_probe()`）。理由没变，但换了说法：`--local` 下两端根本不连公网中继，探测
+没有通道可走；非 `--local` 时我们不开内嵌中继，能给的答案是空的。而**回一个过期的
+`pake2` 是致命的**——对端只等 500 ms 就往下走，迟到的 `pake2` 会被当 `pake` 的应答去
+解压，握手当场报废。沉默永远安全：Go 的接收方把探测失败丢掉、照常走中继，代价只是
+多等 500 ms。
 ---
 
 ## 2. 分阶段任务分解

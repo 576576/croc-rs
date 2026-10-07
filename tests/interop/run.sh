@@ -694,10 +694,12 @@ case_i11() {
 # I12 Rust → Go，局域网本地直连（不走中继）
 case_i12() {
   begin_case I12 "Rust → Go，局域网本地直连（--local，不启 relay）" || return 0
-  # `--local` 要求内建局域网中继（UDP 组播发现 + 内嵌 relay），本实现还没有；
-  # CLI 侧会明确报错退出（crates/croc-cli/src/cli.rs 的 LOCAL_UNAVAILABLE），
-  # 不会悄悄降级成公网中继。实现之后把这段跳过删掉即可。
-  if skip_unimplemented I12 "--local 尚未实现：本实现没有内建局域网中继"; then
+  # **`--local` 已经实现了**（内嵌 relay + UDP 组播发现，见 croc-engine/src/local.rs），
+  # 但这个用例在单机上必然失败，原因在 Go 那一侧：Go 的 peerdiscovery 默认
+  # `AllowSelf=false`，会**把源 IP 是本机的广播丢掉**（listener.go:130）。于是同一台
+  # 机器上 Go 永远发现不到发送方——Go 发送 / Go 接收也一样失败，与本实现无关。
+  # 要验证得两台机器；在此之前跳过。
+  if skip_unimplemented I12 "--local 已实现，但 Go 的组播发现会过滤本机广播（AllowSelf=false），单机上发现不到"; then
     return 0
   fi
   # 不启 relay —— 这正是本用例要验证的：走不到中继也能传。
@@ -706,6 +708,23 @@ case_i12() {
   transfer "$CASE_DIR" "" \
     "$CROC_RS_BIN" --local --yes --quiet send --code "$CODE" payload.bin -- \
     "$CROC_GO_BIN" --local --yes --quiet "$CODE"
+  if [ $? -eq 0 ] && same_file "$CASE_DIR/send/payload.bin" "$CASE_DIR/recv/payload.bin"; then
+    result=0
+  fi
+  finish_case "$result"
+}
+
+# I19 Rust → Rust，局域网本地直连（不走中继）
+#
+# 与 I12 同形，但两端都是 Rust：不用 Go 的组播发现，所以单机能跑。
+# **不启 relay** —— 这正是本用例要验证的：全程碰不到任何外部中继。
+case_i19() {
+  begin_case I19 "Rust → Rust，局域网本地直连（--local，不启 relay）" || return 0
+  make_file "$CASE_DIR/send/payload.bin" 262144
+  local result=1
+  transfer "$CASE_DIR" "" \
+    "$CROC_RS_BIN" --local --yes --quiet send --code "$CODE" payload.bin -- \
+    "$CROC_RS_BIN" --local --yes --quiet "$CODE"
   if [ $? -eq 0 ] && same_file "$CASE_DIR/send/payload.bin" "$CASE_DIR/recv/payload.bin"; then
     result=0
   fi
@@ -900,6 +919,7 @@ main() {
   case_i13
   case_i14
   case_i15
+  case_i19
   case_derp I16 "$CROC_RS_BIN" "$CROC_GO_BIN" go   "Rust 发送 / Go 接收 / Go relay"
   case_derp I17 "$CROC_RS_BIN" "$CROC_RS_BIN" rust "Rust 两端 / Rust relay"
   case_derp I18 "$CROC_RS_BIN" "$CROC_GO_BIN" rust "Rust 发送 / Go 接收 / Rust relay"

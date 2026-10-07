@@ -4,8 +4,10 @@
 >
 > 基线：`schollz/croc` v11.5.4（`v11.5.4-4-g62fc9d17`）。
 
-> **接手的人先看 [`../HANDOFF.md`](../HANDOFF.md)**：那里写的是"现在是什么样、怎么复现、
-> 哪里是坑"。下面这些是**方案与决策**，不是现状——表里标 ✅ 的不少还没实现。
+> 下面这些是**方案与决策**，不是现状——表里标 ✅ 的不少还没实现，照抄之前先对着
+> `cli.rs` 与 `--help` 核一遍。"现在是什么样、怎么复现、哪里是坑"分散在
+> [`00-overview.md`](00-overview.md)、[`09-build-and-ci.md`](09-build-and-ci.md) §9 与
+> [`tests/interop/README.md`](../../tests/interop/README.md) 里。
 
 ## 文档导航
 
