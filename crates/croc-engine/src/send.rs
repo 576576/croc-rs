@@ -10,7 +10,7 @@ use croc_protocol::{TailcatDeclaration, declare};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::data::{ChunkQueue, send_file, stream_count};
+use crate::data::{ChunkQueue, DataPlane, send_file, stream_count};
 use crate::error::EngineError;
 use crate::files;
 use crate::relay;
@@ -71,6 +71,11 @@ pub struct Summary {
 pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Summary, EngineError> {
     // 清单在连中继之前就准备好：算哈希要读一遍全部文件，出问题（路径不存在、算法不支持）
     // 应当在这一步就暴露，而不是等对端等在那儿的时候才失败。
+    //
+    // 代价是**我们进房间进得晚**：几万个文件的哈希在 Windows 上要十几秒，对端那段时间
+    // 只能干等。这也正是我们不能回对端局域网探测的原因（见 `Session::try_local_probe()`
+    // 的说明）——回过去的必然是过期答案。Go 反过来：连中继与算哈希并行
+    // （`croc.go:1792`），所以它的探测应答总是及时。将来要做本地中继，就得改成 Go 那样。
     emit(&request.events, EngineEvent::Status("hashing the files…".to_owned()));
     let (mut entries, empty_folders) = files::collect(&request.paths, &request.hash_algorithm)?;
     let compress = !request.no_compress;
@@ -105,6 +110,16 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     // 数据面完成的通知走这条通道。控制循环用 `select!` 同时等它和对端的帧，
     // 所以不需要把 `Framed` 拆成两半（拆开会丢掉握手时顺手读进缓冲的那半条帧）。
     let (data_tx, mut data_rx) = mpsc::channel::<InEvent>(4);
+    // **数据连接整个传输只建一次**：数据端口的房间名是 `{room}-{j}`，一个房间只容得下
+    // 两端各一条连接，每条文件重建一次就会撞上自己上一条文件留下的连接。
+    // 连接留在池子里直到 `send()` 返回，正好等价于 Go 的 `c.dataConns`。
+    let data_plane = Arc::new(DataPlane::new(
+        request.relay.clone(),
+        request.relay_password.clone(),
+        request.components.room_name.clone(),
+        ports.clone(),
+        streams,
+    ));
     let mut transferred: u64 = 0;
 
     let mut effects = session.handle(InEvent::PeerConnected, &mut randomness)?;
@@ -112,7 +127,11 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         for effect in core::mem::take(&mut effects) {
             match effect {
                 Effect::Send(frame) => link.framed.write_frame(&frame).await?,
-                Effect::SendFile { index, ranges, streams } => {
+                Effect::SendFile { index, ranges, streams, peer_per_file_compression } => {
+                    // `streams` 与 `data_plane.width()` 是同一个数：会话按 `min(relay_ports, 8)`
+                    // 算，数据面按 `min(端口数, 8)` 算，而 `relay_ports` 就是端口数。留个断言，
+                    // 免得将来两边各改各的却没人发现。
+                    debug_assert_eq!(usize::from(streams), data_plane.width(), "会话与数据面的并行流数应当一致");
                     let entry = entries.get(usize::try_from(index).unwrap_or(usize::MAX)).ok_or_else(|| {
                         EngineError::Config(format!("the peer asked for file #{index}, which does not exist"))
                     })?;
@@ -123,19 +142,30 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
                             size: u64::try_from(entry.info.size).unwrap_or(0),
                         },
                     );
+                    // 照抄 Go 的 `currentFileUsesCompression`：
+                    //   1. `--no-compress` 关掉就是关掉；
+                    //   2. 对端没声明 `per-file-compression-v1` ⇒ **一律压缩**
+                    //      （老对端只认全局开关）；
+                    //   3. 声明了才看每个文件自己的标志。
+                    let compress = if request.no_compress {
+                        false
+                    } else if !peer_per_file_compression {
+                        true
+                    } else {
+                        entry.info.is_compressed
+                    };
+                    let conns = data_plane.acquire().await?;
                     spawn_sender(
-                        &request,
-                        &ports,
                         entry.path.clone(),
                         &ranges,
                         u64::try_from(entry.info.size).unwrap_or(0),
-                        entry.info.is_compressed,
-                        streams,
+                        compress,
                         session.data_key(),
+                        conns,
+                        Arc::clone(&data_plane),
                         data_tx.clone(),
                         cancel.clone(),
-                    )
-                    .await?;
+                    )?;
                 }
                 Effect::Emit(Event::FileClosed { index }) => {
                     if let Some(entry) = entries.get(usize::try_from(index).unwrap_or(usize::MAX)) {
@@ -146,6 +176,8 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
                 }
                 Effect::Emit(_) => {}
                 Effect::Finish(outcome) => {
+                    // 到这一步对端已经确认收完（`finished` 已交换）。`data_plane` 随本函数
+                    // 返回而析构，数据连接那时才关——这正是 Go 把 `c.dataConns` 留到最后的理由。
                     return match outcome {
                         Outcome::Completed => Ok(Summary { files: entries.len(), bytes: transferred }),
                         other => Err(other.into()),
@@ -166,41 +198,32 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     }
 }
 
-/// 开数据流并把一个文件传出去；全部流结束（或出错）后给控制循环发通知。
+/// 把一个文件交给数据面去传；传完（或出错）后给控制循环发通知。
+///
+/// 连接由 [`DataPlane`] 管：这里只是"借"出来，传完还回去。**不在这里关连接**——
+/// 见 [`send_file`] 关于 RST 的说明。
 #[allow(clippy::too_many_arguments, reason = "这条路径上的参数都是独立事实，打包成结构体只是换个地方写")]
-async fn spawn_sender(
-    request: &SendRequest,
-    ports: &[u16],
+fn spawn_sender(
     path: PathBuf,
     ranges: &[i64],
     file_size: u64,
     compress: bool,
-    streams: u8,
     key: Option<[u8; croc_protocol::ENCRYPTION_KEY_LEN]>,
+    conns: Vec<croc_net::Framed<tokio::net::TcpStream>>,
+    plane: Arc<DataPlane>,
     notify: mpsc::Sender<InEvent>,
     cancel: CancellationToken,
 ) -> Result<(), EngineError> {
     let key = key.ok_or_else(|| EngineError::Config("the data key is not ready yet".to_owned()))?;
-    let (host, _) = split_host(&request.relay)?;
-    let count = usize::from(streams).min(ports.len());
-
-    let mut conns = Vec::with_capacity(count);
-    for (index, port) in ports.iter().take(count).enumerate() {
-        let index = u8::try_from(index).unwrap_or(u8::MAX);
-        conns.push(
-            relay::connect_data(&host, *port, &request.relay_password, &request.components.room_name, index).await?,
-        );
-    }
-
     let queue =
         Arc::new(Mutex::new(ChunkQueue::new(&croc_core::chunk::ChunkRanges::from_wire(ranges.to_vec()), file_size)));
-    let path_for_task = path.clone();
+
     tokio::spawn(async move {
-        match send_file(conns, path_for_task, queue, key, compress, cancel).await {
+        match send_file(conns, path, queue, key, compress, cancel).await {
             // 发完就**什么都不用报**：发送方的收尾由对端的 `close-sender` 驱动
             // （数据面发完 ≠ 对端收完，最后一块可能还在中继的缓冲里）。
             // 报一个事件反而会让状态机在 `Transferring` 上收到不认识的东西。
-            Ok(()) => {}
+            Ok(conns) => plane.release(conns),
             Err(error) => {
                 tracing::warn!(%error, "data plane failed");
                 let _ = notify.send(InEvent::Cancel).await;
@@ -208,17 +231,6 @@ async fn spawn_sender(
         }
     });
     Ok(())
-}
-
-/// 从 `host:port` 里取 host。
-fn split_host(value: &str) -> Result<(String, u16), EngineError> {
-    if let Some(rest) = value.strip_prefix('[') {
-        let (host, tail) = rest.split_once(']').ok_or_else(|| EngineError::BadRelayAddress(value.to_owned()))?;
-        let port = tail.trim_start_matches(':').parse().map_err(|_| EngineError::BadRelayAddress(value.to_owned()))?;
-        return Ok((host.to_owned(), port));
-    }
-    let (host, port) = value.rsplit_once(':').ok_or_else(|| EngineError::BadRelayAddress(value.to_owned()))?;
-    Ok((host.to_owned(), port.parse().map_err(|_| EngineError::BadRelayAddress(value.to_owned()))?))
 }
 
 /// 给接收方用：一个文件是否走数据面（空文件 / 符号链接不走）。

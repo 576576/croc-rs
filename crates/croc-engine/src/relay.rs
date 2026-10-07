@@ -149,7 +149,11 @@ pub async fn connect_data(
 }
 
 /// 拆 `host:port`。IPv6 字面量要带方括号（`[::1]:9009`）。
-fn split_host_port(value: &str) -> Result<(String, u16), EngineError> {
+///
+/// # Errors
+///
+/// 没有端口、端口不是数字、主机名为空，或者 IPv6 字面量少了下半个方括号。
+pub fn split_host_port(value: &str) -> Result<(String, u16), EngineError> {
     let bad = || EngineError::BadRelayAddress(value.to_owned());
 
     let (host, port) = if let Some(rest) = value.strip_prefix('[') {

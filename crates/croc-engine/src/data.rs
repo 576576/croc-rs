@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use croc_core::RoomName;
 use croc_core::chunk::{CHUNK_SIZE, ChunkRanges};
 use croc_net::Framed;
 use croc_protocol::{codec, encrypt};
@@ -30,9 +31,100 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::EngineError;
 use crate::files::{self, Sink};
+use crate::relay;
 
 /// 一条数据流的上限：与 Go 的 `min(len(RelayPorts), 8)` 同一个理由——再多也不会更快。
 pub const MAX_STREAMS: u8 = 8;
+
+/// 数据面连接的持有者：**一次传输只建一次，全程复用**。
+///
+/// # 为什么必须复用
+///
+/// 数据端口的房间名是 `{room}-{j}`，而中继的一个房间只容得下两端各一条连接。要是每条
+/// 文件都重建一次，第二条文件就会撞上自己上一条文件**还开着**的连接，中继回 `room full`
+/// —— 表现就是"单文件传得好好的，目录一传就断在第二个文件上"。
+///
+/// Go 也是这么做的：连接在 PAKE 完成时建一次（`openRelayChannels()`），留到整个 attempt
+/// 结束（`c.dataConns`）。
+///
+/// # 为什么可以复用
+///
+/// 发送方**只发被请求的块**（[`ChunkQueue`] 是认领制，一块不多），接收方数够就收工，
+/// 所以文件之间不会留下半条帧。即便有（中继会往数据连接里插 keepalive），
+/// [`Framed`] 的缓冲是持久的、`read_frame()` 会从缓冲里接着解析，也不会串包。
+///
+/// # 连接什么时候关
+///
+/// 这个结构体被 `drop` 的时候——也就是整个传输结束、`finished` 已交换之后。
+/// 中途关连接会让中继把还没读走的数据连同连接一起丢掉（见 [`send_file`] 的说明）。
+pub struct DataPlane {
+    relay: String,
+    password: String,
+    room: RoomName,
+    ports: Vec<u16>,
+    streams: u8,
+    conns: Mutex<Option<Vec<Framed<TcpStream>>>>,
+}
+
+impl core::fmt::Debug for DataPlane {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("DataPlane")
+            .field("ports", &self.ports)
+            .field("streams", &self.streams)
+            .field("connected", &self.conns.lock().is_ok_and(|guard| guard.is_some()))
+            .finish_non_exhaustive()
+    }
+}
+
+impl DataPlane {
+    /// 建一个还没连的持有者。
+    #[must_use]
+    pub fn new(relay: String, password: String, room: RoomName, ports: Vec<u16>, streams: u8) -> Self {
+        Self { relay, password, room, ports, streams, conns: Mutex::new(None) }
+    }
+
+    /// 要开几条流（也等于 `ports` 里实际会用的条数）。
+    #[must_use]
+    pub fn width(&self) -> usize {
+        usize::from(self.streams).min(self.ports.len())
+    }
+
+    /// 取走连接；还没建过就现建。
+    ///
+    /// # Errors
+    ///
+    /// 中继地址不合法，或任意一条数据连接握不上手。
+    pub async fn acquire(&self) -> Result<Vec<Framed<TcpStream>>, EngineError> {
+        // 锁只圈住"取走"这一步。建连接要走 TCP + 中继握手，几百毫秒起步；`MutexGuard`
+        // 又恰好不是 `Send`，持着它跨 `await` 连编译都过不去。
+        let reused = {
+            let mut guard = self.conns.lock().map_err(|_| EngineError::Config("data plane poisoned".to_owned()))?;
+            guard.take()
+        };
+        if let Some(conns) = reused {
+            return Ok(conns);
+        }
+
+        let (host, _) = relay::split_host_port(&self.relay)?;
+        let mut conns = Vec::with_capacity(self.width());
+        for position in 0..self.width() {
+            let port = *self.ports.get(position).unwrap_or(&0);
+            let index = u8::try_from(position).unwrap_or(u8::MAX);
+            conns.push(relay::connect_data(&host, port, &self.password, &self.room, index).await?);
+        }
+        Ok(conns)
+    }
+
+    /// 把连接放回去。**不是关闭**——见类型头的说明。
+    pub fn release(&self, conns: Vec<Framed<TcpStream>>) {
+        match self.conns.lock() {
+            Ok(mut guard) => *guard = Some(conns),
+            // 锁中毒说明别处 panic 过；这时把连接丢掉就行（`drop` 会关 socket）。
+            Err(_) => drop(conns),
+        }
+    }
+}
 
 /// "还差哪些块"的游标。
 ///
@@ -122,9 +214,17 @@ impl Progress {
     }
 }
 
-/// 发送一个文件。
+/// 发送一个文件。**返回数据连接**，调用方必须继续持有它们。
 ///
-/// 所有流共享一个队列与一个文件句柄（`pread` 是线程安全的），谁先抢到谁发。
+/// # 为什么要把连接还回去
+///
+/// 这是本项目踩过的第二个大坑：写完就 `drop` 掉 `Framed`，socket 立刻关闭。
+/// 数据还在中继那侧的内核缓冲里没被读走，Windows 于是发 **RST** 而不是 FIN——
+/// 中继的 `copy_bidirectional` 直接报错退出，**已经写出去的分块全部丢弃**。
+/// 表现就是"发送方说发完了、接收方一个字节没收到"。
+///
+/// Go 的发送方同样把数据连接留到整个 attempt 结束（`c.dataConns`），不是在 worker
+/// 收工时关。所以这里把连接原样交回调用方，由它持到传输结束。
 ///
 /// # Errors
 ///
@@ -136,76 +236,125 @@ pub async fn send_file(
     key: [u8; 32],
     compress: bool,
     cancel: CancellationToken,
-) -> Result<(), EngineError> {
+) -> Result<Vec<Framed<TcpStream>>, EngineError> {
     let file = Arc::new(File::open(&path).map_err(|error| EngineError::file(&path, error))?);
     let mut handles = Vec::with_capacity(conns.len());
 
-    for mut conn in conns {
+    for conn in conns {
         let file = Arc::clone(&file);
         let queue = Arc::clone(&queue);
         let cancel = cancel.clone();
         let path = path.clone();
         handles.push(tokio::spawn(async move {
-            let buffer = vec![0u8; usize::try_from(CHUNK_SIZE).unwrap_or(32 * 1024)];
-            let mut payload = vec![0u8; 8 + buffer.len()];
-            let mut randomness = croc_net::OsRandomness;
-
-            loop {
-                // 锁内只做整数运算；读写磁盘与网络都在锁外。
-                let Some(offset) =
-                    queue.lock().map_err(|_| EngineError::Config("chunk queue poisoned".to_owned()))?.claim()
-                else {
-                    return Ok::<(), EngineError>(());
-                };
-
-                let want = buffer.len();
-                let read = tokio::select! {
-                    () = cancel.cancelled() => return Err(EngineError::Cancelled),
-                    result = tokio::task::spawn_blocking({
-                        let file = Arc::clone(&file);
-                        move || {
-                            let mut slice = vec![0u8; want];
-                            let read = files::read_at(&file, &mut slice, offset)?;
-                            slice.truncate(read);
-                            Ok::<Vec<u8>, std::io::Error>(slice)
-                        }
-                    }) => {
-                        result.map_err(|error| EngineError::file(&path, error))?
-                            .map_err(|error| EngineError::file(&path, error))?
-                    }
-                };
-                if read.is_empty() {
-                    return Err(EngineError::file(&path, format!("short read at offset {offset}")));
-                }
-
-                // 前 8 字节是偏移（小端），后面是数据。
-                payload.truncate(8 + read.len());
-                payload
-                    .get_mut(..8)
-                    .ok_or_else(|| EngineError::Config("payload header".to_owned()))?
-                    .copy_from_slice(&offset.to_le_bytes());
-                payload
-                    .get_mut(8..)
-                    .ok_or_else(|| EngineError::Config("payload body".to_owned()))?
-                    .copy_from_slice(&read);
-
-                let plain = if compress { codec::compress(&payload)? } else { payload.clone() };
-                let nonce = croc_protocol::random::nonce(&mut randomness);
-                let frame = encrypt(&plain, &key, &nonce)?;
-
-                tokio::select! {
-                    () = cancel.cancelled() => return Err(EngineError::Cancelled),
-                    result = conn.write_frame(&frame) => result?,
-                }
-                payload.truncate(8 + buffer.len());
-            }
+            let result = send_stream(conn, file, queue, key, compress, cancel, path).await;
+            // 无论成败都把连接还回去——**关连接是调用方的事**，见函数头的说明。
+            result
         }));
     }
 
-    join_all(handles).await
+    let mut kept = Vec::with_capacity(handles.len());
+    let mut first_error = None;
+    for handle in handles {
+        match handle.await {
+            Ok((conn, Ok(()))) => kept.push(conn),
+            Ok((conn, Err(error))) => {
+                kept.push(conn);
+                first_error = first_error.or(Some(error));
+            }
+            Err(join_error) => first_error = first_error.or_else(|| Some(EngineError::Io(join_error.to_string()))),
+        }
+    }
+    first_error.map_or(Ok(kept), Err)
 }
 
-/// 接收一个文件。返回进度，**由调用方**判断是否收全。
+/// 一条数据流上的搬运循环。
+async fn send_stream(
+    mut conn: Framed<TcpStream>,
+    file: Arc<File>,
+    queue: Arc<Mutex<ChunkQueue>>,
+    key: [u8; 32],
+    compress: bool,
+    cancel: CancellationToken,
+    path: PathBuf,
+) -> (Framed<TcpStream>, Result<(), EngineError>) {
+    let buffer = vec![0u8; usize::try_from(CHUNK_SIZE).unwrap_or(32 * 1024)];
+    let mut payload = vec![0u8; 8 + buffer.len()];
+    let mut randomness = croc_net::OsRandomness;
+
+    loop {
+        // 锁内只做整数运算；读写磁盘与网络都在锁外。
+        // 用块把锁的生命周期收干净：`MutexGuard` 不是 `Send`，只要它"可能活到
+        // await 之后"，整个 future 就不是 `Send`，`tokio::spawn` 直接编不过。
+        let claimed = {
+            let Ok(mut guard) = queue.lock() else {
+                return (conn, Err(EngineError::Config("chunk queue poisoned".to_owned())));
+            };
+            guard.claim()
+        };
+        let Some(offset) = claimed else {
+            // 队列空了：这条流收工。
+            return (conn, Ok(()));
+        };
+
+        let want = buffer.len();
+        let read = tokio::select! {
+            () = cancel.cancelled() => return (conn, Err(EngineError::Cancelled)),
+            result = tokio::task::spawn_blocking({
+                let file = Arc::clone(&file);
+                move || {
+                    let mut slice = vec![0u8; want];
+                    let read = files::read_at(&file, &mut slice, offset)?;
+                    slice.truncate(read);
+                    Ok::<Vec<u8>, std::io::Error>(slice)
+                }
+            }) => match result {
+                Ok(Ok(bytes)) => bytes,
+                Ok(Err(error)) => return (conn, Err(EngineError::file(&path, error))),
+                Err(error) => return (conn, Err(EngineError::file(&path, error))),
+            },
+        };
+        if read.is_empty() {
+            return (conn, Err(EngineError::file(&path, format!("short read at offset {offset}"))));
+        }
+
+        // 前 8 字节是偏移（小端），后面是数据。
+        let mut header = [0u8; 8];
+        header.copy_from_slice(&offset.to_le_bytes());
+        payload.truncate(8 + read.len());
+        match payload.get_mut(..8) {
+            Some(slot) => slot.copy_from_slice(&header),
+            None => return (conn, Err(EngineError::Config("payload header".to_owned()))),
+        }
+        match payload.get_mut(8..) {
+            Some(slot) => slot.copy_from_slice(&read),
+            None => return (conn, Err(EngineError::Config("payload body".to_owned()))),
+        }
+
+        let plain = match if compress { codec::compress(&payload) } else { Ok(payload.clone()) } {
+            Ok(plain) => plain,
+            Err(error) => return (conn, Err(error.into())),
+        };
+        let nonce = croc_protocol::random::nonce(&mut randomness);
+        let frame = match encrypt(&plain, &key, &nonce) {
+            Ok(frame) => frame,
+            Err(error) => return (conn, Err(error.into())),
+        };
+
+        tokio::select! {
+            () = cancel.cancelled() => return (conn, Err(EngineError::Cancelled)),
+            result = conn.write_frame(&frame) => {
+                if let Err(error) = result {
+                    return (conn, Err(error.into()));
+                }
+            }
+        }
+        payload.truncate(8 + buffer.len());
+    }
+}
+
+/// 接收一个文件。返回**数据连接**（连接是复用的，必须交回 [`DataPlane`]）与进度。
+///
+/// 收全与否**由调用方**判断，不在这里判——理由见下面这段。
 ///
 /// # 为什么收全判定不在这里
 ///
@@ -226,7 +375,7 @@ pub async fn receive_file(
     key: [u8; 32],
     compress: bool,
     cancel: CancellationToken,
-) -> Result<Arc<Progress>, EngineError> {
+) -> Result<(Vec<Framed<TcpStream>>, Arc<Progress>), EngineError> {
     let progress = Arc::new(Progress::default());
     // 收全之后用它把还在阻塞的流叫醒——否则小文件会让另外几条流一直挂着，
     // 直到发送方关掉连接（那可能要等一整个 RTT）。
@@ -239,61 +388,86 @@ pub async fn receive_file(
         let cancel = cancel.clone();
         let done = done.clone();
         handles.push(tokio::spawn(async move {
-            loop {
-                if progress.is_complete(expected_chunks, expected_bytes) {
-                    done.cancel();
-                    return Ok::<(), EngineError>(());
-                }
-                let frame = tokio::select! {
-                    () = cancel.cancelled() => return Err(EngineError::Cancelled),
-                    () = done.cancelled() => return Ok(()),
-                    result = conn.read_frame() => result?,
-                };
-                let Some(frame) = frame else {
-                    // 对端把数据连接关了：正常收尾。
-                    return Ok(());
-                };
-                if croc_protocol::is_keepalive(&frame) {
-                    continue;
-                }
-
-                let plain = codec::decrypt(&frame, &key)?;
-                let plain = if compress { codec::decompress(&plain, MAX_CHUNK_PLAINTEXT)? } else { plain };
-                if plain.len() < 8 {
-                    return Err(EngineError::Io(format!("data chunk is too short: {} bytes", plain.len())));
-                }
-                let (header, data) = plain.split_at(8);
-                let offset =
-                    u64::from_le_bytes(header.try_into().map_err(|_| EngineError::Io("chunk offset".to_owned()))?);
-                sink.write_at(offset, data)?;
-
-                progress.chunks.fetch_add(1, Ordering::Relaxed);
-                progress.bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
-            }
+            let result = receive_stream(
+                &mut conn,
+                &sink,
+                &progress,
+                expected_chunks,
+                expected_bytes,
+                key,
+                compress,
+                &cancel,
+                &done,
+            )
+            .await;
+            // 无论成败都把连接还回去——关连接是 [`DataPlane`] 的事。
+            (conn, result)
         }));
     }
 
-    join_all(handles).await?;
-    Ok(progress)
+    let mut kept = Vec::with_capacity(handles.len());
+    let mut first_error = None;
+    for handle in handles {
+        match handle.await {
+            Ok((conn, Ok(()))) => kept.push(conn),
+            Ok((conn, Err(error))) => {
+                kept.push(conn);
+                first_error = first_error.or(Some(error));
+            }
+            Err(join_error) => first_error = first_error.or_else(|| Some(EngineError::Io(join_error.to_string()))),
+        }
+    }
+    // 出错时连接就地丢掉：调用方会中止整个传输，没什么可复用的了。
+    first_error.map_or_else(|| Ok((kept, progress)), Err)
+}
+
+/// 一条接收流上的搬运循环。
+#[allow(clippy::too_many_arguments, reason = "这些都是独立事实；打包成结构体只是把同一串东西挪个地方写")]
+async fn receive_stream(
+    conn: &mut Framed<TcpStream>,
+    sink: &Sink,
+    progress: &Progress,
+    expected_chunks: u64,
+    expected_bytes: u64,
+    key: [u8; 32],
+    compress: bool,
+    cancel: &CancellationToken,
+    done: &CancellationToken,
+) -> Result<(), EngineError> {
+    loop {
+        if progress.is_complete(expected_chunks, expected_bytes) {
+            done.cancel();
+            return Ok(());
+        }
+        let frame = tokio::select! {
+            () = cancel.cancelled() => return Err(EngineError::Cancelled),
+            () = done.cancelled() => return Ok(()),
+            result = conn.read_frame() => result?,
+        };
+        let Some(frame) = frame else {
+            // 对端把数据连接关了：正常收尾。
+            return Ok(());
+        };
+        if croc_protocol::is_keepalive(&frame) {
+            continue;
+        }
+
+        let plain = codec::decrypt(&frame, &key)?;
+        let plain = if compress { codec::decompress(&plain, MAX_CHUNK_PLAINTEXT)? } else { plain };
+        if plain.len() < 8 {
+            return Err(EngineError::Io(format!("data chunk is too short: {} bytes", plain.len())));
+        }
+        let (header, data) = plain.split_at(8);
+        let offset = u64::from_le_bytes(header.try_into().map_err(|_| EngineError::Io("chunk offset".to_owned()))?);
+        sink.write_at(offset, data)?;
+
+        progress.chunks.fetch_add(1, Ordering::Relaxed);
+        progress.bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
+    }
 }
 
 /// 一块明文的上限：32 KB 数据 + 8 字节偏移，再留一倍余量给"压缩后反而变大"的情况。
 const MAX_CHUNK_PLAINTEXT: usize = 2 * (CHUNK_SIZE as usize + 8);
-
-/// 等所有流结束；任意一条出错就整体失败（其余流会被 `cancel` 收掉）。
-async fn join_all(handles: Vec<tokio::task::JoinHandle<Result<(), EngineError>>>) -> Result<(), EngineError> {
-    let mut first_error = None;
-    for handle in handles {
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => first_error = first_error.or(Some(error)),
-            Err(join_error) => {
-                first_error = first_error.or_else(|| Some(EngineError::Io(join_error.to_string())));
-            }
-        }
-    }
-    first_error.map_or(Ok(()), Err)
-}
 
 /// 数据流要开几条。
 #[must_use]

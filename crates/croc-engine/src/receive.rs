@@ -11,7 +11,7 @@ use croc_protocol::{FileInfo, SenderInfo, TailcatDeclaration, declare};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::data::{receive_file, stream_count};
+use crate::data::{DataPlane, receive_file, stream_count};
 use crate::error::EngineError;
 use crate::files::{self, Plan, Sink};
 use crate::relay;
@@ -37,6 +37,8 @@ pub struct ReceiveRequest {
     pub out_dir: PathBuf,
     /// `--overwrite` / `--rename`。
     pub preferences: Preferences,
+    /// `--no-compress`：对端压了也不解（等价 Go 的同名开关）。
+    pub no_compress: bool,
     /// 本端机器指纹。
     pub machine_id: String,
     /// 收到清单后问一句；`None` 表示直接接受。
@@ -97,6 +99,15 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
     let mut randomness = OsRandomness;
 
     let (data_tx, mut data_rx) = mpsc::channel::<InEvent>(4);
+    // **数据连接整个传输只建一次**：数据端口的房间名是 `{room}-{j}`，一个房间只容得下
+    // 两端各一条连接；每条文件重建一次就会撞上自己上一条文件留下的连接，中继回 `room full`。
+    let data_plane = Arc::new(DataPlane::new(
+        request.relay.clone(),
+        request.relay_password.clone(),
+        request.components.room_name.clone(),
+        ports.clone(),
+        streams,
+    ));
 
     // 文件循环的状态。
     let mut manifest: Option<Box<SenderInfo>> = None;
@@ -196,20 +207,38 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
             emit(
                 &request.events,
                 EngineEvent::Status(format!(
-                    "准备接收 {}（{} 块 / {} 字节），建立 {} 条数据连接…",
+                    "准备接收 {}（{} 块 / {} 字节, is_compressed={}），获取 {} 条数据连接…",
                     entry.name,
                     ranges.count(u64::try_from(entry.size).unwrap_or(0)),
                     ranges.bytes(u64::try_from(entry.size).unwrap_or(0)),
+                    entry.is_compressed,
                     stream_count(ports.len())
                 )),
             );
-            // **先建数据连接再发 recipientready**：对端一收到请求就会立刻开始发数据，
+            // **先拿到数据连接再发 recipientready**：对端一收到请求就会立刻开始发数据，
             // 数据端口上还没连上就会白丢几块（中继不会为缺席的端口缓冲）。
-            let conns = connect_data_streams(&request, &ports).await?;
+            // 连接由 `DataPlane` 管，第一个文件才真正建，之后一直复用。
+            let conns = data_plane.acquire().await?;
             emit(&request.events, EngineEvent::Status(format!("数据连接已就绪（{} 条）", conns.len())));
             effects =
                 session.handle(InEvent::RequestFile { index, ranges: ranges.as_wire().to_vec() }, &mut randomness)?;
-            spawn_receive(conns, sink, entry.clone(), ranges, session.data_key(), &data_tx, &cancel)?;
+            // 照抄 Go 的 `currentFileUsesCompression`：对端没声明逐文件压缩能力就
+            // **一律当压缩的来解**（老对端只认全局开关）。
+            let compress =
+                if request.no_compress { false } else { !session.peer_per_file_compression() || entry.is_compressed };
+            spawn_receive(
+                ReceiveJob {
+                    conns,
+                    plane: Arc::clone(&data_plane),
+                    sink,
+                    entry: entry.clone(),
+                    ranges,
+                    key: session.data_key(),
+                    compress,
+                },
+                &data_tx,
+                &cancel,
+            )?;
             // 划掉待办：不划掉的话对端回 `close-recipient` 之后会再挑同一个文件，
             // 那时它已经落盘且哈希一致，会被当成"跳过"——一次成功的传输报成"收了 1 跳了 1"。
             pending.remove(0);
@@ -250,7 +279,7 @@ fn plan_files(request: &ReceiveRequest, info: &SenderInfo) -> Result<(Vec<u64>, 
     // 空目录不进文件循环（没有数据要传），但必须在本地建出来——否则一个只含空目录的
     // 目录树传过去会变成"什么都没有"。
     for folder in &info.empty_folders_to_transfer {
-        let destination = files::folder_destination_of(folder, &request.out_dir);
+        let destination = files::folder_destination_of(folder, &request.out_dir)?;
         std::fs::create_dir_all(&destination).map_err(|error| EngineError::file(&destination, error))?;
     }
 
@@ -273,38 +302,33 @@ fn plan_files(request: &ReceiveRequest, info: &SenderInfo) -> Result<(Vec<u64>, 
     Ok((pending, planned))
 }
 
-/// 建 N 条数据连接。
-async fn connect_data_streams(
-    request: &ReceiveRequest,
-    ports: &[u16],
-) -> Result<Vec<croc_net::Framed<tokio::net::TcpStream>>, EngineError> {
-    let (host, _) = split_host(&request.relay)?;
-    let count = usize::from(stream_count(ports.len())).min(ports.len());
-    let mut conns = Vec::with_capacity(count);
-    for (position, port) in ports.iter().take(count).enumerate() {
-        let position = u8::try_from(position).unwrap_or(u8::MAX);
-        conns.push(
-            relay::connect_data(&host, *port, &request.relay_password, &request.components.room_name, position).await?,
-        );
-    }
-    Ok(conns)
-}
-
-/// 开收数据的流；收完（或出错）后给控制循环发通知。
-fn spawn_receive(
+/// 一个文件的接收作业。
+///
+/// 打包成结构体而不是九个参数：这条路径上的东西（连接、连接池、落盘目标、清单条目、
+/// 区间、密钥、压缩判定）本来就是"一次接收"的组成部分，散成参数只会让调用点变成一长串。
+struct ReceiveJob {
     conns: Vec<croc_net::Framed<tokio::net::TcpStream>>,
+    /// 连接用完还到这里——**不关**，下一个文件接着用。
+    plane: Arc<DataPlane>,
     sink: Sink,
     entry: FileInfo,
     ranges: croc_core::chunk::ChunkRanges,
     key: Option<[u8; croc_protocol::ENCRYPTION_KEY_LEN]>,
+    /// 已经算好的压缩判定（调用点照抄 Go 的 `currentFileUsesCompression`）。
+    compress: bool,
+}
+
+/// 开收数据的流；收完（或出错）后给控制循环发通知。
+fn spawn_receive(
+    job: ReceiveJob,
     notify: &mpsc::Sender<InEvent>,
     cancel: &CancellationToken,
 ) -> Result<(), EngineError> {
+    let ReceiveJob { conns, plane, sink, entry, ranges, key, compress } = job;
     let key = key.ok_or_else(|| EngineError::Config("the data key is not ready yet".to_owned()))?;
     let size = u64::try_from(entry.size).unwrap_or(0);
     let expected_chunks = ranges.count(size);
     let expected_bytes = ranges.bytes(size);
-    let compress = entry.is_compressed;
 
     emit(&crate::silent_sink(), EngineEvent::FileStarted { name: entry.name.clone(), size });
     let sink = Arc::new(sink);
@@ -315,14 +339,17 @@ fn spawn_receive(
             receive_file(conns, Arc::clone(&sink), expected_chunks, expected_bytes, key, compress, cancel).await;
         let event = match result {
             // 收全判定放在**全部流收工之后**：这是唯一没有竞态的时刻。
-            Ok(progress) if progress.is_complete(expected_chunks, expected_bytes) => {
+            Ok((conns, progress)) if progress.is_complete(expected_chunks, expected_bytes) => {
                 let _ = sink.finalize(&entry);
+                plane.release(conns);
                 InEvent::DataFinished
             }
-            Ok(_) => {
+            Ok((conns, _)) => {
                 tracing::warn!(%entry.name, "the data plane stopped before the file was complete");
+                plane.release(conns);
                 InEvent::Cancel
             }
+            // 出错时连接已随 `receive_file` 的 `Err` 一起丢掉（传输要中止了，没什么可复用）。
             Err(error) => {
                 tracing::warn!(%error, "data plane failed");
                 InEvent::Cancel
@@ -341,14 +368,4 @@ fn total_of(manifest: &Option<Box<SenderInfo>>) -> u64 {
     manifest
         .as_ref()
         .map_or(0, |info| info.files_to_transfer.iter().filter_map(|entry| u64::try_from(entry.size).ok()).sum())
-}
-
-fn split_host(value: &str) -> Result<(String, u16), EngineError> {
-    if let Some(rest) = value.strip_prefix('[') {
-        let (host, tail) = rest.split_once(']').ok_or_else(|| EngineError::BadRelayAddress(value.to_owned()))?;
-        let port = tail.trim_start_matches(':').parse().map_err(|_| EngineError::BadRelayAddress(value.to_owned()))?;
-        return Ok((host.to_owned(), port));
-    }
-    let (host, port) = value.rsplit_once(':').ok_or_else(|| EngineError::BadRelayAddress(value.to_owned()))?;
-    Ok((host.to_owned(), port.parse().map_err(|_| EngineError::BadRelayAddress(value.to_owned()))?))
 }

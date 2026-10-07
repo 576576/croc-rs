@@ -9,10 +9,21 @@
 //! `<out>/photos/a/b.jpg`。做法是：
 //!
 //! - `folder_source` = 用户给出的那个路径（读文件时拼绝对路径用）；
-//! - `folder_remote` = 相对该路径的子目录（接收方建目录用），根是 `.`；
+//! - `folder_remote` = **目录名 + 相对子目录 + 尾斜杠**（接收方建目录用），
+//!   例如 `photos/`、`photos/a/`；单个文件是 `./`；
 //! - `name` = 裸文件名。
 //!
-//! 这与 Go 的 `FileInfo{FolderSource, FolderRemote, Name}` 是同一套约定。
+//! 这与 Go 的 `FileInfo{FolderSource, FolderRemote, Name}` 是同一套约定。**注意
+//! `folder_remote` 里含目录自己的名字**——Go 的算法是
+//! `TrimPrefix(Dir(pathName), Dir(absPath) + "/") + "/"`，基准取的是目录的*父*目录。
+//! 少这一层的话，接收方会把整个目录的内容平铺到 `<out>/` 下，一个 `photos/` 传过去
+//! 变成"散了一地"。
+//!
+//! # 对端给的路径不可信
+//!
+//! 接收方的 `folder_remote` / `name` 是**对端写在清单里的字符串**。落到本地之前一律
+//! 过 [`safe_folder`] / [`safe_name`]：拒绝绝对路径与 `..`，因为
+//! `PathBuf::join` 遇到绝对路径会整个替换前缀（`out_dir.join("/etc/")` 就是 `/etc/`）。
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
@@ -50,16 +61,20 @@ pub fn collect(paths: &[PathBuf], algorithm: &str) -> Result<(Vec<SourceEntry>, 
     for path in paths {
         let metadata = fs::symlink_metadata(path).map_err(|error| EngineError::file(path, error))?;
         if metadata.is_dir() {
-            collect_directory(path, path, &mut files, &mut empty_folders, algorithm)?;
+            // **先补成绝对路径**再往下走。`folder_remote` 的算法要"目录名 + 相对子目录"，
+            // 而 `.` / `..` 这类路径取不出目录名；Go 同样是先 `filepath.Abs()`。
+            let root = std::path::absolute(path).map_err(|error| EngineError::file(path, error))?;
+            collect_directory(&root, &root, &mut files, &mut empty_folders, algorithm)?;
         } else {
-            files.push(entry_for(path, ".", algorithm)?);
+            // 单个文件：Go 给的是 `"./"`（见 `croc.go:1178`）。
+            files.push(entry_for(path, "./", algorithm)?);
         }
     }
 
     Ok((files, empty_folders))
 }
 
-/// 递归收集一个目录。
+/// 递归收集一个目录。`root` 与 `directory` 都是绝对路径。
 fn collect_directory(
     root: &Path,
     directory: &Path,
@@ -72,25 +87,50 @@ fn collect_directory(
     // 排序：清单顺序决定传输顺序，稳定的顺序让日志与进度条可读，也让重试可复现。
     names.sort();
 
-    let mut saw_anything = false;
+    let base = remote_base(root);
     for path in names {
         let metadata = fs::symlink_metadata(&path).map_err(|error| EngineError::file(&path, error))?;
         if metadata.is_dir() {
             let before = files.len() + empty_folders.len();
             collect_directory(root, &path, files, empty_folders, algorithm)?;
             if files.len() + empty_folders.len() == before {
-                // 空目录（或只有空目录）也要在对端建出来。
-                empty_folders.push(folder_info(root, &path)?);
+                // 空目录（或只有空目录）也要在对端建出来。`folder_remote` 里**含它自己
+                // 的名字**，接收方直接 `mkdir -p` 就对了（Go 的 `croc.go:1242`）。
+                empty_folders.push(folder_info(&path, &base)?);
             }
-            saw_anything = true;
             continue;
         }
-        let relative = relative_folder(root, &path);
-        files.push(entry_for(&path, &relative, algorithm)?);
-        saw_anything = true;
+        // 文件的 `folder_remote` 取**父目录**相对基准的路径——所以直接子文件拿到的是
+        // `photos/`，而不是 `photos/a.jpg`。
+        let parent = path.parent().unwrap_or(root);
+        files.push(entry_for(&path, &remote_folder_of(&base, parent), algorithm)?);
     }
-    let _ = saw_anything;
     Ok(())
+}
+
+/// `folder_remote` 的基准：**用户给出的那个目录的父目录**。
+///
+/// 取父目录而不是目录本身，是为了让 `folder_remote` 天然带上目录自己的名字。
+fn remote_base(root: &Path) -> PathBuf {
+    root.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
+
+/// `target` 相对 `base` 的路径，斜杠分隔，**末尾带一个斜杠**（Go 的约定）。
+///
+/// 只保留 `Normal` 段：`strip_prefix` 失手时（例如用户直接把文件系统根 `/` 当路径送）
+/// `relative` 会是绝对路径，照抄过去就是 `/a/`——对端会当"想写到接收目录外面"拒掉。
+/// 这里宁可产出空串，让接收方的路径检查去报错，也不产出一个我们明知不该发的字符串。
+fn remote_folder_of(base: &Path, target: &Path) -> String {
+    let relative = target.strip_prefix(base).unwrap_or(target);
+    let text = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if text.is_empty() { "/".to_owned() } else { format!("{text}/") }
 }
 
 /// 构造一个普通文件（或符号链接）的条目。
@@ -145,11 +185,14 @@ fn entry_for(path: &Path, folder_remote: &str, algorithm: &str) -> Result<Source
 }
 
 /// 空目录的元信息（`size == 0`，带目录位）。
-fn folder_info(root: &Path, path: &Path) -> Result<FileInfo, EngineError> {
+///
+/// `folder_remote` 用**目录自己**相对基准的路径，也就是**含它自己的名字**——接收方
+/// 直接 `mkdir -p` 就够了（Go 的 `croc.go:1242`）。
+fn folder_info(path: &Path, base: &Path) -> Result<FileInfo, EngineError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| EngineError::file(path, error))?;
     Ok(FileInfo {
         name: file_name(path)?,
-        folder_remote: relative_self(root, path),
+        folder_remote: remote_folder_of(base, path),
         folder_source: parent_of(path),
         size: 0,
         mode: mode_of(&metadata) | croc_protocol::payload::MODE_DIR,
@@ -160,19 +203,51 @@ fn folder_info(root: &Path, path: &Path) -> Result<FileInfo, EngineError> {
 /// 把收集结果组装成线路上的清单。
 #[must_use]
 pub fn sender_info(files: &[SourceEntry], empty_folders: Vec<FileInfo>, machine_id: &str) -> SenderInfo {
-    let folder_count = files
-        .iter()
-        .filter_map(|entry| entry.info.folder_remote.split('/').next())
-        .filter(|segment| !segment.is_empty() && *segment != ".")
-        .count();
     SenderInfo {
+        total_number_folders: folder_count(files, &empty_folders),
         files_to_transfer: files.iter().map(|entry| entry.info.clone()).collect(),
         empty_folders_to_transfer: empty_folders,
-        total_number_folders: i64::try_from(folder_count).unwrap_or(0),
         machine_id: machine_id.to_owned(),
         hash_algorithm: croc_protocol::payload::HashAlgorithm::Xxhash,
+        // **必须声明这一个能力**（Go 的 `croc.go:3112` 也只放它）。
+        // 接收方靠它决定"按文件标志压缩"还是退回"一律压缩"的老对端行为——
+        // 不声明的话，Go 的接收方会把每个块都当压缩的来解，而我们的清单里
+        // 写的是 `c:false`，于是解压失败、写盘越界。
+        features: vec![croc_protocol::Feature::PerFileCompression.as_str().to_owned()],
         ..SenderInfo::default()
     }
+}
+
+/// 清单里有几个目录。
+///
+/// 数的是**去重后的目录路径**，而且**包括用户给出的那个根目录**——Go 在 `filepath.Walk`
+/// 里每遇到一个目录就 `totalNumberFolders++`（`croc.go:1236`），根目录也算。
+/// `tree/sub/deep/c.txt` 一条记录就隐含 `tree`、`tree/sub`、`tree/sub/deep` 三层。
+///
+/// 这个数在接收方只用于显示，但 Go 的 `validateSendingTextOffer()` 会拿它做校验
+/// （文本传输必须恰好 0 个目录），所以不能随手填 0。
+fn folder_count(files: &[SourceEntry], empty_folders: &[FileInfo]) -> i64 {
+    let mut seen = std::collections::BTreeSet::new();
+    let folders = files
+        .iter()
+        .map(|entry| entry.info.folder_remote.as_str())
+        .chain(empty_folders.iter().map(|info| info.folder_remote.as_str()));
+
+    for folder in folders {
+        let trimmed = folder.trim_matches('/');
+        if trimmed.is_empty() || trimmed == "." {
+            continue;
+        }
+        let mut prefix = String::new();
+        for segment in trimmed.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(segment);
+            seen.insert(prefix.clone());
+        }
+    }
+    i64::try_from(seen.len()).unwrap_or(i64::MAX)
 }
 
 /// 扫一个本地文件，返回"哪些块还是全零"（= 还缺哪些）。
@@ -238,7 +313,7 @@ pub fn plan(
     sending_text: bool,
     accepted: bool,
 ) -> Result<Plan, EngineError> {
-    let destination = destination_of(info, out_dir);
+    let destination = destination_of(info, out_dir)?;
     let metadata = fs::symlink_metadata(&destination);
     let destination_exists = metadata.is_ok();
     let local_is_regular = metadata.as_ref().is_ok_and(std::fs::Metadata::is_file);
@@ -285,25 +360,124 @@ fn answer_of(accepted: bool) -> policy::Answer {
 }
 
 /// 目标路径：`<out>/<folder_remote>/<name>`。
-#[must_use]
-pub fn destination_of(info: &FileInfo, out_dir: &Path) -> PathBuf {
-    let folder = info.folder_remote.trim_start_matches("./");
-    if folder.is_empty() || folder == "." { out_dir.join(&info.name) } else { out_dir.join(folder).join(&info.name) }
+///
+/// # Errors
+///
+/// 对端给的 `folder_remote` 或 `name` 试图写到 `out_dir` 外面时返回错误。
+pub fn destination_of(info: &FileInfo, out_dir: &Path) -> Result<PathBuf, EngineError> {
+    let folder = safe_folder(&info.folder_remote)?;
+    let name = safe_name(&info.name)?;
+    Ok(join_checked(out_dir, &folder, &name))
 }
 
 /// 空目录的落盘路径。
 ///
 /// **不能**用 [`destination_of`]：那个会把 `name` 再拼一层，而空目录的 `folder_remote`
-/// 已经包含了它自己（`empty`），于是会得到 `out/empty/empty`。
-#[must_use]
-pub fn folder_destination_of(info: &FileInfo, out_dir: &Path) -> PathBuf {
-    let folder = info.folder_remote.trim_start_matches("./");
-    if folder.is_empty() || folder == "." { out_dir.join(&info.name) } else { out_dir.join(folder) }
+/// 已经包含了它自己（`photos/empty/`），于是会得到 `out/photos/empty/empty`。
+///
+/// # Errors
+///
+/// 同 [`destination_of`]。
+pub fn folder_destination_of(info: &FileInfo, out_dir: &Path) -> Result<PathBuf, EngineError> {
+    let folder = safe_folder(&info.folder_remote)?;
+    // 对端可能给一个空的 `folder_remote`（老对端 / 畸形清单），那就退回用 `name`。
+    if folder.as_os_str().is_empty() {
+        let name = safe_name(&info.name)?;
+        return Ok(out_dir.join(name));
+    }
+    Ok(join_checked(out_dir, &folder, Path::new("")))
+}
+
+/// 把对端给的 `folder_remote` 归一成"只能往 `out_dir` 里面走"的相对路径。
+///
+/// # 为什么必须归一
+///
+/// `folder_remote` 是**对端写在清单里的字符串**，对端不受信任。直接
+/// `out_dir.join(folder)` 有两条逃逸路径：
+///
+/// 1. **`..` 段**：`../../etc/` 会写到 `out_dir` 外面；
+/// 2. **绝对路径**：`PathBuf::join` 遇到绝对路径会**整个替换**前缀，`/etc/` 直接
+///    落到文件系统根（Windows 上 `C:\` 同理）。
+///
+/// Go 用 `receivefs.Normalize()` 挡这个（`normalizeReceiveFilePath`，`croc.go:881`），
+/// 这里等价地挡：拒绝绝对路径与任何 `..` 段，丢掉 `.` 与空段。
+///
+/// 绝对路径**报错而不是"当成相对路径"**：`"/etc/"` 静默改写成 `"etc/"` 虽然也安全，
+/// 但那是把对端说的话改了意思——清单与落盘结果对不上，出问题时没法从日志里看出来。
+fn safe_folder(folder_remote: &str) -> Result<PathBuf, EngineError> {
+    if starts_with_root(folder_remote) {
+        return Err(unsafe_remote_path(folder_remote));
+    }
+    let mut relative = PathBuf::new();
+    for segment in split_remote_path(folder_remote) {
+        match segment {
+            "" | "." => {}
+            ".." => return Err(unsafe_remote_path(folder_remote)),
+            // Windows 上 `C:` 这类"驱动器相对"前缀会让 `join` 改掉盘符。
+            _ if cfg!(windows) && segment.contains(':') => return Err(unsafe_remote_path(folder_remote)),
+            other => relative.push(other),
+        }
+    }
+    Ok(relative)
+}
+
+/// 是不是以根/盘符开头（`/etc`、`\etc`、`C:/etc`）。
+fn starts_with_root(value: &str) -> bool {
+    if value.starts_with('/') || value.starts_with('\\') {
+        return true;
+    }
+    let mut characters = value.chars();
+    matches!(
+        (characters.next(), characters.next()),
+        (Some(letter), Some(':')) if letter.is_ascii_alphabetic()
+    )
+}
+
+/// 把对端给的 `name` 归一成**单个文件名**。
+///
+/// Go 的判据是 `cleanName != path.Base(cleanName)` 就拒绝（`croc.go:887`）——也就是
+/// "名字里不许有目录成分"。这里同样只认单段。
+fn safe_name(name: &str) -> Result<PathBuf, EngineError> {
+    if starts_with_root(name) {
+        return Err(unsafe_remote_path(name));
+    }
+    let mut segments = split_remote_path(name).filter(|segment| !segment.is_empty() && *segment != ".");
+    let first = segments.next().ok_or_else(|| unsafe_remote_path(name))?;
+    if segments.next().is_some() || first == ".." || (cfg!(windows) && first.contains(':')) {
+        return Err(unsafe_remote_path(name));
+    }
+    Ok(PathBuf::from(first))
+}
+
+/// 按线路上的分隔符切开。线上一律用 `/`；Windows 上额外把 `\` 也当分隔符——
+/// 否则 `..\..\x` 能绕过检查（在 Unix 上 `\` 是合法文件名字符，不能切）。
+fn split_remote_path(value: &str) -> impl Iterator<Item = &str> {
+    const WINDOWS: &[char] = &['/', '\\'];
+    const UNIX: &[char] = &['/'];
+    value.split(if cfg!(windows) { WINDOWS } else { UNIX })
+}
+
+/// 拼一个保证落在 `out_dir` 里面的路径。
+///
+/// 分段 `push` 而不是 `join` 整个字符串：`join` 会把绝对路径当"换一个根"处理。
+fn join_checked(out_dir: &Path, folder: &Path, name: &Path) -> PathBuf {
+    let mut target = out_dir.to_path_buf();
+    for component in folder.components().chain(name.components()) {
+        if let std::path::Component::Normal(segment) = component {
+            target.push(segment);
+        }
+    }
+    target
+}
+
+fn unsafe_remote_path(value: &str) -> EngineError {
+    EngineError::Config(format!("the peer asked to write outside the receive directory: {value:?}"))
 }
 
 /// 找一个没被占用的名字（`--rename`）。
 fn rename_target(info: &FileInfo, out_dir: &Path) -> Result<String, EngineError> {
-    let folder = destination_of(info, out_dir).parent().map_or_else(|| out_dir.to_path_buf(), Path::to_path_buf);
+    let folder = destination_of(info, out_dir)?.parent().map_or_else(|| out_dir.to_path_buf(), Path::to_path_buf);
+    // `rename_candidates` 只在原名字上加后缀，不会引入目录成分，所以直接拼是安全的。
     for candidate in policy::rename_candidates(&info.name) {
         if !folder.join(&candidate).exists() {
             return Ok(candidate);
@@ -325,7 +499,7 @@ pub fn open_sink(info: &FileInfo, out_dir: &Path, name_override: Option<&str>) -
     if let Some(name) = name_override {
         effective.name = name.to_owned();
     }
-    let destination = destination_of(&effective, out_dir);
+    let destination = destination_of(&effective, out_dir)?;
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(|error| EngineError::file(parent, error))?;
     }
@@ -546,25 +720,6 @@ fn parent_of(path: &Path) -> String {
     path.parent().map(|parent| parent.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// `path` 自己相对 `root` 的路径（目录用），斜杠分隔，根是 `.`。
-fn relative_self(root: &Path, path: &Path) -> String {
-    match path.strip_prefix(root) {
-        Ok(relative) if relative.as_os_str().is_empty() => ".".to_owned(),
-        Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
-        Err(_) => ".".to_owned(),
-    }
-}
-
-/// `path` 的**父目录**相对 `root` 的路径（文件用），斜杠分隔，根目录是 `.`。
-fn relative_folder(root: &Path, path: &Path) -> String {
-    let parent = path.parent().unwrap_or(root);
-    match parent.strip_prefix(root) {
-        Ok(relative) if relative.as_os_str().is_empty() => ".".to_owned(),
-        Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
-        Err(_) => ".".to_owned(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,7 +743,8 @@ mod tests {
         assert!(empty.is_empty());
         let info = &files[0].info;
         assert_eq!(info.name, "payload.bin");
-        assert_eq!(info.folder_remote, ".");
+        // Go 给单个文件的就是 `"./"`（`croc.go:1178`），接收方会把它归一成 `"."`。
+        assert_eq!(info.folder_remote, "./");
         assert_eq!(info.size, 10);
         assert_eq!(info.hash, hash::xxh64_bytes(b"hello croc"));
         assert!(info.prepared);
@@ -609,10 +765,12 @@ mod tests {
         let names: Vec<&str> = files.iter().map(|entry| entry.info.name.as_str()).collect();
         assert_eq!(names, vec!["c.txt", "top.txt"], "顺序应稳定（按路径排序）");
 
+        // `folder_remote` **含目录自己的名字**（`tree/`）——这是 Go 的约定，
+        // 少了这一层接收方会把内容平铺到 `<out>/` 下。
         let folders: Vec<&str> = files.iter().map(|entry| entry.info.folder_remote.as_str()).collect();
-        assert_eq!(folders, vec!["a/b", "."]);
+        assert_eq!(folders, vec!["tree/a/b/", "tree/"]);
         assert_eq!(empty.len(), 1, "空目录要单独列出来");
-        assert_eq!(empty[0].folder_remote, "empty");
+        assert_eq!(empty[0].folder_remote, "tree/empty/", "空目录的 folder_remote 含它自己");
         assert!(empty[0].is_dir());
 
         let _ = fs::remove_dir_all(&dir);
@@ -751,20 +909,69 @@ mod tests {
 
     #[test]
     fn empty_folder_paths_do_not_double_the_name() {
-        // 空目录的 `folder_remote` 已经含了它自己，再拼一次 `name` 会得到 `out/empty/empty`。
-        let folder = FileInfo { name: "empty".to_owned(), folder_remote: "empty".to_owned(), ..FileInfo::default() };
-        assert_eq!(folder_destination_of(&folder, Path::new("/out")), Path::new("/out/empty"));
-        let nested = FileInfo { name: "deep".to_owned(), folder_remote: "a/deep".to_owned(), ..FileInfo::default() };
-        assert_eq!(folder_destination_of(&nested, Path::new("/out")), Path::new("/out/a/deep"));
-        let root = FileInfo { name: "top".to_owned(), folder_remote: ".".to_owned(), ..FileInfo::default() };
-        assert_eq!(folder_destination_of(&root, Path::new("/out")), Path::new("/out/top"));
+        // 空目录的 `folder_remote` 已经含了它自己，再拼一次 `name` 会得到 `out/tree/empty/empty`。
+        let folder =
+            FileInfo { name: "empty".to_owned(), folder_remote: "tree/empty/".to_owned(), ..FileInfo::default() };
+        assert_eq!(folder_destination_of(&folder, Path::new("/out")).expect("路径"), Path::new("/out/tree/empty"));
+        let nested =
+            FileInfo { name: "deep".to_owned(), folder_remote: "tree/a/deep/".to_owned(), ..FileInfo::default() };
+        assert_eq!(folder_destination_of(&nested, Path::new("/out")).expect("路径"), Path::new("/out/tree/a/deep"));
+        // 对端给了个空 `folder_remote`（畸形清单）：退回用 `name`，别落到 `out` 本身。
+        let bare = FileInfo { name: "top".to_owned(), folder_remote: String::new(), ..FileInfo::default() };
+        assert_eq!(folder_destination_of(&bare, Path::new("/out")).expect("路径"), Path::new("/out/top"));
     }
 
     #[test]
     fn destination_paths_join_the_remote_folder() {
-        let info = FileInfo { name: "c.txt".to_owned(), folder_remote: "a/b".to_owned(), ..FileInfo::default() };
-        assert_eq!(destination_of(&info, Path::new("/out")), Path::new("/out/a/b/c.txt"));
-        let root = FileInfo { name: "t.txt".to_owned(), folder_remote: ".".to_owned(), ..FileInfo::default() };
-        assert_eq!(destination_of(&root, Path::new("/out")), Path::new("/out/t.txt"));
+        // Go 的 `folder_remote` 带尾斜杠（`tree/sub/`），`path.Join` 会把它归一掉。
+        let info = FileInfo { name: "c.txt".to_owned(), folder_remote: "tree/a/b/".to_owned(), ..FileInfo::default() };
+        assert_eq!(destination_of(&info, Path::new("/out")).expect("路径"), Path::new("/out/tree/a/b/c.txt"));
+        // 单个文件是 `./`，落在接收根下。
+        let root = FileInfo { name: "t.txt".to_owned(), folder_remote: "./".to_owned(), ..FileInfo::default() };
+        assert_eq!(destination_of(&root, Path::new("/out")).expect("路径"), Path::new("/out/t.txt"));
+    }
+
+    #[test]
+    fn the_peer_cannot_write_outside_the_receive_directory() {
+        // `folder_remote` 是对端写在清单里的字符串，不受信任。两条逃逸路径都要挡住：
+        // `..` 段，以及绝对路径（`join` 遇到绝对路径会整个替换前缀）。
+        let escaping = |folder: &str, name: &str| {
+            let info = FileInfo { name: name.to_owned(), folder_remote: folder.to_owned(), ..FileInfo::default() };
+            destination_of(&info, Path::new("/out")).is_err()
+        };
+        assert!(escaping("../..", "passwd"), "`..` 段必须被拒");
+        assert!(escaping("tree/../../..", "passwd"), "藏在中段的 `..` 也要被拒");
+        assert!(escaping("/etc", "passwd"), "绝对路径必须被拒");
+        assert!(escaping("tree/", "../../passwd"), "名字里的 `..` 必须被拒");
+        assert!(escaping("tree/", "sub/passwd"), "名字里不许有目录成分（Go 的 `path.Base` 判据）");
+        // 正常路径不受影响。
+        assert!(!escaping("tree/sub/", "ok.txt"));
+    }
+
+    #[test]
+    fn folder_remote_includes_the_directory_itself() {
+        // Go 的算法：`TrimPrefix(Dir(pathName), Dir(absPath) + "/") + "/"`。基准取的是
+        // 目录的**父**目录，所以 `folder_remote` 天然带上目录自己的名字——少了这一层，
+        // 接收方会把整个目录的内容平铺到 `<out>/` 下。
+        let base = Path::new("/send");
+        assert_eq!(remote_folder_of(base, Path::new("/send/tree")), "tree/");
+        assert_eq!(remote_folder_of(base, Path::new("/send/tree/sub")), "tree/sub/");
+        assert_eq!(remote_folder_of(base, Path::new("/send/tree/empty")), "tree/empty/");
+    }
+
+    #[test]
+    fn the_folder_count_matches_go() {
+        // Go 在 `filepath.Walk` 里每遇到一个目录就 `totalNumberFolders++`（根目录也算）。
+        let entry = |folder: &str| SourceEntry {
+            path: PathBuf::from("/x"),
+            info: FileInfo { folder_remote: folder.to_owned(), ..FileInfo::default() },
+        };
+        let files = vec![entry("tree/"), entry("tree/sub/"), entry("tree/sub/deep/deeper/")];
+        let empty = vec![FileInfo { folder_remote: "tree/empty/".to_owned(), ..FileInfo::default() }];
+        // tree、tree/sub、tree/sub/deep、tree/sub/deep/deeper、tree/empty
+        assert_eq!(folder_count(&files, &empty), 5);
+
+        // 单个文件（`./`）不算目录——文本传输必须恰好 0 个，否则 Go 会拒绝清单。
+        assert_eq!(folder_count(&[entry("./")], &[]), 0);
     }
 }
