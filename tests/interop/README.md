@@ -9,22 +9,23 @@
 # 1. 编 Rust 版
 cargo build --release -p croc-cli
 
-# 2. 准备 Go 版（任选其一）
-export CROC_GO_BIN=/usr/local/bin/croc-go      # 已有二进制
-# 或者什么都不设，`cargo xtask ci-interop` 会去 ../croc 现编一份
-
-# 3. 跑
+# 2. 指一份 Go 版 croc（默认路径是平级的 ../croc-playground/croc.exe）
 cargo xtask ci-interop
-# 或直接：
-CROC_GO_BIN=/usr/local/bin/croc-go bash tests/interop/run.sh
+
+# 或直接跑脚本：
+CROC_GO_BIN=../croc-playground/croc.exe bash tests/interop/run.sh
 ```
+
+`croc-playground/` 是与本仓库**平级的独立仓库**，里面的 `croc.exe` 是 Go 版、
+`croc-rs.exe` 是 Rust 版的投放位——放好二进制就能手工对跑。`ci-interop` 在
+`CROC_GO_BIN` 没给时会去找 `../croc-playground/croc.exe`，再退回现编 `../croc`。
 
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `CROC_RS_BIN` | `target/release/croc-rs[.exe]` | Rust 版二进制 |
-| `CROC_GO_BIN` | —（必需） | Go 版二进制 |
+| `CROC_GO_BIN` | `../croc-playground/croc.exe`，否则现编 `../croc` | Go 版二进制 |
 | `CROC_INTEROP_ONLY` | 空（全跑） | 只跑指定用例，逗号分隔，如 `I1,I2,I14` |
 | `CROC_INTEROP_SKIP_NETWORK` | 空 | 非空则跳过 I6（官方 relay，需外网） |
 | `CROC_INTEROP_TIMEOUT` | `180` | 等发送方退出的超时（秒） |
@@ -44,8 +45,12 @@ CROC_GO_BIN=/usr/local/bin/croc-go bash tests/interop/run.sh
 
 ## CI
 
-**目前没进 CI**，只在本地跑（`cargo xtask ci-interop`）。
+**不进 CI，也不需要进** —— 只在本地跑（`cargo xtask ci-interop`）。
 
-不进的理由曾经是"矩阵里有一批用例依赖尚未实现的能力，跑起来必然红"。**现在不成立了**：
-I9（断点续传）与 I16–I18（`--transport derp` 降级）都已通过，只剩 I12（`--local`）
-显式 SKIP。**下一步就是把它挂进 `lint.yml`**（带 `CROC_INTEROP_SKIP_NETWORK=1`）。
+这不是"还没腾出手"，是一个有意的决定，理由见
+[09-build-and-ci.md §5.3](../../docs/agent/plan/09-build-and-ci.md)。简版：矩阵要求同一台
+机器上同时有 Rust 版、Go 版和它们各自的运行时，每个用例还要各自起中继与两端进程；
+挂进 `lint.yml` 会让它变成发布链路上一段又慢又不稳的环节，而它真正的作用是
+"改了协议字节之后本地跑一遍"，不是"挡住某个 commit"。
+
+要跑就本地跑：`cargo xtask ci-interop`。

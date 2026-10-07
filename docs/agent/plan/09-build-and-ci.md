@@ -243,14 +243,24 @@ jobs:
   msrv:     # dtolnay/rust-toolchain@1.98 + cargo check --workspace
 ```
 
-**互通矩阵不在 CI 里，只在本地跑**（`cargo xtask ci-interop`）。它不是"太慢"，而是
-当初的理由"矩阵里的 I12（`--local`）、I16–I18（`--transport derp`）、I9（断点续传）
-依赖尚未实现的能力，跑起来必然红"——而一个恒红的门禁比没有门禁更糟，它会逼着人学会
-无视红灯。
+**互通矩阵不进 CI，只在本地跑**（`cargo xtask ci-interop`）。这是一个**有意的决定**。
 
-**现在这个理由已经不成立**：I9 与 I16–I18 均已通过；I12 是唯一没实现的，harness 里由
-`skip_unimplemented()` **显式 SKIP 并打印理由**，不再是假信号。剩下要做的只是把它挂进
-`lint.yml`（`CROC_INTEROP_SKIP_NETWORK=1` 跳过需要外网的 I6）。
+早先的理由是"矩阵里的 I12（`--local`）、I16–I18（`--transport derp`）、I9（断点续传）
+依赖尚未实现的能力，跑起来必然红"——那个理由已经不成立了：I9 与 I16–I18 均已通过，
+I12 由 `skip_unimplemented()` **显式 SKIP 并打印理由**，不再是假信号。
+
+**但结论没变，理由换了**，换成矩阵本身的形态：
+
+| 维度 | 矩阵的情况 | 对 CI 的含义 |
+|---|---|---|
+| 依赖 | 同一台机器上要有 Rust 版 + Go 版 croc（Go 版在平级的 `croc-playground/`）+ Go 工具链 | runner 上得多编一份 Go 出来，还要拉外部依赖 |
+| 时长 | 每个用例各自起中继、拉起两端进程、传文件，18 个用例是**分钟级** | `build` 的 `needs` 要等它，发布链路整体变慢 |
+| 稳定性 | 端口探测、进程时序、Windows 句柄释放都有竞态（见 `HANDOFF.md` §4） | 偶发红灯，且失败时不在代码而在环境 |
+| 用途 | "改了协议字节之后本地跑一遍" | 门禁的职责是挡住坏提交，不是提供验证手段 |
+
+所以它留在本地，由 `cargo xtask ci-interop` 承担。**这个决定可以推翻**——如果哪天
+矩阵稳定到可以在 Linux runner 上复现（比如把端口分配改成固定端口池、去掉进程等待改成
+带超时的轮询），再讨论挂回 `lint.yml`。
 
 > 顺带记一个踩过的坑：`continue-on-error` 的 job **依然会拖住整个可复用工作流**，
 > 而 `build` 的 `needs: [prep, lint]` 等的是**整个 lint**。第一次推 CI 时
@@ -274,7 +284,7 @@ jobs:
 ```bash
 cargo xtask ci-lint      # = lint.yml 全部 job（fmt/clippy/test/purity/deps）
 cargo xtask ci-build     # = build.yml 本机 target
-cargo xtask ci-interop   # = interop job（需本机有 Go 与 croc 源码）
+cargo xtask ci-interop   # = 互通矩阵（只在本地跑，不在 CI 里）
 ```
 
 `xtask` 的意义：lint 不跟 PR，所以本地必须能一键跑完等价检查，否则只能靠推 main 才发现红灯。
@@ -290,7 +300,7 @@ cargo xtask ci-interop   # = interop job（需本机有 Go 与 croc 源码）
 | 外部资产 | WebUI zip、ext-runtime.jar、JRE | 无 | — |
 | Miri | 无 | 无 | 本仓库 0 处 `unsafe`、0 处 FFI，安全 Rust 产不出 UB——见 [03](03-architecture.md) §8.5 |
 | 架构门禁 | 无 | `xtask purity` / `xtask deps` | 本项目对"纯 crate"与"纯 Rust 加密栈"有硬约束 |
-| 互通测试 | 无 | `interop` job | 与 Go 版互通是本项目的生命线 |
+| 互通测试 | 无 | 无（**有意只在本地跑**，见 §5.3） | 与 Go 版互通是本项目的生命线，但它要同机双实现、分钟级、有环境竞态，不适合当门禁 |
 
 ---
 
@@ -305,4 +315,4 @@ cargo xtask ci-interop   # = interop job（需本机有 Go 与 croc 源码）
 - [x] `crates/croc-cli`（`croc-rs`）与 `crates/croc-gui`（`crocw-rs`，Tauri 2）落地
 - [x] 打第一个 alpha（推 main 验证自动链路）—— CI 全绿，四个产物都出来了
 - [ ] **互通矩阵加回 `lint.yml`**（等 I12 / I16–I18 / I9 全绿）—— 当前头号缺口
-- [ ] `tools/gen-golden` 在有 Go 的机器上跑一次，产出 `tests/golden/{curves,pake,pakekey}.json`
+- [x] `croc-playground/tools/gen-golden` 在有 Go 的机器上跑过一次，产出 `tests/golden/{curves,pake,pakekey}.json`

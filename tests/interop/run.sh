@@ -7,7 +7,7 @@
 #
 # 环境变量：
 #   CROC_RS_BIN                  Rust 版 croc-rs（默认 target/release/croc-rs[.exe]）
-#   CROC_GO_BIN                  Go 版 croc（必需）
+#   CROC_GO_BIN                  Go 版 croc（cargo xtask ci-interop 会先找 ../croc-playground/croc.exe，再退回用 ../croc 源码现编）
 #   CROC_INTEROP_ONLY            只跑这些用例，逗号分隔，如 "I1,I2"；空 = 全跑
 #   CROC_INTEROP_SKIP_NETWORK    非空 = 跳过需要外网的用例（I6）
 #   CROC_INTEROP_TIMEOUT         单个用例里等发送方退出的超时秒数（默认 180）

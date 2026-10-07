@@ -66,7 +66,7 @@
 
 ### 2.3 Golden 向量的维护
 
-- 向量由 `tools/gen-golden/*.go` 生成（一次性，需 Go 环境）。
+- 向量由 `croc-playground/tools/gen-golden` 生成（Go 程序，**不在本仓库**；一次性，需 Go 环境）。
 - 向量文件**只增不改**；若 Go 版行为变化，新增文件（`v2.json`）而不是覆盖，并在本文记录。
 - 每次修改密码学相关代码，必须先跑 L2 再跑 L3。
 
@@ -107,19 +107,25 @@
 
 工具链：**全仓只用 stable（Rust 2024，MSRV 1.98）。**
 
-互通测试是 `lint.yml` 里的一个 job（跑 I1–I5、I7–I15、I16–I18）：
+**互通矩阵只在本地跑**（`cargo xtask ci-interop`），**不进 `lint.yml`**。
 
-- `actions/setup-go`，`go install github.com/schollz/croc/v11@v11.5.4`（或 `go build` 源码）；
-- 起一个 Rust relay（本地端口），跑矩阵；
-- 失败时保留双方日志（**注意先脱敏**）。
+这是有意的决定，理由是矩阵的形态而不是它的通过率：
 
-**互通矩阵目前只在本地跑**（`cargo xtask ci-interop`），没进 `lint.yml`。它是本项目的
-头号缺口（见 [09](09-build-and-ci.md) §8 的检查清单）。
+- 它要求同一台机器上同时有 Rust 版、Go 版 croc 和两套运行时（Go 版在平级的
+  `croc-playground/` 里）；
+- 每个用例各自起一个中继、拉起两端进程、传文件，是**分钟级**的端到端作业；
+- 它的用途是"改了协议字节之后本地跑一遍"，不是"挡住某个 commit"。挂进发布链路
+  只会把一段慢且依赖外部产物的环节塞进 `build` 的 `needs`。
 
-之前不进 CI 的理由是"矩阵里的 I12（`--local`）、I16–I18（`--transport derp`）、
-I9（断点续传）依赖尚未实现的能力，跑起来必然红"。**这个理由已经不成立**：
-I9 与 I16–I18 均已通过，I12 是唯一没实现的，而它在 harness 里会**显式 SKIP 并打印理由**
-（`skip_unimplemented()`），不再是恒红的假信号。所以现在只差"把它挂进 `lint.yml`"这一步。
+早先"不挂"的理由是"矩阵里有一批用例依赖尚未实现的能力，跑起来必然红"——那个理由
+确实已经不成立（I9 与 I16–I18 均已通过，I12 由 `skip_unimplemented()` 显式 SKIP 并
+打印理由）。**但结论没变，理由换了**：不是"挂了就恒红"，而是"挂了也不划算"。
+
+> 踩过的坑：这份 harness 在真正跑通之前一直是**没被执行过**的（README 里那句"只在本地跑"
+> 掩盖了它一次都没跑过的事实）。第一次真跑就暴露了三个 bug：`begin_case` 没建 `send/recv`
+> 目录（`make_file` 直接 FileNotFound）、`[ ... ] || sender_status=$?` 把 `$?` 取成了 `[`
+> 自己的退出码（发送端恒判失败）、以及中继密码根本没从 `--pass` 传进 `relay_cmd`。
+> **教训：harness 也要有"第一次跑通"的记录，否则它只是看起来像门禁。**
 
 > 踩过的坑：这份 harness 在真正跑通之前一直是**没被执行过**的（README 里那句"只在本地跑"
 > 掩盖了它一次都没跑过的事实）。第一次真跑就暴露了三个 bug：`begin_case` 没建 `send/recv`
@@ -134,7 +140,7 @@ I9 与 I16–I18 均已通过，I12 是唯一没实现的，而它在 harness �
 ```bash
 cargo xtask ci-lint      # = lint.yml 全部 job
 cargo xtask ci-build     # = build.yml 本机 target
-cargo xtask ci-interop   # = interop job（需本机 Go + croc 源码）
+cargo xtask ci-interop   # = 互通矩阵（只在本地跑，不在 CI 里）
 ```
 
 ---

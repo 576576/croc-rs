@@ -123,9 +123,10 @@ Windows runner 上 `tar` 与 `zip` 的行为差异最容易出坑，各用各的
 `build` 的 `needs` 上则物理上无法绕过。代价是 PR 阶段没有绿灯信号，由本地
 `cargo xtask ci-lint` 补。
 
-**互通矩阵不在 CI 里，只在本地跑**（`cargo xtask ci-interop`）。矩阵里的 I12 / I16–I18 / I9
-依赖尚未实现或尚未实测的能力，跑起来必然红，而恒红的门禁会逼着人学会无视红灯。
-矩阵全绿之后加回 `lint.yml`。
+**互通矩阵不在 CI 里，只在本地跑**（`cargo xtask ci-interop`）——这是有意的决定，不是
+待办：矩阵要同一台机器上同时有 Rust 版与 Go 版，每个用例还各自起中继与两端进程，
+挂进 `lint.yml` 只会把一段慢且依赖外部产物的环节塞进 `build` 的 `needs`。理由与
+取舍见 [plan/09-build-and-ci.md §5.3](plan/09-build-and-ci.md)。
 
 **全仓只用 stable。**
 
