@@ -6,14 +6,14 @@
 
 ## 1. 命令与 flag 对齐表
 
+> 这里**只列“还没做的”与“跟 Go 不一样的地方”**。已经实现、行为又与 Go 一致的开关不在
+> 此出现——那些看 `croc-rs --help` 就够了，逐条列出来只会把真正需要留意的条目淹掉。
+> 行为差异集中在 §4。
+
 ### 1.1 顶层命令
 
 | Go 命令 | Rust v1 | 说明 |
 |---------|---------|------|
-| `croc <code>`（默认动作 = 接收） | ✅ | 位置参数即三词码 |
-| `croc send [flags] <files...>` | ✅ | |
-| `croc relay` | ✅ | 自建中继 |
-| `croc --version` / `-v` | ✅ | |
 | `croc update` | ⚠️ 仅 `--check` | 自更新放到 v1.1（需要签名基础设施） |
 | `croc store` | ❌ v2 | 依赖 store 服务端 |
 | `croc ssh` | ❌ v2 | PTY + tailcat |
@@ -21,57 +21,15 @@
 
 ### 1.2 `send` 命令 flag
 
-> ⚠️ **这张表以实际实现为准**（`croc-rs send --help`），不是目标态。此前它把一批
-> 还没做的 flag 标成了 ✅，读起来像"都有了"——核对方式是对着 `cli.rs` 与 `--help`
-> 逐项比，别照抄上游的清单。
-
 | Go flag | Rust | 备注 |
 |---------|------|------|
-| `--code, -c` | ✅ | 自定义口令码 |
-| `--text, -t` | ✅ | 不要求再给路径 |
-| `--hash` | ✅ 四种 | `xxhash`（默认）/ `md5` / `imohash` / `highway`，摘要与 Go **逐字节一致**。不认识的名字**报错**，不静默退化成 xxhash——那会让对端拿到对不上的摘要 |
-| `--transport` | ✅（全局） | 见 §1.4 |
-| `--no-local` | ✅（全局） | |
-| `--local` | ✅（全局） | 见 §1.5 |
-| `--zip` | ✅ | 目录先打包再发。见 §1.7 |
-| `--git` | ✅ | 尊重 `.gitignore`。见 §1.7 |
-| `--exclude` / `--exclude-file` | ✅ | 两者语义**不同**。见 §1.7 |
-| `--qrcode, -qr` | ✅ | 显示 web 接收页的二维码。见 §1.7 |
-| `--socks5` / `--connect` | ✅（全局） | 经代理连中继。见 §1.7 |
-| `--no-multi` | ✅（全局） | 只用一条数据流。见 §1.5 |
-| `--port` / `--transfers` | ✅ | 只在 `--local` 下有效（连外部中继时端口由中继 banner 决定）。见 §1.5 |
 | `--ts-authkey` | ⏸ pending | 见 §1.4 |
 | `--store` | ❌ v2 | |
 
 ### 1.3 全局 flag
 
-> 同样以 `croc-rs --help` 为准。列出 Go 有而本实现**没有**的，是为了让人一眼看出
-> "这个开关还没接"，而不是等它悄悄被忽略。
-
 | Go flag | Rust | 备注 |
 |---------|------|------|
-| `--yes` | ✅ | |
-| `--no-compress` | ✅ | |
-| `--overwrite` | ✅ | |
-| `--rename` | ✅ | |
-| `--quiet` | ✅ | |
-| `--debug` | ✅ | |
-| `--out` | ✅ | 接收目录 |
-| `--pass` | ✅ | 环境变量 `CROC_PASS` |
-| `--relay` | ✅ | 环境变量 `CROC_RELAY` |
-| `--curve` | ✅ | p256 / p384 / p521 / siec；`ed25519` 报不支持 |
-| `--local` | ✅ | 见 §1.5 |
-| `--no-local` | ✅ | |
-| `--no-multi` | ✅ | 见 §1.5 |
-| `--socks5` / `--connect` | ✅ | 见 §1.7 |
-| `--transport` | ✅ | 见 §1.4 |
-| `--relay6` | ❌ | |
-| `--ip` | ❌ | |
-| `--multicast` | ❌ | `--local` 用 Go 的默认组 `239.255.255.250:9999`，暂不可配 |
-| `--remember` | ❌ | 配置落盘 |
-| `--ask` | ❌ | |
-| `--stdout` | ❌ | |
-| `--ignore-stdin` | ❌ | |
 | `--classic` | ❌ | v1 不实现 classic 模式的不安全语义 |
 | `--internal-dns` | ❌ | 内置 DNS stub resolver |
 | `--disable-clipboard` / `--extended-clipboard` | ❌ | 剪贴板整体未实现 |
@@ -98,143 +56,6 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 依据：Go 版 `resolveTransportMode()` 在 `tailcattransport.Available() == false` 时降级为 `relay` 并返回 `downgraded=true`（`src/croc/croc.go:160-165`），`transport_unsupported.go` 在 Android 上返回 `ErrUnsupported`。我们的 pending 行为与之等价——**对端看不出区别**。
 
 解除 pending 后按 [08-tailscale.md](08-tailscale.md) §3 执行，届时 CLI 侧新增 `--ts-authkey`。
-
-### 1.5 `--local` —— ✅ 已实现（只走局域网，不碰公网中继）
-
-`--local` 在 Go 里的语义是 `OnlyLocal`。实现落在 `crates/croc-engine/src/local.rs`：
-
-1. 发送端起一个**内嵌中继**（`croc-relay` 直接跑在本进程里）：默认端口由内核分配，给了 `--port` 就从它起往后找空位；
-2. 用 **UDP 组播**把控制端口喊出去：组 `239.255.255.250:9999`，载荷 `"croc" + 端口`
-   （Go 版 `broadcastOnLocalNetwork()`，`src/croc/croc.go:1435`）；
-3. 接收端组播 500 ms（Go 的 `receivePeerDiscoveryTimeout`），按载荷拼出 `地址:端口`，
-   拿它当中继连上去（Go 的 `discoveredRelayAddresses()`，`src/croc/relay_dial.go:150`）。
-
-**两个坑都是实测出来的**，都写进代码注释了：
-
-| 现象 | 根因 |
-|------|------|
-| 同一台机器上接收端起不来：`EADDRINUSE` | 发送端（Go 版也一样）也占着 9999。监听侧必须 `SO_REUSEADDR` |
-| 单机上 **Rust → Go** 永远发现不到 | Go 的 `peerdiscovery` 默认 `AllowSelf=false`，**把源 IP 是本机的广播丢掉**（`listener.go:130`）。Go 发送 / Go 接收在同一台机器上同样失败，与本实现无关 |
-
-所以 `tests/interop/run.sh` 的 I12（Rust→Go `--local`）**跳过的理由不是"没实现"**，
-而是单机上 Go 侧发现不到——它得两台机器才能验证。Rust↔Rust 的 `--local` 由 I19 覆盖
-（256 KB，全程未连任何外部中继）。
-
-#### `--port` / `--transfers` / `--no-multi`
-
-| flag | 作用域 | 语义 |
-|------|--------|------|
-| `--port` | `send` | 内嵌中继的**基准**端口，默认 9009（与 Go 的 flag 同值）。被占就顺延，最多往后扫 200 个端口位（Go 的 `FindOpenPorts`，`src/utils/utils.go:642`） |
-| `--transfers` | `send` | **数据端口个数**，默认 4。内嵌中继因此绑 `transfers + 1` 个端口（1 控制 + `transfers` 数据），对应 Go 的 `make([]string, transfersParam+1)`（`src/cli/cli.go:642`） |
-| `--no-multi` | 全局 | 数据面砍成**一条流**（只连第 0 个数据端口），对应 Go 的 `RelayPorts = RelayPorts[:1]`（`croc.go:1522`） |
-
-实测（Rust↔Rust，均 `--local`，256 KB + 5 MB）：`--local --port 9100 --transfers 2` 起内嵌中继后，
-`netstat` 上是 **9100 / 9101 / 9102 三个 LISTENING**（9103 不占）；四种 `--hash` 各自传一遍
-内容均一致，且 `--hash md5` / `--hash imohash` 重传时对方报"跳过 2 个"；`--no-multi` 两端都给时
-传输正常。
-
-⚠️ **`relay` 子命令的 `--transfers` 语义不同**：那里是**端口总数**（默认 5），不是数据端口个数。Go 也是这样（`relay` 用 `make([]string, transfersString)`，`send` 用 `transfersParam+1`），两处不是一回事。
-
-`--port` / `--transfers` 只在 `--local` 下有效——连外部中继时端口由中继的 banner 说了算，Go 同样如此（`croc.go:1521` 之后 `--port` 给的数组会被覆盖）。
-
-`--no-multi` 必须**两端各自**给：流数不在握手里协商，两端各自按 banner 推导。Go 只把它挂在 `send` 上（`src/cli/cli.go:101`），接收方拿不到——这里做成全局，否则它对接收方无从生效。
-
-配套的 CLI 规则：
-
-| 组合 | 行为 |
-|------|------|
-| `--local --transport auto` | 正常走局域网 |
-| `--local --transport relay` / `derp` | 报错 `--transport must be auto for local-only transfers`（**与 Go 同文**，`src/cli/cli.go:700`） |
-| `--local --no-local` | clap 的 `conflicts_with` 报错 |
-
-对端的局域网探测仍然**只吃掉、不回**（`crates/croc-core/src/session.rs` 的
-`try_local_probe()`）。理由没变，但换了说法：`--local` 下两端根本不连公网中继，探测
-没有通道可走；非 `--local` 时我们不开内嵌中继，能给的答案是空的。而**回一个过期的
-`pake2` 是致命的**——对端只等 500 ms 就往下走，迟到的 `pake2` 会被当 `pake` 的应答去
-解压，握手当场报废。沉默永远安全：Go 的接收方把探测失败丢掉、照常走中继，代价只是
-多等 500 ms。
-
-### 1.6 `--hash` —— ✅ 四种算法
-
-`xxhash`（默认）/ `md5` / `imohash` / `highway`。`xxhash` 是自己实现的（规格公开且冻结，几十行，少一个依赖就少一个交叉编译变量），
-另外三个用纯 Rust crate。
-
-| 算法 | 摘要长度 | 与 Go 对齐的要点 |
-|------|---------|----------------|
-| `xxhash` | 8 | `xxhash.Sum(nil)` 的 big-endian 编码 |
-| `md5` | 16 | 无坑 |
-| `imohash` | 16 | 采样参数取自 Go 的 `NewCustom(16*16*8*1024, 128*1024)`——**不是** imohash 自己的默认值（16 KiB / 128 KiB）。用默认值算出来的摘要**长度一样、看起来完全正常**，只有对端报"哈希不匹配"才会暴露 |
-| `highway` | 32 | key 硬编码（Go `utils/utils.go:237` 那个 32 字节值），两端必须同一个 |
-
-`imohash` 走**按路径采样**（`hash::hash_file`），不把整个文件读进内存——采样就是它存在的意义。
-
-**哈希算法贯通的不只是清单**：接收方判断"本地这个同名文件是不是就是要传的那份"时，
-必须用**清单里带的算法**重算本地文件（Go 的 `croc.go:2461` → `3419`）。这里曾写死
-`xxh64`，于是 `--hash md5` 下"内容相同"永远认不出来、每次都得重传。
-
-不认识的名字在 CLI 层就报错（`crates/croc-cli/src/cli.rs` 的 `validate_hash`）：算几万个
-文件的哈希要十几秒，不该让用户等到那之后才知道名字拼错。少了 Go 的
-`imohash-v2`：那是渐进式哈希的协商项，本实现没谈那条能力。
-
-验证：
-
-- 单测用 **Go 实测的**向量钉住四种算法：`GO_VECTORS`（空 / `abc` / `hello`）+ `BIG_VECTORS`
-  （1 KB / 300 KB / 9.5 MB——后两个分别卡在 imohash 的 `sample_threshold` 与采样边界上，
-  **采样参数写错只有最大的那个能测出来**）；另有单测保证"按路径采样"与
-  "整块喂内存"给出同一摘要；
-- 跨实现（已进矩阵，I20）：Rust 发 md5 清单 → Go 接收方认定"本地已有"（报 0 字节）；
-  反向 Go 发 → Rust 收，报"跳过 1 个"。摘要只要差一个字节，这两条都会退化成真传输。
-
----
-
-### 1.7 `--zip` / `--git` / `--exclude` / `--qrcode` / `--socks5`
-
-#### `--exclude` 与 `--exclude-file` 不是一回事
-
-| flag | 匹配方式 | 例 |
-|------|---------|-----|
-| `--exclude` | 相对路径**包含**子串，大小写不敏感 | `--exclude node_modules` 会连 `my_node_modules_backup/` 一起排掉 |
-| `--exclude-file` | 相对路径**精确相等**（两边都归一后比） | `--exclude-file sub/b.txt` 只点掉那一个 |
-
-相对基准是**命令行上给的那个路径**。实测（同一棵 `tree/`）：`--exclude skipme` 排掉
-`tree/skipme/`；`--exclude-file sub/b.txt` 排掉 `tree/sub/b.txt` 而 `tree/skipme/` 留着。
-
-#### `--git`
-
-只读**被传目录根下**那一个 `.gitignore`——Go 的 `gitWalk` 也只 `CompileIgnoreFile` 一次，
-子目录里的不参与。
-
-⚠️ 与 Go 有一处**有意的差异**：Go 拿 `info.Name()`（只有 basename）去匹配，所以
-`src/*.log` 这类带路径的规则在它那边**根本不生效**；这里按**相对路径**匹配，规则能正常起作用。
-差别只影响“发哪些文件”，不涉及协议与互通。
-
-#### `--zip`
-
-目录打成一个 `<目录名>.zip` 放在**父目录**下再发。zip 内以目录名为顶层（解压出来还是
-一棵 `photos/`）、条目**不压缩**（数据面自己会压）、目标文件已存在就报错。临时 zip
-随 `send()` 结束删掉（实测：传完后发送方目录里只剩原目录）。
-
-#### `--qrcode`
-
-显示 `https://getcroc.com/?code=<口令码>` 的二维码（Go 的 `webReceiveURL`）。链接只由口令码拼成，
-与中继是谁无关。渲染是自己拼的半角块字符（`crates/croc-cli/src/qr.rs`），只拉了 `qrcode` 的
-编码器——默认的 image / svg 特性全关掉了。
-
-#### `--socks5` / `--connect`
-
-连中继时经代理。规则与 Go 的 `comm.Dial`（`src/comm/comm.go:67`）一致：
-
-- 目标是**局域网地址**时**不走代理**（域名一律按“不是局域网”处理）；
-- 两个都给时 **socks5 优先**；
-- 走代理时**不本地解析 DNS**——`host:port` 原样交给代理，这正是 Tor 场景要的
-  （本地解析会把 DNS 漏到网外）；
-- **不支持代理认证**：地址里带 `user:pass@` 直接报错，不静默忽略。
-
-实测（本机 Rust 中继 + 自写的 socks5 / HTTP CONNECT 代理；目标用 `localhost:9200`——
-**域名才不会被判成局域网**）：两个方向都 rc=0、内容一致，代理日志各 8 次
-CONNECT；换成 `127.0.0.1:9200` 则代理日志 **0 次**，与“局域网不走代理”对上了。
-
-
 ## 2. 分阶段任务分解
 
 ### P0 · 基建与黄金向量（先做，做完才能往下）
@@ -345,8 +166,35 @@ CONNECT；换成 `127.0.0.1:9200` 则代理日志 **0 次**，与“局域网不
 
 ## 4. 与 Go 版的已知行为差异（需在 README 中声明）
 
-1. `--transport derp` ⏸ **pending**（等待上游 tailcat-rs），当前表现为"提示 + 走 relay"。它既不是 Go 版的 Tailcat 匿名节点协议，也不是官方 `tailscale` crate —— 后者虽已发布但模型不匹配（见 [08-tailscale.md](08-tailscale.md)）。
+### 4.1 没做的
+
+1. `--transport derp` ⏸ **pending**（等待上游 tailcat-rs），当前表现为“提示 + 走 relay”。
+   它既不是 Go 版的 Tailcat 匿名节点协议，也不是官方 `tailscale` crate——后者虽已发布但
+   模型不匹配（见 [08-tailscale.md](08-tailscale.md)）。
 2. 不支持 `--curve ed25519`（v1）。
 3. `croc store` / `croc ssh` 未实现。
 4. `--internal-dns` v1.1 提供。
 5. 自更新机制与 Go 版不同（v1 只提供 `--update --check`）。
+
+### 4.2 做了，但方式与 Go 不同
+
+6. **`--git` 的匹配基准**。Go 拿 `info.Name()`（只有 basename）去比对 `.gitignore`，于是
+   `src/*.log` 这类带路径的规则在它那边**根本不生效**；这里按相对路径匹配。差别只影响
+   “发哪些文件”，不涉及协议。
+7. **`--no-multi` 的作用域**。Go 只把它挂在 `send` 子命令上，接收方拿不到；这里做成全局
+   的——否则它对接收方无从生效。
+8. **`--hash` 少了 `imohash-v2`**。那是 Go 的渐进式哈希协商项
+   （`progressive-file-hash-v1`），需要额外的往返消息，本实现没有谈这条能力。
+9. **`--socks5` / `--connect` 不做代理认证**：地址里带 `user:pass@` 直接报错，不静默忽略
+   ——忽略的话用户只会对着“连不上”排查半天。
+10. **`--remember` 只记 `--relay` / `--relay6`**。Go 会把整个 `Options` 写进 `send.json`
+    （含覆盖策略、曲线、`--git` 等），那会让“上次随手加的一个开关”悄悄影响后面每一次
+    传输。
+11. **`--stdout` 在全部收完之后统一打**；Go 是每个文件收完就打一个。内容与顺序一致，
+    只是时序不同。
+
+### 4.3 不算差异，但会绊人
+
+单机上 `Rust 发送 → Go 接收` 的 `--local` **永远发现不到对端**：Go 的 `peerdiscovery`
+默认 `AllowSelf=false`，会把源 IP 是本机的组播丢掉。Go 自己两端在同一台机器上同样失败，
+与本实现无关——互通矩阵的 I12 因此跳过，验证它得两台机器。
