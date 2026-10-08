@@ -33,11 +33,11 @@
 | `--transport` | ✅（全局） | 见 §1.4 |
 | `--no-local` | ✅（全局） | |
 | `--local` | ✅（全局） | 见 §1.5 |
-| `--zip` | ❌ | 文件夹打包 |
-| `--git` | ❌ | 尊重 .gitignore |
-| `--exclude` / `--exclude-file` | ❌ | |
-| `--qrcode, -qr` | ❌ | |
-| `--socks5` / `--connect` | ❌ | 经代理（Tor 等） |
+| `--zip` | ✅ | 目录先打包再发。见 §1.7 |
+| `--git` | ✅ | 尊重 `.gitignore`。见 §1.7 |
+| `--exclude` / `--exclude-file` | ✅ | 两者语义**不同**。见 §1.7 |
+| `--qrcode, -qr` | ✅ | 显示 web 接收页的二维码。见 §1.7 |
+| `--socks5` / `--connect` | ✅（全局） | 经代理连中继。见 §1.7 |
 | `--no-multi` | ✅（全局） | 只用一条数据流。见 §1.5 |
 | `--port` / `--transfers` | ✅ | 只在 `--local` 下有效（连外部中继时端口由中继 banner 决定）。见 §1.5 |
 | `--ts-authkey` | ⏸ pending | 见 §1.4 |
@@ -63,6 +63,7 @@
 | `--local` | ✅ | 见 §1.5 |
 | `--no-local` | ✅ | |
 | `--no-multi` | ✅ | 见 §1.5 |
+| `--socks5` / `--connect` | ✅ | 见 §1.7 |
 | `--transport` | ✅ | 见 §1.4 |
 | `--relay6` | ❌ | |
 | `--ip` | ❌ | |
@@ -185,6 +186,54 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
   反向 Go 发 → Rust 收，报"跳过 1 个"。摘要只要差一个字节，这两条都会退化成真传输。
 
 ---
+
+### 1.7 `--zip` / `--git` / `--exclude` / `--qrcode` / `--socks5`
+
+#### `--exclude` 与 `--exclude-file` 不是一回事
+
+| flag | 匹配方式 | 例 |
+|------|---------|-----|
+| `--exclude` | 相对路径**包含**子串，大小写不敏感 | `--exclude node_modules` 会连 `my_node_modules_backup/` 一起排掉 |
+| `--exclude-file` | 相对路径**精确相等**（两边都归一后比） | `--exclude-file sub/b.txt` 只点掉那一个 |
+
+相对基准是**命令行上给的那个路径**。实测（同一棵 `tree/`）：`--exclude skipme` 排掉
+`tree/skipme/`；`--exclude-file sub/b.txt` 排掉 `tree/sub/b.txt` 而 `tree/skipme/` 留着。
+
+#### `--git`
+
+只读**被传目录根下**那一个 `.gitignore`——Go 的 `gitWalk` 也只 `CompileIgnoreFile` 一次，
+子目录里的不参与。
+
+⚠️ 与 Go 有一处**有意的差异**：Go 拿 `info.Name()`（只有 basename）去匹配，所以
+`src/*.log` 这类带路径的规则在它那边**根本不生效**；这里按**相对路径**匹配，规则能正常起作用。
+差别只影响“发哪些文件”，不涉及协议与互通。
+
+#### `--zip`
+
+目录打成一个 `<目录名>.zip` 放在**父目录**下再发。zip 内以目录名为顶层（解压出来还是
+一棵 `photos/`）、条目**不压缩**（数据面自己会压）、目标文件已存在就报错。临时 zip
+随 `send()` 结束删掉（实测：传完后发送方目录里只剩原目录）。
+
+#### `--qrcode`
+
+显示 `https://getcroc.com/?code=<口令码>` 的二维码（Go 的 `webReceiveURL`）。链接只由口令码拼成，
+与中继是谁无关。渲染是自己拼的半角块字符（`crates/croc-cli/src/qr.rs`），只拉了 `qrcode` 的
+编码器——默认的 image / svg 特性全关掉了。
+
+#### `--socks5` / `--connect`
+
+连中继时经代理。规则与 Go 的 `comm.Dial`（`src/comm/comm.go:67`）一致：
+
+- 目标是**局域网地址**时**不走代理**（域名一律按“不是局域网”处理）；
+- 两个都给时 **socks5 优先**；
+- 走代理时**不本地解析 DNS**——`host:port` 原样交给代理，这正是 Tor 场景要的
+  （本地解析会把 DNS 漏到网外）；
+- **不支持代理认证**：地址里带 `user:pass@` 直接报错，不静默忽略。
+
+实测（本机 Rust 中继 + 自写的 socks5 / HTTP CONNECT 代理；目标用 `localhost:9200`——
+**域名才不会被判成局域网**）：两个方向都 rc=0、内容一致，代理日志各 8 次
+CONNECT；换成 `127.0.0.1:9200` 则代理日志 **0 次**，与“局域网不走代理”对上了。
+
 
 ## 2. 分阶段任务分解
 
