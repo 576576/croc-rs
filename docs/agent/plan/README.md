@@ -17,7 +17,7 @@
 | [01-protocol.md](01-protocol.md) | croc v11 协议兼容基线：帧格式、relay 握手、PAKE 流程、消息类型、文件传输状态机、断点续传 | 核心开发者（必读） |
 | [02-crypto.md](02-crypto.md) | 密码学移植方案：SIEC255 曲线、schollz/pake v3 wire 格式、PAKE v2 密钥派生、AES-GCM / Argon2 | 核心开发者（必读，最高风险） |
 | [03-architecture.md](03-architecture.md) | Rust workspace 划分、模块职责、依赖选型、并发模型、错误与取消 | 核心开发者 |
-| [04-cli-plan.md](04-cli-plan.md) | CLI 版（`croc-rs` 可执行程序）实施计划：命令/flag 对齐表、分阶段任务分解 | 核心开发者 |
+| [04-cli-plan.md](04-cli-plan.md) | CLI 版（`croc-rs` 可执行程序）实施计划：命令与 flag 对齐表、性能目标、与 Go 版的已知行为差异 | 核心开发者 |
 | [05-gui-plan.md](05-gui-plan.md) | Tauri 2 GUI 版计划：取代 FlCroc 的功能对等表、command/event API、Android 适配 | GUI / 移动端开发者 |
 | [06-milestones.md](06-milestones.md) | 路线图：P0–P8 里程碑、每阶段交付物与验收标准、发布与打包 | 所有人 |
 | [07-risks-and-testing.md](07-risks-and-testing.md) | 风险登记册、互操作性测试矩阵、CI 与合规 | 所有人 |

@@ -56,7 +56,7 @@
 | I9 | Rust | Go | Rust relay | 断点续传（传 50% 时 kill，重传） | 最终一致 |
 | I10 | Rust | Go | Rust relay | 同名文件 → 覆盖 / 重命名 / 拒绝 | 三种策略行为一致 |
 | I11 | Rust | Go | Rust relay | 压缩开启/关闭 | 一致 |
-| I12 | Rust | Go | 局域网本地直连 | 不走中继 | ⏸ 单机上 Go 侧发现不到（`AllowSelf=false` 会丢掉源 IP 是本机的广播，见 [04](04-cli-plan.md) §1.5），harness 里显式 SKIP |
+| I12 | Rust | Go | 局域网本地直连 | 不走中继 | ⏸ 单机上 Go 侧发现不到（`AllowSelf=false` 会丢掉源 IP 是本机的广播，见 [04](04-cli-plan.md) §3.3），harness 里显式 SKIP |
 | I13 | Rust | Go | Rust relay | 10 万文件清单 | 不 OOM，一致 |
 | I14 | Rust | Go | Rust relay | 错误的中继口令 | 接收端非零退出、无文件落地、双方不崩 |
 | I15 | Rust | Go | Rust relay | 传输中对端 Ctrl-C | 优雅退出，无残留 .part 文件 |
@@ -65,6 +65,7 @@
 | I18 | Rust `--transport derp` | Go | — | Android | 同上，不崩溃 |
 | I19 | Rust | Rust | 局域网本地直连 | 不走中继 | 内容一致（不经 Go 的组播发现，单机能跑） |
 | I20 | Rust `--hash md5` | Go | Rust relay | 接收方本地已有同内容文件 | 发送方报 **0 字节**——Go 拿自己算的 md5 认定"不需要传"，即摘要跨实现一致 |
+| I21 | Rust | Go `--curve ed25519` | Rust relay | — | 内容一致。曲线由**接收方**决定，`--curve` 因此给在 Go 一侧；ed25519 的点编码与另外四条不同（点整体塞在 `x` 坐标里、`y` 恒为 0） |
 
 ### 2.3 Golden 向量的维护
 

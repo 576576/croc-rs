@@ -311,7 +311,7 @@ cargo xtask ci-interop   # = 互通矩阵（只在本地跑，不在 CI 里）
 - [x] `.github/workflows/{release,build,lint,clear}.yml` 四份
 - [x] `docs/agent/release.md`（操作手册；设计推导在本文档）
 - [x] `xtask` 子命令：`purity` / `deps` / `ci-lint` / `ci-build` / `ci-interop`
-- [x] `tests/interop/run.sh` + `tests/interop/README.md`（I1–I20）
+- [x] `tests/interop/run.sh` + `tests/interop/README.md`（I1–I21）
 - [x] `crates/croc-cli`（`croc-rs`）与 `crates/croc-gui`（`crocw-rs`，Tauri 2）落地
 - [x] 打第一个 alpha（推 main 验证自动链路）—— CI 全绿，四个产物都出来了
 - [x] 互通矩阵**有意不进 CI**（见 §5.3），由 `cargo xtask ci-interop` 在本地跑

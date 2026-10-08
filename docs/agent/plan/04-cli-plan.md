@@ -1,160 +1,68 @@
 # 04 · CLI 版实施计划
 
-> 产物：`croc-rs`（可执行程序）。目标是可直接替换 Go 版 `croc` 的日常使用。
+> 交付物：`croc-rs`（可执行程序）。目标是在日常使用中可直接替换 Go 版 `croc`。
 
 ---
 
 ## 1. 命令与 flag 对齐表
 
-> 这里**只列“还没做的”与“跟 Go 不一样的地方”**。已经实现、行为又与 Go 一致的开关不在
-> 此出现——那些看 `croc-rs --help` 就够了，逐条列出来只会把真正需要留意的条目淹掉。
-> 行为差异集中在 §4。
+本节只记录两类条目：
+
+1. 尚未实现的命令与开关；
+2. 已实现、但行为与 Go 版不一致的开关。
+
+已实现且行为一致的开关不在此列出，其定义以 `croc-rs --help` 为准。第 3 节给出差异的完整
+清单。
 
 ### 1.1 顶层命令
 
 | Go 命令 | Rust v1 | 说明 |
 |---------|---------|------|
-| `croc update` | ⚠️ 仅 `--check` | 自更新放到 v1.1（需要签名基础设施） |
+| `croc update` | ⚠️ 仅 `--check` | 自更新推迟到 v1.1（需要签名基础设施） |
 | `croc store` | ❌ v2 | 依赖 store 服务端 |
-| `croc ssh` | ❌ v2 | PTY + tailcat |
-| `croc generate-fish-completion` | ⚠️ | clap_complete 生成 bash/zsh/fish |
+| `croc ssh` | ❌ v2 | 需要 PTY 与 tailcat 数据面 |
+| `croc generate-fish-completion` | ⚠️ | 由 clap_complete 生成 bash / zsh / fish 补全 |
 
-### 1.2 `send` 命令 flag
+### 1.2 `send` 子命令参数
 
-| Go flag | Rust | 备注 |
-|---------|------|------|
-| `--ts-authkey` | ⏸ pending | 见 §1.4 |
-| `--store` | ❌ v2 | |
+| Go flag | Rust v1 | 说明 |
+|---------|---------|------|
+| `--ts-authkey` | ⏸ 暂缓 | 见 §1.4 |
+| `--store` | ❌ v2 | 与 `croc store` 同源：需要先存入 store 服务端才能分享，故一并实现 |
 
-### 1.3 全局 flag
+### 1.3 全局参数
 
-| Go flag | Rust | 备注 |
-|---------|------|------|
-| `--classic` | ❌ | v1 不实现 classic 模式的不安全语义 |
-| `--internal-dns` | ❌ | 内置 DNS stub resolver |
-| `--disable-clipboard` / `--extended-clipboard` | ❌ | 剪贴板整体未实现 |
-| `--throttleUpload` | ❌ | 限速 |
-| `--revoke` | ❌ v2 | 依赖 store |
+| Go flag | Rust v1 | 说明 |
+|---------|---------|------|
+| `--revoke` | ❌ v2 | 与 `croc store` 同源，依赖 store 服务端 |
 
-### 1.4 `--transport derp` —— ⏸ PENDING
+### 1.4 `--transport derp` —— ⏸ 暂缓实现
 
-Tailscale 数据面**标记为 pending，等待 Tailscale 团队稳定 tailcat-rs**。完整方案见 [08-tailscale.md](08-tailscale.md)。
+Tailscale 数据面暂缓实现，等待上游稳定 tailcat-rs。完整方案见
+[08-tailscale.md](08-tailscale.md)。
 
-pending 期间 CLI 的行为（**所有平台一致**）：
+暂缓期间 `--transport` 的取值与行为（所有平台一致）：
 
-```
+| 输入 | 实际行为 |
+|------|---------|
+| `auto`（默认） | 等价 `relay`。本实现默认不做局域网发现，理由见 §3.2 第 10 条 |
+| `relay` | 中继 |
+| `derp` | 输出一条 `note:` 提示后按 `relay` 处理；不是错误，不影响退出码 |
+
+提示原文：
+
+```text
 $ croc-rs send --transport derp file.txt
 note: tailscale data plane is not available yet (pending upstream tailcat-rs); using relay
 ```
 
-| 输入 | 实际行为 |
-|------|---------|
-| `--transport auto` | 局域网 → Local；否则 → Relay（**永远不选 Tailscale**） |
-| `--transport relay` | Relay |
-| `--transport derp` | 打一条 `note:` 后按 Relay 处理，**不是错误、不影响退出码** |
+依据：Go 版 `resolveTransportMode()` 在 `tailcattransport.Available()` 为假时降级为 `relay`
+并返回 `downgraded=true`（`src/croc/croc.go:160`），`transport_unsupported.go` 在 Android 上
+返回 `ErrUnsupported`。本实现与该降级等价，对端无法区分。
 
-依据：Go 版 `resolveTransportMode()` 在 `tailcattransport.Available() == false` 时降级为 `relay` 并返回 `downgraded=true`（`src/croc/croc.go:160-165`），`transport_unsupported.go` 在 Android 上返回 `ErrUnsupported`。我们的 pending 行为与之等价——**对端看不出区别**。
+解除暂缓后按 [08-tailscale.md](08-tailscale.md) §3 执行，届时在 CLI 侧新增 `--ts-authkey`。
 
-解除 pending 后按 [08-tailscale.md](08-tailscale.md) §3 执行，届时 CLI 侧新增 `--ts-authkey`。
-## 2. 分阶段任务分解
-
-### P0 · 基建与黄金向量（先做，做完才能往下）
-
-| # | 任务 | 产出 | 验收 |
-|---|------|------|------|
-| C0.1 | 初始化 workspace，定 crate 骨架，CI 跑 `cargo fmt/clippy/test` | 空 crate 编译通过 | CI 绿 |
-| C0.2 | 写 `croc-playground/tools/gen-golden`（Go，**不在本仓库**），抓取 Go 版曲线/PAKE/codephrase 向量 | `tests/golden/*.json` | 向量文件入库 |
-| C0.3 | 抓一次完整中继握手 + 一次 1 KB 传输的 pcap | `tests/golden/*.bin` | 可用脚本回放 |
-| C0.4 | `croc-siec`：SIEC255 + p256/p384/p521 算术 | crate | golden 全绿 |
-| C0.5 | `croc-pake`：曲线常量点、Init/Update/SessionKey、wire JSON | crate | golden 全绿（**含 wire 字节级比对**） |
-| C0.6 | `croc-core::crypto::pakekey`：frame/Identities/Derive/Confirm | 模块 | golden 全绿 |
-
-> **C0.5 的验收必须是"Rust 生成的 `Bytes()` 喂给 Go 版能解出同样的 session key"**，而不只是自测通过。建一个 `tests/interop/pake_cross/` 用两个小 CLI 互相验证。
-
-### P1 · 线路层
-
-| # | 任务 | 验收 |
-|---|------|------|
-| C1.1 | `protocol::frame`：magic + u32 LE，读写 deadline，keepalive 过滤 | 单测 + 与 pcap 比对 |
-| C1.2 | `transport::conn::Comm`：vectored write、`read_exact`、错误分类 | 单测 |
-| C1.3 | `transport::proxy`：SOCKS5 / HTTP CONNECT | 用本地 socks 代理实测 |
-| C1.4 | `protocol::handshake`：客户端中继握手（管线化 room 帧） | **连官方 `croc.schollz.com:9009` 成功拿到 banner** ★ |
-| C1.5 | `croc-relay`：房间管理、pipe、限流、超时 | **Go 版客户端能连上 Rust 中继并完成握手** |
-| C1.6 | `protocol::plane`：`DataPlane` trait、`PlaneKind`、feature 协商与降级决策（纯逻辑） | 单测覆盖"平台 × 对端能力"全组合的选择结果；此时**不引入 tailscale 依赖** |
-
-> C1.4 与 C1.5 是第一个"能证明方向正确"的里程碑。这两个必须同时做——只做客户端无法排除服务端理解错误。
-
-### P2 · Peer PAKE 与安全通道
-
-| # | 任务 | 验收 |
-|---|------|------|
-| C2.1 | `protocol::message`：JSON/deflate/AEAD 编解码 | 与 Go 版互编互解 |
-| C2.2 | `protocol::peer_pake`：pake → pake-confirm 四帧状态机（含 feature 列表） | Rust receiver ↔ Go sender 完成 PAKE |
-| C2.3 | 脱敏（`redact`）与错误分类 | 单测：错误信息中不含 secret |
-
-### P3 · 单文件传输（最小可用）
-
-| # | 任务 | 验收 |
-|---|------|------|
-| C3.1 | `fs::manifest`：单文件 FileInfo + SenderInfo 编解码 | 与 Go 版 JSON 结构比对 |
-| C3.2 | `fs::chunk`：区间计算（对齐 `utils.ChunkRangesCount/Bytes`） | 单测 |
-| C3.3 | 发送路径：单连接、无压缩、无断点 | **Rust send → Go receive 成功** ★ |
-| C3.4 | 接收路径：`recipientready` + 写盘 + 哈希校验 | **Go send → Rust receive 成功** ★ |
-| C3.5 | `croc-cli` 雏形：`send` / `<code>` 两个动作 | 手工端到端通过 |
-
-### P4 · 完整传输能力
-
-| # | 任务 | 验收 |
-|---|------|------|
-| C4.1 | 多文件、文件夹、`--zip`、空目录 | 与 Go 版互传目录树一致 |
-| C4.2 | 压缩：逐文件采样判定 + flate | Go 端能解压 Rust 端数据 |
-| C4.3 | 哈希：xxhash / imohash / md5 / highway | 与 Go 版对同一文件算出相同值 |
-| C4.4 | 覆盖策略：overwrite / rename / resume / refuse | 四种策略手工验证 |
-| C4.5 | 断点续传：区间请求 + chunk 队列 | kill 后重传能续上 |
-| C4.6 | 多端口复用（最多 5 条数据连接）+ `--no-multi` | 吞吐对比测试 |
-| C4.7 | 限速 `--throttleUpload` | 实测速率接近设定值 |
-| C4.8 | 接收根路径沙箱（防目录穿越、symlink 校验） | 恶意清单测试：不能写到接收目录外 |
-
-### P5 · CLI 完善
-
-| # | 任务 | 验收 |
-|---|------|------|
-| C5.1 | 进度条（`indicatif`），多文件总进度 | 观感与 Go 版接近 |
-| C5.2 | 剪贴板复制（含 `--extended-clipboard`） | 三平台实测 |
-| C5.3 | QR 码输出 | |
-| C5.4 | `--text` 发送文本、`--stdout` 输出到标准输出 | 管道测试 |
-| C5.5 | 本地发现：组播 + 本地临时中继 + 本地探针握手 | 同一局域网下不走公网中继 |
-| C5.6 | `--remember` 配置持久化 | 配置文件路径对齐 Go 版 |
-| C5.7 | `--qrcode`、`--ask`、`--yes`、signal 处理（Ctrl-C 优雅退出） | |
-
-### P6 · 加固（Tailscale 数据面 ⏸ PENDING）
-
-| # | 任务 | 验收 |
-|---|------|------|
-| C6.1 | 重连：`NextReconnectRoom`、候选、退避、上限 10 次 | 中途 kill relay 进程，传输能恢复 |
-| C6.2 | 超时与死锁排查：所有 `select!` 带取消分支 | 长跑测试 |
-| C6.3 | 零拷贝优化：`encrypt_in_place` / 复用 buffer | 单核 ≥ 500 MB/s |
-| C6.4 | 内存上限：大清单分块（`fileinfo-start/batch/end`） | 10 万文件清单不 OOM |
-| C6.5 | 日志分级、`--debug`、错误脱敏审查 | |
-| C6.6 | 补齐 `fileinfo` 分块、`relay-standby`、`relay-ramp` 等次要消息 | 与 Go 版互操作无 warning |
-| C6.7 | `tailcat-offer` / `tailcat-status` / `transport-select` 识别与降级 | Rust `--transport derp` ↔ Go `--transport derp` 降级到 relay 后传输成功 |
-| ~~C6.8~~ | ~~`crates/croc-tailscale` 封装 `tailscale` 0.6~~ | ⏸ **pending**，见 [08-tailscale.md](08-tailscale.md) |
-| ~~C6.9~~ | ~~数据面择优~~ | ⏸ **pending** |
-
-### P7 · 打包与发布
-
-| # | 任务 |
-|---|------|
-| C7.1 | 构建矩阵：linux(gnu/musl, x64/arm64)、macos(arm64)、windows(x64/arm64) |
-| C7.2 | 产出 **`croc-rs`**（CLI）与 **`crocw-rs`**（GUI / Tauri）两个产物，带 checksum |
-| C7.3 | 安装脚本 + Homebrew formula + Scoop / Chocolatey（可选） |
-| C7.4 | 文档：README、与 Go 版差异说明、迁移指南 |
-
-> CI 设计（`release` 唯一入口 / `build` / `lint` / `clear`）见 [09-build-and-ci.md](09-build-and-ci.md)。
-
----
-
-## 3. 性能目标
+## 2. 性能目标
 
 | 场景 | 目标 |
 |------|------|
@@ -164,37 +72,57 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 | 10 万文件清单生成 | ≤ 5 s |
 | 冷启动到显示三词码 | ≤ 150 ms |
 
-## 4. 与 Go 版的已知行为差异（需在 README 中声明）
+## 3. 与 Go 版的已知行为差异
 
-### 4.1 没做的
+以下条目需要在 README 中声明。
 
-1. `--transport derp` ⏸ **pending**（等待上游 tailcat-rs），当前表现为“提示 + 走 relay”。
-   它既不是 Go 版的 Tailcat 匿名节点协议，也不是官方 `tailscale` crate——后者虽已发布但
-   模型不匹配（见 [08-tailscale.md](08-tailscale.md)）。
-2. 不支持 `--curve ed25519`（v1）。
-3. `croc store` / `croc ssh` 未实现。
-4. `--internal-dns` v1.1 提供。
-5. 自更新机制与 Go 版不同（v1 只提供 `--update --check`）。
+### 3.1 未实现的行为
 
-### 4.2 做了，但方式与 Go 不同
+1. **`--transport derp` 暂缓**（见 §1.4）。当前行为是「提示 + 走 relay」，既不是 Go 版的
+   Tailcat 匿名节点协议，也没有采用官方 `tailscale` crate——后者虽已发布，但模型不匹配。
+2. **`croc store` 与 `croc ssh` 未实现**。
+3. **自更新机制不同**。v1 只提供 `croc-rs update --check`。
 
-6. **`--git` 的匹配基准**。Go 拿 `info.Name()`（只有 basename）去比对 `.gitignore`，于是
-   `src/*.log` 这类带路径的规则在它那边**根本不生效**；这里按相对路径匹配。差别只影响
-   “发哪些文件”，不涉及协议。
-7. **`--no-multi` 的作用域**。Go 只把它挂在 `send` 子命令上，接收方拿不到；这里做成全局
-   的——否则它对接收方无从生效。
-8. **`--hash` 少了 `imohash-v2`**。那是 Go 的渐进式哈希协商项
-   （`progressive-file-hash-v1`），需要额外的往返消息，本实现没有谈这条能力。
-9. **`--socks5` / `--connect` 不做代理认证**：地址里带 `user:pass@` 直接报错，不静默忽略
-   ——忽略的话用户只会对着“连不上”排查半天。
-10. **`--remember` 只记 `--relay` / `--relay6`**。Go 会把整个 `Options` 写进 `send.json`
-    （含覆盖策略、曲线、`--git` 等），那会让“上次随手加的一个开关”悄悄影响后面每一次
-    传输。
-11. **`--stdout` 在全部收完之后统一打**；Go 是每个文件收完就打一个。内容与顺序一致，
-    只是时序不同。
+### 3.2 已实现，但方式与 Go 不同
 
-### 4.3 不算差异，但会绊人
+1. **`--git` 的匹配基准**。Go 取 `info.Name()`（仅 basename）与 `.gitignore` 比对，因此
+   `src/*.log` 这类含路径的规则在 Go 版中不生效；本实现按相对路径匹配。差异仅影响「发送哪
+   些文件」，不涉及协议。
+2. **`--no-multi` 的作用域**。Go 只把它挂在 `send` 子命令上，接收方无法给出；本实现做成全
+   局参数，否则它对接收方无从生效。
+3. **`--hash` 缺少 `imohash-v2`**。该项是 Go 的渐进式哈希协商能力
+   （`progressive-file-hash-v1`），需要额外的往返消息，本实现未协商该能力。
+4. **`--socks5` / `--connect` 不实现代理认证**。地址中含 `user:pass@` 时直接报错，而不是
+   静默忽略——忽略只会让用户面对「连不上」反复排查。
+5. **`--stdout` 的输出时机**。本实现在全部文件接收完毕后统一输出；Go 每收完一个文件即输出
+   一次。内容与顺序一致，仅时机不同。
+6. **`--internal-dns` 的持久化条件更严格**。Go 只要 argv 中出现 `--remember` 就写出
+   `<config>/internal-dns` 标记（不必同时给出 `--internal-dns`，因此一次
+   `croc --remember file.txt` 便会永久启用内置 DNS），且其 argv 扫描遇到 `--internal-dns`
+   即终止，两个开关的先后顺序会改变结果。本实现要求两个开关同时给出。
+7. **`CROC_SECRET` 仅作兜底**。命令行的位置参数优先于该环境变量；Go 的
+   `resolveSendSharedSecret`（`cli.go:395`）则是环境变量优先——原因是 Go 的 `send` 默认不
+   允许在命令行上给出码。本实现两条路径都保留，因此以更明确的那条为准。
+8. **`--throttleUpload` 参数非法的处理方式**。Go 触发 `panic`（退出码 2 加栈回溯），本实现
+   输出一行可读的错误信息并以失败码退出。两者都不静默忽略——未生效的限速比报错更难排查。
+9. **剪贴板不预探测 `PATH`**。本实现按优先级依次尝试启动各平台的剪贴板程序，第一个成功的
+   即为命中；Go 先做 `LookPath` 判断再启动。另：`--extended-clipboard` 复制的命令中，可执行
+   文件名是 `croc-rs`。
+10. **默认不做局域网发现**。Go 默认开启（除非显式给出 `--no-local`）；本实现只在显式给出
+    `--local` 时才做组播发现，因此 `--no-local` 在 v1 中是空操作。影响：同一局域网内的传输
+    默认仍经中继，需显式 `--local` 才走本地直连。
+11. **拒绝命令行口令码时的退出码**。拒绝的条件与 Go 一致（非 Windows、命令行给出码、未启用
+    classic 模式、环境变量未给出 `CROC_SECRET`），但 Go 以 `os.Exit(0)` 结束，本实现返回失败
+    码：请求被拒绝属于失败，脚本不应据此认为传输已完成。
+12. **接收端缺少口令码时的行为**。Go 一律从 stdin 读取一行；本实现仅在 stdin 为终端时询问，
+    管道中直接报错，以免脚本静默挂起。
+13. **配置文件是 Go 格式的子集**。两个实现共用 `<config>/send.json` 与
+    `<config>/receive.json`，字段名与 Go 的 `croc.Options` 一致，但本实现只写出 Go 也会应用
+    的那部分字段。Go 读取本实现写出的文件时，其余字段取零值，与 Go 自身在未设置时写出的值
+    相同。
 
-单机上 `Rust 发送 → Go 接收` 的 `--local` **永远发现不到对端**：Go 的 `peerdiscovery`
-默认 `AllowSelf=false`，会把源 IP 是本机的组播丢掉。Go 自己两端在同一台机器上同样失败，
-与本实现无关——互通矩阵的 I12 因此跳过，验证它得两台机器。
+### 3.3 不构成差异，但影响验证
+
+单机上 `Rust 发送 → Go 接收` 的 `--local` 永远发现不到对端：Go 的 `peerdiscovery` 默认
+`AllowSelf=false`，会丢弃源 IP 为本机的组播。Go 自身两端同机时同样失败，与本实现无关。互通
+矩阵的 I12 因此在单机环境跳过，验证该路径需要两台机器。
