@@ -30,9 +30,28 @@ pub const DEFAULT_PASSPHRASE: &str = "pass123";
 ///
 /// Go 版的原文是 `Tailcat is unavailable in this build; using the croc relay instead.`
 /// （`src/cli/cli.go:573`）。我们用自己的一句话，因为我们的降级理由是"上游还没稳"，
-/// 而不是"这个构建没编进去"——见 `docs/agent/plan/08-tailscale.md` §2。
+/// 而不是"这个构建没编进去"——见 `docs/agent/plan/tailscale.md` §2。
 pub const TAILSCALE_PENDING_NOTE: &str =
     "note: tailscale data plane is not available yet (pending upstream tailcat-rs); using relay";
+
+/// `croc-rs update` 尚未实现时打给用户看的提示。
+///
+/// Go 的 `update` 会自更新独立安装的副本、对包管理器装的给出指引（`src/cli/cli.go:146`）。
+/// 我们只保留这个子命令的位置。
+pub const UPDATE_UNIMPLEMENTED_NOTE: &str =
+    "note: self-update is not implemented yet; install a newer release from the release page";
+
+/// `croc-rs update --check` 尚未实现时打给用户看的提示。
+pub const UPDATE_CHECK_UNIMPLEMENTED_NOTE: &str = "note: checking for a newer release is not implemented yet";
+
+/// `croc-rs generate-fish-completion` 尚未实现时打给用户看的提示。
+pub const FISH_COMPLETION_UNIMPLEMENTED_NOTE: &str = "note: fish completion generation is not implemented yet";
+
+/// `croc-rs ssh` 尚未实现时打给用户看的提示。
+///
+/// Go 的 `ssh` 会开一条端到端加密的协作终端（`src/cli/cli.go:130`）。它依赖 PTY 与 tailcat
+/// 数据面，两者都还没有，所以只保留子命令的位置。
+pub const SSH_UNIMPLEMENTED_NOTE: &str = "note: ssh terminal sharing is not implemented yet";
 
 /// `--transport` 与 `--local` 冲突时的报错（Go 版同文，`src/cli/cli.go:700`）。
 ///
@@ -89,6 +108,56 @@ enum Command {
     Relay(crate::relay_cmd::RelayArgs),
     /// 把文件存到暂存服务，拿一个取件链接。
     Store(StoreArgs),
+    /// 共享或加入一个协作终端（尚未实现，只打一条提示）。
+    Ssh(SshArgs),
+    /// 检查并安装新版本（尚未实现，只打一条提示）。
+    #[command(alias = "upgrade")]
+    Update(UpdateArgs),
+    /// 生成 fish 补全并输出到 stdout（尚未实现，只打一条提示）。
+    ///
+    /// Go 把这个命令标成 hidden（`src/cli/cli.go:180`），这里照做。
+    #[command(hide = true)]
+    GenerateFishCompletion,
+}
+
+/// `croc-rs ssh` 的参数。
+///
+/// 位置参数与开关都照 Go 的形式收下（`src/cli/cli.go:130`），但目前没有功能可做。
+/// Go 在这里那个 `--transport` 由**全局**同名参数承担，所以不重复声明。
+#[derive(Debug, clap::Args)]
+struct SshArgs {
+    /// 六词码。不给就是自己当主机。
+    #[arg(value_name = "CODE")]
+    code: Option<String>,
+    /// 只当主机，不接本地终端。
+    #[arg(long)]
+    headless: bool,
+    /// 主机会话的最长存活时间。
+    #[arg(long, default_value = "12h")]
+    duration: String,
+    /// 掉线后客户端重试多久。
+    #[arg(long, default_value = "2m")]
+    reconnect_window: String,
+    /// 关掉客户端的自动重连。
+    #[arg(long)]
+    no_reconnect: bool,
+    /// 主机 shell 的工作目录。
+    #[arg(long, default_value = ".")]
+    dir: PathBuf,
+}
+
+/// `croc-rs update` 的参数。
+///
+/// 两个开关都照 Go 的公开形式收下（`src/cli/cli.go:150`），但目前没有功能可做——收到就只为
+/// 挑一句更贴切的提示。
+#[derive(Debug, clap::Args)]
+struct UpdateArgs {
+    /// 只检查有没有新版本，不安装。
+    #[arg(long)]
+    check: bool,
+    /// 安全时不再询问确认。
+    #[arg(long)]
+    yes: bool,
 }
 
 /// `croc store`：把文件存到暂存服务。
@@ -245,7 +314,7 @@ struct Global {
     /// 数据面：`auto`（默认）/ `relay` / `derp`。
     ///
     /// `derp` 目前是 **pending** 状态：打一条 `note:` 后按 `relay` 处理，不影响退出码。
-    /// 理由见 `docs/agent/plan/08-tailscale.md`。
+    /// 理由见 `docs/agent/plan/tailscale.md`。
     #[arg(long, value_enum, default_value_t = Transport::Auto, global = true)]
     transport: Transport,
 
@@ -421,6 +490,15 @@ pub enum Action {
     /// 它是**动作**不是开关：Go 把它放在 `Before` 钩子里，处理完就 `os.Exit(0)`，
     /// 后面的命令一概不跑。
     ToggleClassic,
+    /// 协作终端（尚未实现）。
+    Ssh,
+    /// 自更新（尚未实现）。
+    Update {
+        /// 只检查，不安装。
+        check: bool,
+    },
+    /// 生成 fish 补全（尚未实现）。
+    GenerateFishCompletion,
 }
 
 /// 自建中继的请求。
@@ -507,6 +585,14 @@ pub fn parse() -> Result<Parsed, ExitCode> {
     let classic = crate::config::classic_enabled();
 
     match cli.command {
+        // 这两个子命令收下参数、打完提示就结束——它们是位置占位，不是待办。
+        Some(Command::Ssh(_args)) => Ok(Parsed { debug: cli.global.debug, action: Action::Ssh }),
+        Some(Command::Update(args)) => {
+            Ok(Parsed { debug: cli.global.debug, action: Action::Update { check: args.check } })
+        }
+        Some(Command::GenerateFishCompletion) => {
+            Ok(Parsed { debug: cli.global.debug, action: Action::GenerateFishCompletion })
+        }
         Some(Command::Store(args)) => {
             let paths = match crate::store::regular_files(&args.paths) {
                 Ok(paths) => paths,
@@ -798,6 +884,19 @@ pub async fn run(parsed: Parsed) -> ExitCode {
     match parsed.action {
         // 人机交互动作，与取消令牌无关。
         Action::ToggleClassic => toggle_classic(),
+        // 两个占位命令：说清"没做"，并以**失败码**退出——脚本不该把"什么都没发生"读成"做完了"。
+        Action::Ssh => {
+            eprintln!("{SSH_UNIMPLEMENTED_NOTE}");
+            ExitCode::FAILURE
+        }
+        Action::Update { check } => {
+            eprintln!("{}", if check { UPDATE_CHECK_UNIMPLEMENTED_NOTE } else { UPDATE_UNIMPLEMENTED_NOTE });
+            ExitCode::FAILURE
+        }
+        Action::GenerateFishCompletion => {
+            eprintln!("{FISH_COMPLETION_UNIMPLEMENTED_NOTE}");
+            ExitCode::FAILURE
+        }
         Action::Relay(request) => crate::relay_cmd::run(request.args, &request.password, cancel).await,
         Action::Store(request) => crate::store::send(*request).await,
         Action::ReceiveStored(request) => crate::store::receive(*request).await,
@@ -1454,7 +1553,7 @@ mod tests {
 
     #[test]
     fn the_pending_note_names_the_reason() {
-        // 文案是我们与用户的契约（`docs/agent/plan/04-cli-plan.md` §1.4），改它要同步改文档。
+        // 文案是我们与用户的契约（`docs/agent/cli.md` §1.4），改它要同步改文档。
         assert!(TAILSCALE_PENDING_NOTE.starts_with("note: "), "降级提示必须以 note: 开头");
         assert!(TAILSCALE_PENDING_NOTE.contains("tailcat-rs"), "要说清 pending 的对象");
         assert!(TAILSCALE_PENDING_NOTE.ends_with("using relay"), "要说清实际走了什么");
