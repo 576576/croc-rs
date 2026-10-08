@@ -44,6 +44,14 @@ pub struct ReceiveRequest {
     pub local: bool,
     /// 出站代理（`--socks5` / `--connect`）。
     pub proxy: crate::proxy::Proxy,
+    /// `--multicast`：`--local` 发现用的组播组地址。
+    pub multicast: std::net::Ipv4Addr,
+    /// `--relay6`：IPv6 中继地址（与 `--relay` 一起做 Happy Eyeballs）。
+    pub relay6: String,
+    /// `--ip`：已知的对方地址。给了就直连它，跳过局域网发现。
+    pub ip: String,
+    /// `--stdout`：收完把内容打到标准输出（`--text` 会自动开）。
+    pub stdout: bool,
     /// `--no-multi`：禁用多端口复用，只用一条数据流。
     ///
     /// 必须与发送方**一致**：流数不在握手里协商，两端各自按中继 banner 推导，只有一端
@@ -83,20 +91,48 @@ pub struct Summary {
 
 /// 跑一次接收。
 ///
+/// 把收到的文件按清单顺序打到标准输出。
+///
+/// Go 是"收完再读出来打"（`croc.go:2339`），文件**照常落盘**——不是"不落盘"。这里也是
+/// 全部收完统一打；多文件时 Go 是逐个打的，但内容与顺序一致。
+///
+/// # Errors
+///
+/// 读不回来时返回错误（文件被跳过时会 open 失败，那是正常的，直接跳过）。
+fn print_received(files: &[FileInfo], out_dir: &std::path::Path) -> Result<(), EngineError> {
+    use std::io::Write as _;
+
+    let mut stdout = std::io::stdout().lock();
+    for info in files {
+        let path = files::destination_of(info, out_dir)?;
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            continue;
+        };
+        std::io::copy(&mut file, &mut stdout).map_err(|error| EngineError::file(&path, error))?;
+    }
+    let _ = stdout.flush();
+    Ok(())
+}
+
 /// # Errors
 ///
 /// 中继连不上、口令不对、协议违规、写盘失败，或者被取消。
 pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Result<Summary, EngineError> {
     // `--local`：组播找发送方，拿它的地址当中继。找不到就是"局域网里没人在发"，
     // 直接失败——不能悄悄退回公网中继，那正是用户用 `--local` 明确拒绝的事。
-    let relay_address = if request.local {
+    let relay_addresses = if !request.ip.trim().is_empty() {
+        // `--ip`：既然知道对方在哪，就直连它——**跳过局域网发现**（Go 的 `isIPset`，
+        // `croc.go:2031`）。
+        vec![request.ip.clone()]
+    } else if request.local {
         emit(&request.events, EngineEvent::Status("looking for the sender on the local network…".to_owned()));
-        local::find_peer(local::DISCOVERY_TIMEOUT).await?
+        vec![local::find_peer(local::DISCOVERY_TIMEOUT, request.multicast).await?]
     } else {
-        request.relay.clone()
+        relay::candidate_addresses("", &request.relay, &request.relay6)
     };
-    let mut link =
-        relay::connect(&relay_address, &request.relay_password, &request.components.room_name, &request.proxy).await?;
+    let (mut link, relay_address) =
+        relay::connect_any(&relay_addresses, &request.relay_password, &request.components.room_name, &request.proxy)
+            .await?;
     let ports = link.data_ports();
     if ports.is_empty() {
         return Err(EngineError::Relay("the relay banner carried no data ports".to_owned()));
@@ -165,7 +201,16 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                 },
                 Effect::Finish(outcome) => {
                     return match outcome {
-                        Outcome::Completed => Ok(summary),
+                        Outcome::Completed => {
+                            // `--stdout`（以及文本传输，Go 在 `croc.go:2502` 自动开它）：
+                            // 收完把内容打到标准输出。
+                            let wants_stdout =
+                                request.stdout || manifest.as_ref().is_some_and(|info| info.sending_text);
+                            if wants_stdout && let Some(info) = manifest.as_ref() {
+                                print_received(&info.files_to_transfer, &request.out_dir)?;
+                            }
+                            Ok(summary)
+                        }
                         other => Err(other.into()),
                     };
                 }

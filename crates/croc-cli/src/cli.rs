@@ -17,6 +17,9 @@ use tokio_util::sync::CancellationToken;
 /// croc 的默认中继地址。
 pub const DEFAULT_RELAY: &str = "croc.schollz.com:9009";
 
+/// IPv6 中继的默认地址。Go 的 `models.DEFAULT_RELAY6`。
+pub const DEFAULT_RELAY6: &str = "croc6.schollz.com:9009";
+
 /// croc 的默认中继密码。
 pub const DEFAULT_PASSPHRASE: &str = "pass123";
 
@@ -153,9 +156,12 @@ struct SendArgs {
 
 #[derive(Debug, clap::Args)]
 struct Global {
-    /// 中继地址。
-    #[arg(long, default_value = DEFAULT_RELAY, env = "CROC_RELAY", global = true)]
-    relay: String,
+    /// 中继地址。默认 `croc.schollz.com:9009`。
+    ///
+    /// 这里是 `Option` 而不是带默认值的 `String`：只有分清"用户给了"与"没给"，才能让
+    /// `--remember` 存下来的值只在**没给**时生效。
+    #[arg(long, env = "CROC_RELAY", global = true)]
+    relay: Option<String>,
 
     /// 中继密码。
     #[arg(long, default_value = DEFAULT_PASSPHRASE, env = "CROC_PASS", global = true)]
@@ -219,6 +225,53 @@ struct Global {
     /// 地址可以带 `http://` 前缀。其余同 [`Self::socks5`]。
     #[arg(long, global = true)]
     connect: Option<String>,
+
+    /// 忽略管道进来的 stdin。
+    ///
+    /// 默认情况下，stdin 是管道/重定向（而不是终端）时，它的内容会被当成一个文件发出去
+    /// ——Go 的 `copyStdinContext` 就是这么做的。脚本里用管道喂别的数据时用这个关掉。
+    #[arg(long)]
+    ignore_stdin: bool,
+
+    /// IPv6 中继地址。默认 `croc6.schollz.com:9009`。
+    ///
+    /// 与 `--relay` 一起按 Happy Eyeballs 试：谁先握手通用谁，所以 IPv6 可用时不必白等
+    /// IPv4。两者都连不上才算失败。
+    #[arg(long, env = "CROC_RELAY6", global = true)]
+    relay6: Option<String>,
+
+    /// 已知的对方地址（如 `10.0.0.1:9009`、`[::1]:9009`）。
+    ///
+    /// 给了就**只用它**：接收方跳过局域网发现直接连过去，也不再试 `--relay`。
+    #[arg(long, default_value = "", global = true)]
+    ip: String,
+
+    /// 接收方收完之后，把文件内容打到标准输出。
+    ///
+    /// 文件**照常落盘**（Go 的 `croc.go:2339` 也是收了再读出来打），所以这个开关是
+    /// "顺便打一份"，不是"不写盘"。文本传输会自动开它。
+    #[arg(long, global = true)]
+    stdout: bool,
+
+    /// 把这次用的 `--relay` / `--relay6` 记下来，下次不用再打。
+    ///
+    /// 存在 `<config>/croc/send.json`（与 Go 同一个位置）。只记这两项——别的开关要么本
+    /// 来就有合理默认，要么每次该重新决定。
+    #[arg(long, global = true)]
+    remember: bool,
+
+    /// 传和收都先问一句。
+    ///
+    /// 发送方会把"要确认"随清单发给对端，所以**对方的 `--yes` 也压不住它**；发送前还会
+    /// 打印本机 ID，好让对方核对问的是谁。
+    #[arg(long, global = true)]
+    ask: bool,
+
+    /// `--local` 发现用的组播组地址。
+    ///
+    /// 端口固定是 9999（Go 用的 `peerdiscovery` 默认值，没有对应开关）。
+    #[arg(long, default_value = "239.255.255.250", global = true)]
+    multicast: std::net::Ipv4Addr,
 
     /// 禁用多端口复用（只用一条数据流）。
     ///
@@ -294,6 +347,11 @@ pub fn parse() -> Result<Parsed, ExitCode> {
     };
     let events = sink(&cli.global);
     let machine_id = machine_id();
+    // `--remember` 存下来的地址只在**本次没给**时生效（Go 的
+    // `applyRememberedSendOptions`，`cli.go:528`）。
+    let remembered = crate::config::Remembered::load();
+    let relay = cli.global.relay.clone().or(remembered.relay).unwrap_or_else(|| DEFAULT_RELAY.to_owned());
+    let relay6 = cli.global.relay6.clone().or(remembered.relay6).unwrap_or_else(|| DEFAULT_RELAY6.to_owned());
 
     match cli.command {
         Some(Command::Relay(args)) => {
@@ -302,10 +360,6 @@ pub fn parse() -> Result<Parsed, ExitCode> {
         }
         Some(Command::Send(args)) => {
             let mut paths = args.paths;
-            if let Err(reason) = validate_sources(&paths, args.text.as_deref()) {
-                eprintln!("{reason}");
-                return Err(ExitCode::FAILURE);
-            }
             if let Err(reason) = validate_hash(&args.hash) {
                 eprintln!("{reason}");
                 return Err(ExitCode::FAILURE);
@@ -321,6 +375,29 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     }
                 }
             }
+            if !cli.global.ignore_stdin {
+                // 管道进来的内容也算一个待发文件（Go 的默认行为）。
+                match write_stdin_artifact() {
+                    Ok(Some(path)) => paths.push(path),
+                    Ok(None) => {}
+                    Err(error) => {
+                        eprintln!("croc-rs: {error}");
+                        return Err(ExitCode::FAILURE);
+                    }
+                }
+            }
+            if let Err(reason) = validate_sources(&paths, None) {
+                eprintln!("{reason}");
+                return Err(ExitCode::FAILURE);
+            }
+            if cli.global.remember {
+                // 只记"用户确实改过"的：与 Go 的 `non-default: ` 前缀一个意思。
+                crate::config::Remembered {
+                    relay: (relay != DEFAULT_RELAY).then(|| relay.clone()),
+                    relay6: (relay6 != DEFAULT_RELAY6).then(|| relay6.clone()),
+                }
+                .save(cli.global.quiet);
+            }
             let (code, components) = match generate_code(args.code.as_deref()) {
                 Ok(pair) => pair,
                 Err(error) => {
@@ -333,7 +410,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                 action: Action::Send {
                     qrcode: args.qrcode,
                     request: Box::new(SendRequest {
-                        relay: cli.global.relay,
+                        relay: relay.clone(),
                         relay_password: cli.global.pass,
                         components,
                         code,
@@ -348,6 +425,10 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                             cli.global.socks5.as_deref(),
                             cli.global.connect.as_deref(),
                         ),
+                        multicast: cli.global.multicast,
+                        relay6: relay6.clone(),
+                        ip: cli.global.ip.clone(),
+                        ask: cli.global.ask,
                         no_compress: cli.global.no_compress,
                         local: cli.global.local,
                         relay_base_port: Some(args.port),
@@ -372,15 +453,17 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     return Err(ExitCode::FAILURE);
                 }
             };
-            let confirm = if cli.global.yes {
-                None
-            } else {
-                Some(Arc::new(prompt_confirm) as Arc<dyn Fn(&croc_protocol::SenderInfo) -> bool + Send + Sync>)
-            };
+            // 回调**总是**注册：对端的 `Ask` 要到清单到达才知道，而它压得住本端的
+            // `--yes`（Go 的 `!NoPrompt || Ask || senderInfo.Ask`）。
+            let (yes, ask) = (cli.global.yes, cli.global.ask);
+            let prompt_machine_id = machine_id.clone();
+            let confirm = Some(Arc::new(move |info: &croc_protocol::SenderInfo| {
+                prompt_confirm(info, yes, ask, &prompt_machine_id)
+            }) as Arc<dyn Fn(&croc_protocol::SenderInfo) -> bool + Send + Sync>);
             Ok(Parsed {
                 debug: cli.global.debug,
                 action: Action::Receive(Box::new(ReceiveRequest {
-                    relay: cli.global.relay,
+                    relay: relay.clone(),
                     relay_password: cli.global.pass,
                     components,
                     curve,
@@ -392,6 +475,10 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                         cli.global.socks5.as_deref(),
                         cli.global.connect.as_deref(),
                     ),
+                    multicast: cli.global.multicast,
+                    relay6: relay6.clone(),
+                    ip: cli.global.ip.clone(),
+                    stdout: cli.global.stdout,
                     no_multi: cli.global.no_multi,
                     machine_id,
                     confirm,
@@ -488,7 +575,7 @@ fn validate_transport(local: bool, transport: Transport) -> Result<(), &'static 
 /// `send` 至少要有个东西可发：一个路径，或者一段 `--text`。
 fn validate_sources(paths: &[PathBuf], text: Option<&str>) -> Result<(), &'static str> {
     if paths.is_empty() && text.is_none() {
-        return Err("croc-rs: send 需要至少一个路径，或者一段 --text 文本");
+        return Err("croc-rs: send 需要至少一个路径、一段 --text 文本，或者管道进来的 stdin");
     }
     Ok(())
 }
@@ -519,14 +606,44 @@ fn generate_code(requested: Option<&str>) -> Result<(String, Components), codeph
 
 /// 把 `--text` 的内容落到临时文件。
 fn write_text_artifact(text: &str) -> Result<PathBuf, String> {
+    let path = temp_artifact_path();
+    std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(path)
+}
+
+/// 把管道进来的 stdin 落到临时文件。
+///
+/// 只在 stdin **不是终端**时才读——交互式终端下读它会把 `croc-rs send a.txt` 卡在等
+/// 用户敲 EOF 上。空的 stdin 直接跳过：发一个零字节文件没有意义（Go 会照发）。
+///
+/// # Errors
+///
+/// stdin 读不动，或者临时文件写不下去。
+fn write_stdin_artifact() -> Result<Option<PathBuf>, String> {
+    use std::io::{IsTerminal as _, Read as _};
+
+    if std::io::stdin().is_terminal() {
+        return Ok(None);
+    }
+    let mut buffer = Vec::new();
+    std::io::stdin().read_to_end(&mut buffer).map_err(|error| format!("reading stdin: {error}"))?;
+    if buffer.is_empty() {
+        return Ok(None);
+    }
+    let path = temp_artifact_path();
+    std::fs::write(&path, &buffer).map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(Some(path))
+}
+
+/// 一个 `croc-stdin-<纳秒时间戳>` 的临时文件路径。
+///
+/// 名字前缀是协议的一部分：接收方靠它识别"这是 `--text` / 管道来的东西"。
+fn temp_artifact_path() -> PathBuf {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let mut path = std::env::temp_dir();
-    path.push(format!("croc-stdin-{stamp}"));
-    std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
-    Ok(path)
+    std::env::temp_dir().join(format!("croc-stdin-{stamp}"))
 }
 
 /// 打印"让对方执行什么"。
@@ -543,6 +660,10 @@ fn print_send_instructions(request: &SendRequest, qrcode: bool) {
     } else {
         println!("  croc-rs --relay {} {}", request.relay, request.code);
     }
+    // `--ask`：把自己的 ID 打出来，对方那边会问"来的是不是这台"。
+    if request.ask {
+        println!("本机 ID：{}", request.machine_id);
+    }
     // web 接收页。链接只由口令码拼成，跟中继是谁无关。
     let url = crate::qr::web_receive_url(&request.code);
     println!("或访问：{url}");
@@ -555,9 +676,18 @@ fn print_send_instructions(request: &SendRequest, qrcode: bool) {
 }
 
 /// 交互式确认。
-fn prompt_confirm(info: &croc_protocol::SenderInfo) -> bool {
+fn prompt_confirm(info: &croc_protocol::SenderInfo, yes: bool, ask: bool, local_machine_id: &str) -> bool {
     use std::io::{BufRead as _, Write as _};
+    // 谁都没要求问就直接收：本端 `--yes`、也没给 `--ask`、对端也没要求。
+    if yes && !ask && !info.ask {
+        return true;
+    }
     let total: i64 = info.files_to_transfer.iter().map(|entry| entry.size).sum();
+    // 双方都要求核对身份时，把自己是谁也打出来——不然两个人对着同一个提示都不知道
+    // 问的是哪一台。
+    if ask || info.ask {
+        eprintln!("本机 ID：{local_machine_id}");
+    }
     eprint!(
         "接收来自 {} 的 {} 个文件（{} 字节）？[Y/n] ",
         if info.machine_id.is_empty() { "未知机器" } else { &info.machine_id },

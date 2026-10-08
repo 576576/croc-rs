@@ -29,6 +29,12 @@ use crate::proxy::Proxy;
 /// 连接超时。
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// 默认中继端口。Go 的 `models.DEFAULT_PORT`——中继地址少了端口时补它。
+pub const DEFAULT_RELAY_PORT: u16 = 9009;
+
+/// 多地址拨号时每个地址之间错开多久。Go 的 `relayHappyEyeballsDelay`（`relay_dial.go:19`）。
+const HAPPY_EYEBALLS_STAGGER: Duration = Duration::from_millis(50);
+
 /// 一次握手最多收几帧。正常只要 2 帧（B 与 banner）+ 1 帧准入，给足余量防死循环。
 const MAX_HANDSHAKE_FRAMES: usize = 32;
 
@@ -112,6 +118,98 @@ pub async fn connect(
         }
     }
     Err(EngineError::Relay("the relay handshake did not converge".to_owned()))
+}
+
+/// 实际要试的中继地址。
+///
+/// `--ip` 给了就**只用它**——Go 在 `--ip` 下会把默认中继清空（`croc.go:2023`），那是
+/// "我已经知道对方在哪"的意思。否则先 IPv6 后 IPv4。
+#[must_use]
+pub fn candidate_addresses(ip: &str, relay: &str, relay6: &str) -> Vec<String> {
+    let ip = ip.trim();
+    if !ip.is_empty() {
+        return vec![ip.to_owned()];
+    }
+    vec![relay6.to_owned(), relay.to_owned()]
+}
+
+/// 并发连中继：地址按顺序、每个错开 [`HAPPY_EYEBALLS_STAGGER`] 起，谁先握手通用谁。
+///
+/// Go 的 `raceRelayTCP`（`src/croc/relay_dial.go:43`）是同一套：每个地址 5 秒超时、
+/// 错开 50 毫秒。IPv6 可用时不必白等 IPv4，IPv6 不可用时也只多等 50 毫秒。
+///
+/// 返回**实际连上的地址**：数据面必须用同一个，否则会去连另一个地址上的中继——那边的
+/// 房间是另一套，等于连了个不相干的服务器。
+///
+/// # Errors
+///
+/// 所有地址都连不上时返回**最后一个**错误。
+pub async fn connect_any(
+    addresses: &[String],
+    password: &str,
+    room: &RoomName,
+    proxy: &Proxy,
+) -> Result<(RelayLink, String), EngineError> {
+    let unique = normalize_addresses(addresses);
+    let Some(first) = unique.first().cloned() else {
+        return Err(EngineError::BadRelayAddress(String::new()));
+    };
+    // 只有一个地址时不起任务：直接连，省一次 spawn 与几次 move。
+    if unique.len() == 1 {
+        let link = connect(&first, password, room, proxy).await?;
+        return Ok((link, first));
+    }
+
+    let mut pending = tokio::task::JoinSet::new();
+    for (index, address) in unique.into_iter().enumerate() {
+        let password = password.to_owned();
+        let room = room.clone();
+        let proxy = proxy.clone();
+        pending.spawn(async move {
+            if let Some(delay) = HAPPY_EYEBALLS_STAGGER.checked_mul(u32::try_from(index).unwrap_or(0))
+                && !delay.is_zero()
+            {
+                tokio::time::sleep(delay).await;
+            }
+            let result = connect(&address, &password, &room, &proxy).await;
+            (address, result)
+        });
+    }
+
+    let mut last_error = None;
+    while let Some(joined) = pending.join_next().await {
+        match joined {
+            Ok((address, Ok(link))) => {
+                pending.abort_all();
+                return Ok((link, address));
+            }
+            Ok((_, Err(error))) => last_error = Some(error),
+            // 任务被取消或 panic：不算错误，继续等其余地址。
+            Err(_) => {}
+        }
+    }
+    Err(last_error.unwrap_or_else(|| EngineError::Relay("no relay address answered".to_owned())))
+}
+
+/// 去掉空串、补默认端口、去重（保持顺序）。Go 的 `normalizeRelayAddress`（`croc.go:606`）。
+fn normalize_addresses(addresses: &[String]) -> Vec<String> {
+    let mut unique: Vec<String> = Vec::new();
+    for address in addresses {
+        let text = normalize_address(address);
+        if text.is_empty() || unique.contains(&text) {
+            continue;
+        }
+        unique.push(text);
+    }
+    unique
+}
+
+fn normalize_address(address: &str) -> String {
+    let text = address.trim();
+    if text.is_empty() {
+        return String::new();
+    }
+    if split_host_port(text).is_ok() { text.to_owned() } else { format!("{text}:{DEFAULT_RELAY_PORT}") }
 }
 
 /// 连一条数据端口。房间名是 `{room}-{index}`。

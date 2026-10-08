@@ -29,7 +29,9 @@ use tracing::warn;
 
 use crate::error::EngineError;
 
-/// 组播组（IPv4）。Go 的 `--multicast` 默认值（`src/cli/cli.go:209`）。
+/// 组播组的默认值，对应 Go `--multicast` 的默认（`src/cli/cli.go:209`）。
+///
+/// 可以用 `--multicast` 改掉，所以它只是默认值而不是唯一可选值。
 pub const MULTICAST_GROUP_V4: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 
 /// 组播端口。Go 用的 `peerdiscovery` 默认值是 9999。
@@ -209,7 +211,7 @@ pub async fn start_local_relay(
 /// 把自己的控制端口喊出去，直到 `stop` 被取消或超过 [`BEACON_LIMIT`]。
 ///
 /// 这跑在后台任务里，调用方不用 await 它。
-pub fn advertise(control_port: u16, stop: CancellationToken) {
+pub fn advertise(control_port: u16, group: Ipv4Addr, stop: CancellationToken) {
     tokio::spawn(async move {
         let payload = format!("{BEACON_PREFIX}{control_port}").into_bytes();
         let socket = match beacon_socket() {
@@ -226,7 +228,7 @@ pub fn advertise(control_port: u16, stop: CancellationToken) {
             }
             // 组播发出去失败（网卡没起来、权限不够）不该让传输失败——它只是"可能
             // 找不到对端"，而"找不到"和"发不出去"在用户看来是同一件事，等超时即可。
-            if let Err(error) = socket.send_to(&payload, (MULTICAST_GROUP_V4, MULTICAST_PORT)) {
+            if let Err(error) = socket.send_to(&payload, (group, MULTICAST_PORT)) {
                 warn!(%error, "cannot send the local beacon");
                 return;
             }
@@ -247,8 +249,8 @@ pub fn advertise(control_port: u16, stop: CancellationToken) {
 ///
 /// 组播套接字开不起来时返回错误——这时 `--local` 确实做不到，早失败比干等好。
 /// 单纯"没找到"则返回空 `Vec`。
-pub async fn discover(timeout: Duration) -> Result<Vec<Discovered>, EngineError> {
-    let socket = listen_socket()?;
+pub async fn discover(timeout: Duration, group: Ipv4Addr) -> Result<Vec<Discovered>, EngineError> {
+    let socket = listen_socket(group)?;
     // 非阻塞：接收循环要能同时发 `ok` 并在超时后收工。
     socket.set_nonblocking(true).map_err(|error| EngineError::Relay(format!("cannot set nonblocking: {error}")))?;
 
@@ -279,7 +281,7 @@ pub async fn discover(timeout: Duration) -> Result<Vec<Discovered>, EngineError>
 
         if now >= next_probe {
             // 让对端知道这儿有人在找它；失败不影响"听"这件事。
-            let _ = socket.send_to(PROBE_PAYLOAD.as_bytes(), (MULTICAST_GROUP_V4, MULTICAST_PORT));
+            let _ = socket.send_to(PROBE_PAYLOAD.as_bytes(), (group, MULTICAST_PORT));
             next_probe = now + BEACON_INTERVAL;
         }
 
@@ -301,7 +303,7 @@ fn beacon_socket() -> Result<UdpSocket, EngineError> {
 /// 建一个**收组播**的套接字。
 ///
 /// 必须绑到 [`MULTICAST_PORT`]：组播只投递到加入了该组、且监听着该端口的套接字。
-fn listen_socket() -> Result<UdpSocket, EngineError> {
+fn listen_socket(group: Ipv4Addr) -> Result<UdpSocket, EngineError> {
     let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))
         .map_err(|error| EngineError::Relay(format!("cannot open a multicast socket: {error}")))?;
     // `SO_REUSEADDR`：Go 的 peerdiscovery 在**发送方**也占着 9999，同一台机器上跑互通
@@ -312,7 +314,7 @@ fn listen_socket() -> Result<UdpSocket, EngineError> {
         .bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, MULTICAST_PORT)).into())
         .map_err(|error| EngineError::Relay(format!("cannot bind the multicast port {MULTICAST_PORT}: {error}")))?;
     socket
-        .join_multicast_v4(&MULTICAST_GROUP_V4, &Ipv4Addr::UNSPECIFIED)
+        .join_multicast_v4(&group, &Ipv4Addr::UNSPECIFIED)
         .map_err(|error| EngineError::Relay(format!("cannot join the multicast group: {error}")))?;
     socket.set_nonblocking(true).map_err(|error| EngineError::Relay(error.to_string()))?;
     Ok(socket.into())
@@ -337,12 +339,13 @@ pub async fn announce(
     password: &str,
     streams: usize,
     base_port: Option<u16>,
+    group: Ipv4Addr,
     stop: CancellationToken,
 ) -> Result<LocalRelay, EngineError> {
     let mut relay = start_local_relay(password, streams, base_port).await?;
     // 广播同时受两件事约束：用户取消（`stop`），以及本次传输结束（`relay` 被 drop）。
     relay.beacon = stop.child_token();
-    advertise(relay.control_port(), relay.beacon.clone());
+    advertise(relay.control_port(), group, relay.beacon.clone());
     Ok(relay)
 }
 
@@ -351,8 +354,8 @@ pub async fn announce(
 /// # Errors
 ///
 /// 组播不可用，或者超时也没找到任何发送方。
-pub async fn find_peer(timeout: Duration) -> Result<String, EngineError> {
-    let found = discover(timeout).await?;
+pub async fn find_peer(timeout: Duration, group: Ipv4Addr) -> Result<String, EngineError> {
+    let found = discover(timeout, group).await?;
     let peer = found
         .into_iter()
         // 组播的源地址可能是别的网卡（多网卡机器），但局域网只有一个网段时无所谓；

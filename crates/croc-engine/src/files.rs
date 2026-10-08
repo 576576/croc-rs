@@ -424,8 +424,11 @@ pub fn sender_info(
     empty_folders: Vec<FileInfo>,
     machine_id: &str,
     algorithm: &str,
+    ask: bool,
 ) -> SenderInfo {
     SenderInfo {
+        // `--ask`：让接收方那边**即便给了 `--yes` 也要问一句**（Go 的 `senderInfo.Ask`）。
+        ask,
         total_number_folders: folder_count(files, &empty_folders),
         files_to_transfer: files.iter().map(|entry| entry.info.clone()).collect(),
         empty_folders_to_transfer: empty_folders,
@@ -1011,7 +1014,7 @@ mod tests {
         let file = dir.join("x.bin");
         fs::write(&file, b"x").expect("写");
         let (files, empty) = collect(&[file], "xxhash", &CollectOptions::default()).expect("收集");
-        let info = sender_info(&files, empty, "machine", "xxhash");
+        let info = sender_info(&files, empty, "machine", "xxhash", false);
         assert_eq!(info.machine_id, "machine");
         assert_eq!(info.hash_algorithm, croc_protocol::payload::HashAlgorithm::Xxhash);
         assert_eq!(info.files_to_transfer.len(), 1);
@@ -1027,7 +1030,7 @@ mod tests {
             ("imohash", croc_protocol::payload::HashAlgorithm::Imohash),
             ("highway", croc_protocol::payload::HashAlgorithm::Highway),
         ] {
-            let info = sender_info(&[], Vec::new(), "machine", name);
+            let info = sender_info(&[], Vec::new(), "machine", name, false);
             assert_eq!(info.hash_algorithm, expected, "{name} 应原样进清单");
         }
     }

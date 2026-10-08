@@ -28,6 +28,8 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror.workspace = true
 qrcode.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

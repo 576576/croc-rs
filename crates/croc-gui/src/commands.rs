@@ -24,6 +24,7 @@ use crate::state::{TransferId, TransferRegistry};
 
 /// 默认中继地址。
 const DEFAULT_RELAY: &str = "croc.schollz.com:9009";
+const DEFAULT_RELAY6: &str = "croc6.schollz.com:9009";
 /// 默认中继密码。
 const DEFAULT_PASSPHRASE: &str = "pass123";
 
@@ -163,6 +164,10 @@ pub async fn send(
         zip: false,
         // GUI 还没有代理设置，先直连。
         proxy: croc_engine::proxy::Proxy::default(),
+        multicast: croc_engine::local::MULTICAST_GROUP_V4,
+        relay6: DEFAULT_RELAY6.to_owned(),
+        ip: String::new(),
+        ask: false,
         hash_algorithm: "xxhash".to_owned(),
         no_compress: args.no_compress,
         // GUI 还没有 `--local` 的开关：默认走中继。下面三个只影响 `--local` 下的内建
@@ -211,6 +216,10 @@ pub async fn receive(
         // GUI 还没有 `--local` 的开关：默认走中继。
         local: false,
         proxy: croc_engine::proxy::Proxy::default(),
+        multicast: croc_engine::local::MULTICAST_GROUP_V4,
+        relay6: DEFAULT_RELAY6.to_owned(),
+        ip: String::new(),
+        stdout: false,
         no_multi: false,
         machine_id: machine_id(),
         // GUI 里"收不收"由前端的确认弹窗决定，这里给一个恒真的回调；

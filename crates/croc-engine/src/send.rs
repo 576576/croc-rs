@@ -47,6 +47,14 @@ pub struct SendRequest {
     pub zip: bool,
     /// 出站代理（`--socks5` / `--connect`）。
     pub proxy: crate::proxy::Proxy,
+    /// `--multicast`：`--local` 发现用的组播组地址。
+    pub multicast: std::net::Ipv4Addr,
+    /// `--relay6`：IPv6 中继地址（与 `--relay` 一起做 Happy Eyeballs）。
+    pub relay6: String,
+    /// `--ip`：已知的对方地址。给了就只用它。
+    pub ip: String,
+    /// `--ask`：让接收方也确认一次（随清单发过去）。
+    pub ask: bool,
     /// 哈希算法：`xxhash` / `md5` / `imohash` / `highway`。
     pub hash_algorithm: String,
     /// `--local`：只走局域网——本端起一个内建中继，**不连公网中继**。
@@ -119,13 +127,23 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     let local_streams = if request.no_multi { 1 } else { request.transfers.max(1) };
     let local_relay = if request.local {
         Some(
-            local::announce(&request.relay_password, local_streams, request.relay_base_port, cancel.child_token())
-                .await?,
+            local::announce(
+                &request.relay_password,
+                local_streams,
+                request.relay_base_port,
+                request.multicast,
+                cancel.child_token(),
+            )
+            .await?,
         )
     } else {
         None
     };
-    let relay_address = local_relay.as_ref().map_or_else(|| request.relay.clone(), local::LocalRelay::loopback_address);
+    // `--local` 时中继是本端的回环；否则按 `--ip` / `--relay6` / `--relay` 挑。
+    let relay_addresses = match &local_relay {
+        Some(relay) => vec![relay.loopback_address()],
+        None => relay::candidate_addresses(&request.ip, &request.relay, &request.relay6),
+    };
 
     // 算哈希与连中继**并行**（Go 把前者丢进后台 goroutine，`croc.go:1792`）。
     // 清单要带哈希，所以得读一遍全部文件；大目录在 Windows 上十几秒，串在连接之前
@@ -146,8 +164,8 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     // 连中继的 future 就没机会推进——并行也就名存实亡。
     let hashing = tokio::task::spawn_blocking(move || files::collect(&paths, &algorithm, &options));
     let connecting =
-        relay::connect(&relay_address, &request.relay_password, &request.components.room_name, &request.proxy);
-    let (manifest, mut link) = tokio::try_join!(
+        relay::connect_any(&relay_addresses, &request.relay_password, &request.components.room_name, &request.proxy);
+    let (manifest, (mut link, relay_address)) = tokio::try_join!(
         async { hashing.await.map_err(|error| EngineError::Config(format!("the hashing task {error}")))? },
         connecting,
     )?;
@@ -162,7 +180,7 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         entry.info.is_compressed = compress && entry.info.size > 0;
     }
     let total_bytes: u64 = entries.iter().filter_map(|entry| u64::try_from(entry.info.size).ok()).sum();
-    let info = files::sender_info(&entries, empty_folders, &request.machine_id, &request.hash_algorithm);
+    let info = files::sender_info(&entries, empty_folders, &request.machine_id, &request.hash_algorithm, request.ask);
 
     let ports = link.data_ports();
     if ports.is_empty() {
