@@ -20,6 +20,7 @@ go run .                # 默认写到 ../../../croc-rs/tests/golden
 | `curves.json` | `crates/croc-siec/tests/golden.rs` |
 | `pake.json` | `crates/croc-pake/tests/golden.rs` |
 | `pakekey.json` | `crates/croc-pakekey/tests/golden.rs` |
+| `store.json` | `crates/croc-store/tests/golden.rs` |
 
 生成的文件应当提交进仓库——它们是"Rust 版与 Go 版在某个时间点逐字节一致"的证据，
 也是回归测试的基线。重新生成时请一并更新

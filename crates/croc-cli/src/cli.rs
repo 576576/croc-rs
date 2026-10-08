@@ -87,6 +87,30 @@ enum Command {
     Send(SendArgs),
     /// 启动一个自建中继。
     Relay(crate::relay_cmd::RelayArgs),
+    /// 把文件存到暂存服务，拿一个取件链接。
+    Store(StoreArgs),
+}
+
+/// `croc store`：把文件存到暂存服务。
+///
+/// 与 `send --store` 是同一件事，两处各有一套参数是为了和 Go 的命令行对上。
+#[derive(Debug, clap::Args)]
+struct StoreArgs {
+    /// 要上传的文件。暂存模式只接受普通文件，不递归目录。
+    #[arg(value_name = "PATH")]
+    paths: Vec<PathBuf>,
+
+    /// 允许的验证下载次数。
+    #[arg(long, default_value_t = 1, env = "CROC_STORE_DOWNLOADS")]
+    downloads: i64,
+
+    /// 存储时长（`90m` / `12h` / `3d` / `2w`）。
+    #[arg(long, default_value = "1d")]
+    expiration: String,
+
+    /// 暂存服务的来源。
+    #[arg(long, default_value = crate::store::DEFAULT_STORE_URL, env = "CROC_STORE_URL")]
+    url: String,
 }
 
 #[derive(Debug, clap::Args)]
@@ -163,6 +187,22 @@ struct SendArgs {
     /// 上限 8 是数据面的硬上限（`croc_engine::data::MAX_STREAMS`）：再多路也没人听。
     #[arg(long, default_value = "4", value_parser = clap::value_parser!(u16).range(1..=8))]
     transfers: u16,
+
+    /// 把文件存到暂存服务（与 `croc store` 同一套参数）。
+    #[arg(long)]
+    store: bool,
+
+    /// `--store` 时的下载次数上限。
+    #[arg(long, default_value_t = 1, env = "CROC_STORE_DOWNLOADS")]
+    store_downloads: i64,
+
+    /// `--store` 时的存储时长。
+    #[arg(long, default_value = "1d")]
+    store_expiration: String,
+
+    /// `--store` 时的服务来源。
+    #[arg(long, default_value = crate::store::DEFAULT_STORE_URL, env = "CROC_STORE_URL")]
+    store_url: String,
 }
 
 #[derive(Debug, clap::Args)]
@@ -327,6 +367,12 @@ struct Global {
     #[arg(long, global = true)]
     quiet: bool,
 
+    /// 用本机保存的撤销凭据删掉一次暂存传输。
+    ///
+    /// 参数是传输 ID（上传成功时会打印）。凭据存在 `<config>/croc/store-receipts.json`。
+    #[arg(long, value_name = "TRANSFER-ID", global = true)]
+    revoke: Option<String>,
+
     /// 打开调试日志（`RUST_LOG` 优先）。
     #[arg(long, global = true)]
     debug: bool,
@@ -364,6 +410,12 @@ pub enum Action {
     Receive(Box<ReceiveRequest>),
     /// 自建中继。
     Relay(Box<RelayRequest>),
+    /// 存到暂存服务。
+    Store(Box<crate::store::StoreRequest>),
+    /// 接收一次暂存传输。
+    ReceiveStored(Box<crate::store::StoreReceiveRequest>),
+    /// 撤销一次暂存传输。
+    Revoke(String),
     /// 切换 classic 模式（`--classic`）。
     ///
     /// 它是**动作**不是开关：Go 把它放在 `Before` 钩子里，处理完就 `os.Exit(0)`，
@@ -404,6 +456,18 @@ pub fn parse() -> Result<Parsed, ExitCode> {
     if cli.global.classic {
         return Ok(Parsed { debug: cli.global.debug, action: Action::ToggleClassic });
     }
+    // `--revoke` 也是"做完就完"的动作：Go 把它放在 `Before` 里（`src/cli/cli.go:236`）。
+    if let Some(id) = cli.global.revoke.clone() {
+        return Ok(Parsed { debug: cli.global.debug, action: Action::Revoke(id) });
+    }
+    // 取件凭证走环境变量是**推荐**路径：命令行上的链接会进 shell 历史与进程表。
+    if cli.command.is_none()
+        && let Ok(token) = std::env::var("CROC_STORE_TOKEN")
+        && !token.trim().is_empty()
+    {
+        let request = stored_request(&cli.global, token.trim().to_owned());
+        return Ok(Parsed { debug: cli.global.debug, action: Action::ReceiveStored(Box::new(request)) });
+    }
     // 这次读哪一侧的配置：发送读 `send.json`、接收读 `receive.json`（Go 就是两份）。
     // 带了 `--remember` 就不读旧配置：这一趟是要**覆盖**它（Go 的 `!c.Bool("remember")`）。
     let side = if cli.command.is_none() { Side::Receive } else { Side::Send };
@@ -443,11 +507,62 @@ pub fn parse() -> Result<Parsed, ExitCode> {
     let classic = crate::config::classic_enabled();
 
     match cli.command {
+        Some(Command::Store(args)) => {
+            let paths = match crate::store::regular_files(&args.paths) {
+                Ok(paths) => paths,
+                Err(reason) => {
+                    eprintln!("croc-rs: {reason}");
+                    return Err(ExitCode::FAILURE);
+                }
+            };
+            if let Err(reason) = crate::store::validate_downloads(args.downloads) {
+                eprintln!("croc-rs: {reason}");
+                return Err(ExitCode::FAILURE);
+            }
+            let request =
+                stored_upload(&cli.global, clipboard, paths, args.downloads, args.expiration, args.url, false);
+            Ok(Parsed { debug: cli.global.debug, action: Action::Store(Box::new(request)) })
+        }
         Some(Command::Relay(args)) => {
             let password = cli.global.pass.clone();
             Ok(Parsed { debug: cli.global.debug, action: Action::Relay(Box::new(RelayRequest { args, password })) })
         }
         Some(Command::Send(args)) => {
+            // `--store` 走的是另一条路：文件先加密上传到一个第三方，不经过中继。
+            if args.store {
+                if let Err(reason) = crate::store::validate_store_sources(
+                    args.text.is_some(),
+                    args.zip,
+                    args.git,
+                    &args.exclude,
+                    &args.exclude_file,
+                    cli.global.ignore_stdin,
+                ) {
+                    eprintln!("croc-rs: {reason}");
+                    return Err(ExitCode::FAILURE);
+                }
+                let paths = match crate::store::regular_files(&args.paths) {
+                    Ok(paths) => paths,
+                    Err(reason) => {
+                        eprintln!("croc-rs: {reason}");
+                        return Err(ExitCode::FAILURE);
+                    }
+                };
+                if let Err(reason) = crate::store::validate_downloads(args.store_downloads) {
+                    eprintln!("croc-rs: {reason}");
+                    return Err(ExitCode::FAILURE);
+                }
+                let request = stored_upload(
+                    &cli.global,
+                    clipboard,
+                    paths,
+                    args.store_downloads,
+                    args.store_expiration,
+                    args.store_url,
+                    args.qrcode,
+                );
+                return Ok(Parsed { debug: cli.global.debug, action: Action::Store(Box::new(request)) });
+            }
             // 命令行给的优先，`--remember` 存下来的只填空位。
             let options = merge_send(&cli.global, &args, &given, &remembered);
             // 先算出来：下面 `args.paths` 会被移走，之后就借不到整个 `args` 了。
@@ -575,6 +690,17 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     return Err(ExitCode::FAILURE);
                 }
             };
+            // 取件链接/令牌不是口令码：它自带解密密钥，走的也是另一条路。
+            if croc_store::share::is_stored_value(&code) {
+                // 非 Windows 上命令行里的链接会被进程表看见，而它**就是密钥本身**。
+                // classic 模式开着时按用户意愿放行（与命令行口令码同一套判断）。
+                if !cfg!(windows) && given.top_on_cli("code") && !classic {
+                    eprintln!("{UNIX_STORE_LINK_REFUSED}");
+                    return Err(ExitCode::FAILURE);
+                }
+                let request = stored_request(&cli.global, code);
+                return Ok(Parsed { debug: cli.global.debug, action: Action::ReceiveStored(Box::new(request)) });
+            }
             let components = match codephrase::parse(&code) {
                 Ok(components) => components,
                 Err(error) => {
@@ -619,6 +745,51 @@ pub fn parse() -> Result<Parsed, ExitCode> {
     }
 }
 
+/// 非 Windows 上拒绝把暂存链接当命令行参数时打印的东西。
+///
+/// 链接里的 fragment **就是解密密钥**，进程表对同机其他用户可见。
+const UNIX_STORE_LINK_REFUSED: &str = "For security, stored-transfer links are not accepted as command-line
+arguments on UNIX systems because their decryption key would be visible in
+the process list.
+
+Run croc-rs with no argument and paste the link at the prompt, or use:
+
+  CROC_STORE_TOKEN='croc-store-v1....' croc-rs";
+
+/// 组装一个暂存上传请求。
+fn stored_upload(
+    global: &Global,
+    clipboard: Clipboard,
+    paths: Vec<std::path::PathBuf>,
+    downloads: i64,
+    expiration: String,
+    url: String,
+    qrcode: bool,
+) -> crate::store::StoreRequest {
+    crate::store::StoreRequest {
+        paths,
+        downloads,
+        expiration,
+        url,
+        quiet: global.quiet,
+        clipboard,
+        qrcode,
+        proxy: croc_store::proxy::Proxy::from_flags(global.socks5.as_deref(), global.connect.as_deref()),
+    }
+}
+
+/// 组装一个暂存接收请求。
+fn stored_request(global: &Global, token: String) -> crate::store::StoreReceiveRequest {
+    crate::store::StoreReceiveRequest {
+        token,
+        out: global.out.clone(),
+        overwrite: global.overwrite,
+        yes: global.yes,
+        quiet: global.quiet,
+        proxy: croc_store::proxy::Proxy::from_flags(global.socks5.as_deref(), global.connect.as_deref()),
+    }
+}
+
 /// 跑起来。
 pub async fn run(parsed: Parsed) -> ExitCode {
     let cancel = CancellationToken::new();
@@ -628,6 +799,9 @@ pub async fn run(parsed: Parsed) -> ExitCode {
         // 人机交互动作，与取消令牌无关。
         Action::ToggleClassic => toggle_classic(),
         Action::Relay(request) => crate::relay_cmd::run(request.args, &request.password, cancel).await,
+        Action::Store(request) => crate::store::send(*request).await,
+        Action::ReceiveStored(request) => crate::store::receive(*request).await,
+        Action::Revoke(id) => crate::store::revoke(&id).await,
         Action::Send { request, qrcode, clipboard } => {
             print_send_instructions(&request, qrcode, clipboard);
             match croc_engine::send(*request, cancel).await {

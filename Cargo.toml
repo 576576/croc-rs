@@ -8,6 +8,7 @@ members = [
     "crates/croc-net",
     "crates/croc-core",
     "crates/croc-relay",
+    "crates/croc-store",
     "crates/croc-engine",
     "crates/croc-cli",
     "crates/croc-gui",
@@ -133,6 +134,23 @@ zip = "2"
 # `--qrcode`：只用它的编码器，渲染是自己拼的半角块字符，所以关掉默认的
 # image / svg 特性（那俩会拉一整套图形依赖）。
 qrcode = { version = "0.14", default-features = false }
+# ---- stored transfer（`croc store`）的 HTTP 客户端 ----
+# store 的协议是 HTTPS + JSON。用 reqwest 而不是自己拼 HTTP/1.1：分块传输、连接复用、
+# 超时与 TLS 这些细节没必要自己维护一遍。
+#
+# `default-features = false` 是必须的：默认的 `default-tls` 会拉 `native-tls`
+# （Linux 上是 OpenSSL）。TLS 用 rustls 与它自带的 provider，根证书用 Mozilla 的静态
+# 列表——不读系统信任库，后者在精简容器里可能不存在。
+# `socks` 是 `--socks5` 要的。
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "socks"] }
+
+# ---- 清单里的文件名校验 ----
+# 名字要在**所有**支持的平台上都安全，所以不能只看 ASCII：Windows / macOS 的文件系统
+# 大小写不敏感、对归一化也不敏感，`a.txt` 与 `A.txt` 会互相覆盖。这三条是 Go 的
+# `receivefs` 用到的同一套判定。
+unicode-normalization = "0.1"
+caseless = "0.2"
+unicode-general-category = "1"
 # `--socks5`：只做 CONNECT，握手自己写不值得。
 tokio-socks = "0.5"
 # OS 随机源。选 `getrandom` 而不是 `rand`：Android 上同样可用，且不带任何额外抽象。
@@ -152,6 +170,7 @@ croc-protocol = { path = "crates/croc-protocol" }
 croc-net = { path = "crates/croc-net" }
 croc-core = { path = "crates/croc-core" }
 croc-relay = { path = "crates/croc-relay" }
+croc-store = { path = "crates/croc-store" }
 croc-engine = { path = "crates/croc-engine" }
 croc-cli = { path = "crates/croc-cli" }
 croc-gui = { path = "crates/croc-gui" }

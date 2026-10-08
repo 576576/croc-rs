@@ -21,6 +21,7 @@ mod clipboard;
 mod config;
 mod qr;
 mod relay_cmd;
+mod store;
 
 use std::process::ExitCode;
 

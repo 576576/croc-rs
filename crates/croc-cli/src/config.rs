@@ -196,7 +196,7 @@ pub fn remember_internal_dns(quiet: bool) {
 /// 配置目录，对应 Go 的 `utils.GetConfigDir`（`utils.go:64`）。
 ///
 /// `CROC_CONFIG_DIR` 是**整个目录**（不再往下拼 `croc`），后两个才是。
-fn config_dir() -> Option<PathBuf> {
+pub(crate) fn config_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CROC_CONFIG_DIR") {
         return Some(PathBuf::from(dir));
     }

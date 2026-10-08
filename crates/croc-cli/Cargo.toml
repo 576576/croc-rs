@@ -21,6 +21,8 @@ croc-engine.workspace = true
 croc-pake.workspace = true
 croc-relay.workspace = true
 croc-net.workspace = true
+# `croc store`：暂存传输的客户端。
+croc-store.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true
 tokio-util.workspace = true
@@ -30,6 +32,8 @@ thiserror.workspace = true
 qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# 撤销凭据里的过期时间是 RFC3339；`--expiration` 也用它。
+time.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

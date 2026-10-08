@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "note": "croc-store-v1 的加密格式；密文在固定随机源下产出，可直接重算比对。",
+  "origin": "https://getcroc.com",
+  "masterKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "id": "oKGio6SlpqeoqaqrrK2urw",
+  "redeemCapabilityHex": "034bbd503eade045aa5ab647966c52ded90b98fe0721e80a3776f80431943567",
+  "capabilityVerifierHex": "968201a952a10f66f8c7336d0187cc48b6ae52561a17711fa9c864f18b812d7e",
+  "browserURL": "https://getcroc.com/s/oKGio6SlpqeoqaqrrK2urw#v1.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "cliToken": "croc-store-v1.aHR0cHM6Ly9nZXRjcm9jLmNvbQ.oKGio6SlpqeoqaqrrK2urw.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "manifestJSON": "{\"v\":1,\"cs\":4194304,\"f\":[{\"n\":\"hello.txt\",\"s\":5,\"m\":\"2026-01-02T03:04:05Z\",\"h\":\"LPJNul-wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ\",\"fc\":0,\"cc\":1},{\"n\":\"second.bin\",\"s\":3,\"m\":\"2026-01-02T03:04:06.123456789Z\",\"h\":\"A5BYxvLAy0ksUzsKTRTvd8wPeKvMztUofYShogEc-4E\",\"fc\":1,\"cc\":1}]}",
+  "manifestCipherHex": "111111111111111111111111c791a4e0f68c7ea1bf6db31920542dc9acfd7ccb2e15789f69519fec5efada2a4956efd29e0007a1c4f0922149cb6ea29755752b86382dae87e05dfe8699f3dc082d0d49d03c61ba4f29d8b033ed5f76583bfbab44aa8f678b945bc07baec3659aa6bbc3419903572c46b27143e7b92b8086ecccfa0b2fee454e9778762ff3e4628bed4e842e87428cfb4adbc78e63e2a206e3f7e77d6c436f9928f92681966f0d7f1cb9ef0fffc7b2b8b38f32f2ff49a9250402289fcacf4e689ddb9b504a12e323a1b744e3d1e2445b077b7442dcc92080988aa26c86d1ea02d5b83f387fc3e9d0e4f8691521a7debf74013006876280eb05d7cd3e34a3693a76ea6724a072fde5549625c98925d6bf3bad147d01b3d468f8ef2d06c973bc275a",
+  "chunks": [
+    {
+      "objectIndex": 0,
+      "fileIndex": 0,
+      "fileChunk": 0,
+      "plainSize": 5,
+      "plainHex": "68656c6c6f",
+      "cipherHex": "12121212121212121212121208835d29ea0a2312527fe5a5bf23bbd548a9fb281a"
+    },
+    {
+      "objectIndex": 1,
+      "fileIndex": 1,
+      "fileChunk": 0,
+      "plainSize": 3,
+      "plainHex": "010203",
+      "cipherHex": "1313131313131313131313139ced895a6137f62aeecc8870ee77cd81cf1784"
+    }
+  ]
+}
