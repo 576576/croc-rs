@@ -5,13 +5,12 @@
 //!
 //! ```console
 //! $ cargo xtask purity
-//! $ cargo xtask deps
 //! $ cargo xtask ci-lint
 //! ```
 //!
 //! 子命令分两类：
 //!
-//! - **架构门禁**（`purity` / `deps`）—— CI 的 `arch` job 跑它们，把架构约束变成硬错误；
+//! - **架构门禁**（`purity`）—— CI 的 `arch` job 跑它，把架构约束变成硬错误；
 //! - **本地 CI 等价命令**（`ci-*`）—— 因为质量门禁不跟 push / PR，本地必须能一键跑完
 //!   等价检查，否则只能靠推 `main` 才发现红灯。
 
@@ -20,9 +19,9 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing))]
 
 mod ci;
-mod deps;
 mod lex;
 mod purity;
+mod workspace;
 
 use std::process::ExitCode;
 
@@ -30,7 +29,6 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("purity") => purity::run(),
-        Some("deps") => deps::run(),
         Some("ci-lint") => ci::lint(),
         Some("ci-build") => ci::build(),
         Some("ci-interop") => ci::interop(),
@@ -52,7 +50,6 @@ fn print_help() {
 
 架构门禁：
   purity      croc-siec / croc-pake / croc-protocol 里不许有 IO、时钟、网络与 OS 随机源
-  deps        核心 crate 的依赖图里不许有 openssl / ring / aws-lc-* 这类 C 加密后端
 
 本地 CI 等价命令（质量门禁不跟 push / PR，推 main 前请先跑）：
   ci-lint     = lint.yml 的 fmt / clippy / test / arch

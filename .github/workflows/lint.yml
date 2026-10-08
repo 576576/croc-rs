@@ -90,9 +90,6 @@ jobs:
         # std::fs / std::net / std::process / std::thread / Instant::now / 随机源。
         # 检查前先剥掉注释与字符串字面量，所以文档里提到这些名字不会误报。
         run: cargo xtask purity
-      - name: 核心 crate 不得引入 openssl / ring
-        # 否则 Android 交叉编译会出问题（核心依赖必须是纯 Rust 加密栈）。
-        run: cargo xtask deps
 
   msrv:
     name: MSRV

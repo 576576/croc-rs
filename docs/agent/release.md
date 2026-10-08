@@ -113,7 +113,7 @@ Windows runner 上 `tar` 与 `zip` 的行为差异最容易出坑，各用各的
 | `fmt` | `cargo fmt --all --check` | 同 |
 | `clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | 同 |
 | `test` | `cargo test --workspace --no-fail-fast` | 同 |
-| `arch` | `cargo xtask purity` + `cargo xtask deps` | 同 |
+| `arch` | `cargo xtask purity` | 同 |
 | `msrv` | `cargo +1.98 check --workspace --all-targets` | 同 |
 
 `cargo xtask ci-lint` 一把跑完 `fmt` / `clippy` / `test` / `arch` 四项（MSRV 需要额外

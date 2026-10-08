@@ -385,7 +385,7 @@ impl CrocError {
 | CLI | `clap`（derive + `clap_complete`） | |
 | 序列化 | `serde`、`serde_json`（**`arbitrary_precision` 仅 `croc-pake` 内**）、`serde_bytes` | 见 [02-crypto.md](02-crypto.md) §3.3 |
 | 大整数 | `num-bigint`、`num-traits` | 自写 `modinv` |
-| 加密 | `aes-gcm`、`pbkdf2`、`sha2`、`hmac`、`hkdf`、`argon2`、`chacha20poly1305`、`subtle`、`zeroize` | 纯 Rust，**禁止 openssl / ring**（Android 交叉编译） |
+| 加密 | `aes-gcm`、`pbkdf2`、`sha2`、`hmac`、`hkdf`、`subtle`、`zeroize` | 都用 RustCrypto 的实现。需要出 Android 的那条链路（GUI 及以下）不引入 C 加密后端 |
 | 压缩 | `flate2`（`miniz_oxide` 后端） | |
 | 哈希 | `xxhash-rust`、`md-5`、`highway`、自研 imohash | |
 | 进度条 | `indicatif`（仅 CLI） | |

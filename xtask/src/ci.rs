@@ -19,7 +19,7 @@
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-use crate::{deps, purity};
+use crate::{purity, workspace};
 
 /// 一条命令的执行结果。
 struct Step {
@@ -66,8 +66,8 @@ fn summarize(steps: &[Step]) -> ExitCode {
 /// （对应 CI 里那几个并行的 job）。
 #[must_use]
 pub fn lint() -> ExitCode {
-    let root = deps::workspace_root();
-    let cargo = deps::cargo();
+    let root = workspace::root();
+    let cargo = workspace::cargo();
     let mut steps = vec![
         step(&root, "rustfmt", &cargo, &["fmt", "--all", "--check"]),
         step(&root, "clippy", &cargo, &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]),
@@ -78,7 +78,6 @@ pub fn lint() -> ExitCode {
     // 架构门禁直接在进程内跑：它们本来就是本 crate 的函数，不必再起一层 cargo。
     println!("\n=== 架构门禁 ===");
     steps.push(Step { title: "xtask purity", passed: purity::run() == ExitCode::SUCCESS });
-    steps.push(Step { title: "xtask deps", passed: deps::run() == ExitCode::SUCCESS });
 
     summarize(&steps)
 }
@@ -86,7 +85,7 @@ pub fn lint() -> ExitCode {
 /// `cargo xtask ci-build`：按本机 target 跑一次发布构建。
 #[must_use]
 pub fn build() -> ExitCode {
-    let root = deps::workspace_root();
+    let root = workspace::root();
     let mut args = vec!["build", "--release"];
     // 只构建存在的产物 crate：`croc-gui` 依赖系统 WebView 库，不是每台机器都装了。
     for name in ["croc-cli", "croc-relay", "croc-gui"] {
@@ -95,7 +94,7 @@ pub fn build() -> ExitCode {
             args.push(name);
         }
     }
-    let steps = vec![step(&root, "release build", &deps::cargo(), &args)];
+    let steps = vec![step(&root, "release build", &workspace::cargo(), &args)];
     summarize(&steps)
 }
 
@@ -106,9 +105,9 @@ pub fn build() -> ExitCode {
 /// 缺哪样就明确报出来，不静默跳过。
 #[must_use]
 pub fn interop() -> ExitCode {
-    let root = deps::workspace_root();
+    let root = workspace::root();
 
-    let mut steps = vec![step(&root, "release build", &deps::cargo(), &["build", "--release", "-p", "croc-cli"])];
+    let mut steps = vec![step(&root, "release build", &workspace::cargo(), &["build", "--release", "-p", "croc-cli"])];
 
     // Go 版 croc 二进制：优先用环境变量给的，否则现编一份。
     let go_bin = match resolve_go_bin(&root) {

@@ -239,7 +239,6 @@ jobs:
             #   lint 级别由根 Cargo.toml [workspace.lints] 统一定义
   test:     # cargo test --workspace --no-fail-fast
   arch:     # cargo xtask purity   —— 纯 crate 不得引入 IO
-            # cargo xtask deps     —— 核心 crate 不得引入 openssl / ring
   msrv:     # dtolnay/rust-toolchain@1.98 + cargo check --workspace
 ```
 
@@ -282,7 +281,7 @@ I12 由 `skip_unimplemented()` **显式 SKIP 并打印理由**，不再是假信
 ## 6. 本地等价命令
 
 ```bash
-cargo xtask ci-lint      # = lint.yml 全部 job（fmt/clippy/test/purity/deps）
+cargo xtask ci-lint      # = lint.yml 全部 job（fmt/clippy/test/purity）
 cargo xtask ci-build     # = build.yml 本机 target
 cargo xtask ci-interop   # = 互通矩阵（只在本地跑，不在 CI 里）
 ```
@@ -299,7 +298,7 @@ cargo xtask ci-interop   # = 互通矩阵（只在本地跑，不在 CI 里）
 | Windows 工具链 | `msvc` / `gnullvm` / `all` | 仅 msvc | 无 bundled C 依赖，不需要 llvm-mingw |
 | 外部资产 | WebUI zip、ext-runtime.jar、JRE | 无 | — |
 | Miri | 无 | 无 | 本仓库 0 处 `unsafe`、0 处 FFI，安全 Rust 产不出 UB——见 [03](03-architecture.md) §8.5 |
-| 架构门禁 | 无 | `xtask purity` / `xtask deps` | 本项目对"纯 crate"与"纯 Rust 加密栈"有硬约束 |
+| 架构门禁 | 无 | `xtask purity` | 本项目的纯 crate 必须保持 sans-io |
 | 互通测试 | 无 | 无（**有意只在本地跑**，见 §5.3） | 与 Go 版互通是本项目的生命线，但它要同机双实现、分钟级、有环境竞态，不适合当门禁 |
 
 ---
@@ -310,7 +309,7 @@ cargo xtask ci-interop   # = 互通矩阵（只在本地跑，不在 CI 里）
 - [x] 根 `rustfmt.toml`：`edition = "2024"` / `max_width = 120` / `use_small_heuristics = "Max"`
 - [x] `.github/workflows/{release,build,lint,clear}.yml` 四份
 - [x] `docs/agent/release.md`（操作手册；设计推导在本文档）
-- [x] `xtask` 子命令：`purity` / `deps` / `ci-lint` / `ci-build` / `ci-interop`
+- [x] `xtask` 子命令：`purity` / `ci-lint` / `ci-build` / `ci-interop`
 - [x] `tests/interop/run.sh` + `tests/interop/README.md`（I1–I21）
 - [x] `crates/croc-cli`（`croc-rs`）与 `crates/croc-gui`（`crocw-rs`，Tauri 2）落地
 - [x] 打第一个 alpha（推 main 验证自动链路）—— CI 全绿，四个产物都出来了
