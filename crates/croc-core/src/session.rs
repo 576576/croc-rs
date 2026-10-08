@@ -1185,7 +1185,9 @@ mod tests {
         // 接收方的第一条帧必须是裸帧 `handshake`——少了它 Go 的发送方会一直卡在
         // `senderWaitForHandshake` 里。这条断言是"两向互通"的最小护栏。
         match effects.first() {
-            Some(Effect::Send(frame)) => assert_eq!(frame.as_slice(), HANDSHAKE, "接收方必须先发 handshake 裸帧"),
+            Some(Effect::Send(frame)) => {
+                assert_eq!(frame.as_slice(), HANDSHAKE, "接收方必须先发 handshake 裸帧");
+            }
             other => panic!("接收方的第一条效果应是 handshake 帧，实得 {other:?}"),
         }
         effects.remove(0);

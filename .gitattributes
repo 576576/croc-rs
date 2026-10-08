@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Rust 源码固定 CRLF：根 `rustfmt.toml` 用了 `newline_style = "Windows"`。Linux 上不这样
+# 钉住的话会按 LF 检出，`cargo fmt --all --check` 会因为行尾不一致而红。
+*.rs text eol=crlf
+
+# shell 脚本固定 LF：CRLF 会让 bash 把 `\r` 当成命令的一部分。
+*.sh text eol=lf

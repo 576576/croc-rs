@@ -1,3 +1,10 @@
 edition = "2024"
 max_width = 120
 use_small_heuristics = "Max"
+
+# 统一 CRLF：`core.autocrlf=true` 下检出本来就是 CRLF，但 rustfmt 重写文件时会按自己的
+# 规则写回 LF，于是每次格式化都在 diff 里多出一整份行尾改动。
+#
+# 配套的 `.gitattributes` 给 `*.rs` 钉了 `eol=crlf`——否则 Linux CI 会按 LF 检出，
+# `cargo fmt --all --check` 会因为行尾不一致而红。
+newline_style = "Windows"

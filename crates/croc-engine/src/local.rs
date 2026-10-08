@@ -406,9 +406,13 @@ mod tests {
         let probe = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await.expect("bind");
         let base = probe.local_addr().expect("addr").port();
         drop(probe);
-        let Some(next) = base.checked_add(1) else { return };
+        let Some(next) = base.checked_add(1) else {
+            return;
+        };
         // 占住 base+1，逼数据端口顺延。
-        let Ok(_squatter) = TcpListener::bind((Ipv4Addr::UNSPECIFIED, next)).await else { return };
+        let Ok(_squatter) = TcpListener::bind((Ipv4Addr::UNSPECIFIED, next)).await else {
+            return;
+        };
 
         let mut relay = start_local_relay("pass", 2, Some(base)).await.expect("relay starts");
         assert_eq!(relay.control_port(), base, "控制端口应当就落在 --port 上");
