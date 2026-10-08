@@ -1,6 +1,6 @@
 # 互通测试（Rust ↔ Go）
 
-`run.sh` 跑 I1–I20 互通矩阵，定义见 [07-risks-and-testing.md](../../docs/agent/plan/07-risks-and-testing.md) §2.2。
+`run.sh` 跑 I1–I21 互通矩阵，定义见 [07-risks-and-testing.md](../../docs/agent/plan/07-risks-and-testing.md) §2.2。
 这是本项目的**生命线测试** —— 协议字节必须与 Go 版 croc v11.5.4 逐字节兼容。
 
 ## 怎么跑

@@ -760,6 +760,30 @@ case_i20() {
   stop_relay
   finish_case "$result"
 }
+# I21：曲线 ed25519。
+#
+# 曲线由**接收方**决定（发送方照着用），所以 `--curve` 给在 Go 那一侧。盯的是五条曲线里
+# 最后补上的那条：ed25519 的点编码与 Weierstrass 那几条不同（点整体塞在 x 坐标里、y 恒
+# 为 0），编解码走偏就是握不上手——而不是报一条好看的错误。
+case_i21() {
+  begin_case I21 "Rust → Go，--curve ed25519（曲线由接收方决定）" || return 0
+  local result=1
+  if start_relay rust "$WORK/relay-rust.log"; then
+    local r; r="$(relay_addr "$RELAY_BASE")"
+    make_file "$CASE_DIR/send/payload.bin" 262144
+    transfer "$CASE_DIR" "" \
+      "$CROC_RS_BIN" --relay "$r" --pass "$RELAY_PASS" --yes --quiet \
+        send --code "$CODE" payload.bin -- \
+      "$CROC_GO_BIN" --relay "$r" --pass "$RELAY_PASS" --yes --quiet --curve ed25519 "$CODE"
+    if [ $? -eq 0 ] && same_file "$CASE_DIR/send/payload.bin" "$CASE_DIR/recv/payload.bin" \
+       && no_crash "$CASE_DIR"; then
+      result=0
+    fi
+  fi
+  stop_relay
+  finish_case "$result"
+}
+
 
 # I13 Rust → Go，Rust relay，10 万文件清单
 case_i13() {
@@ -957,6 +981,7 @@ main() {
   case_i15
   case_i19
   case_i20
+  case_i21
   case_derp I16 "$CROC_RS_BIN" "$CROC_GO_BIN" go   "Rust 发送 / Go 接收 / Go relay"
   case_derp I17 "$CROC_RS_BIN" "$CROC_RS_BIN" rust "Rust 两端 / Rust relay"
   case_derp I18 "$CROC_RS_BIN" "$CROC_GO_BIN" rust "Rust 发送 / Go 接收 / Rust relay"
