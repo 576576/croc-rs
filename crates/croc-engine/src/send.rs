@@ -12,10 +12,12 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::data::{ChunkQueue, DataPlane, send_file, stream_count};
+use crate::dns;
 use crate::error::EngineError;
 use crate::files;
 use crate::local;
 use crate::relay;
+use crate::throttle::Throttle;
 use crate::{EngineEvent, EventSink, emit};
 
 /// 一次发送所需的全部参数。
@@ -55,6 +57,12 @@ pub struct SendRequest {
     pub ip: String,
     /// `--ask`：让接收方也确认一次（随清单发过去）。
     pub ask: bool,
+    /// `--internal-dns`：用自带的 DNS stub resolver，而不是操作系统的解析器。
+    pub internal_dns: bool,
+    /// `--throttleUpload`：上行限速（字节/秒）。`None` = 不限速。
+    ///
+    /// 只影响发送方向——Go 也只是在 `IsSender` 时才建限速器（`croc.go:451`）。
+    pub throttle_upload: Option<u64>,
     /// 哈希算法：`xxhash` / `md5` / `imohash` / `highway`。
     pub hash_algorithm: String,
     /// `--local`：只走局域网——本端起一个内建中继，**不连公网中继**。
@@ -163,8 +171,14 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     // `collect` 是同步的阻塞式文件 IO，直接放在 async 上下文里会把 worker 线程占住，
     // 连中继的 future 就没机会推进——并行也就名存实亡。
     let hashing = tokio::task::spawn_blocking(move || files::collect(&paths, &algorithm, &options));
-    let connecting =
-        relay::connect_any(&relay_addresses, &request.relay_password, &request.components.room_name, &request.proxy);
+    let resolve_with = resolve_mode(request.internal_dns);
+    let connecting = relay::connect_any(
+        &relay_addresses,
+        &request.relay_password,
+        &request.components.room_name,
+        &request.proxy,
+        resolve_with,
+    );
     let (manifest, (mut link, relay_address)) = tokio::try_join!(
         async { hashing.await.map_err(|error| EngineError::Config(format!("the hashing task {error}")))? },
         connecting,
@@ -217,7 +231,10 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         ports.clone(),
         streams,
         request.proxy.clone(),
+        resolve_with,
     ));
+    // `--throttleUpload`：整个上传共用一个桶，数据面的每条流都从它领令牌。
+    let throttle = request.throttle_upload.map(|rate| Arc::new(Throttle::new(rate)));
     let mut transferred: u64 = 0;
 
     let mut effects = session.handle(InEvent::PeerConnected, &mut randomness)?;
@@ -262,6 +279,7 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
                         conns,
                         Arc::clone(&data_plane),
                         data_tx.clone(),
+                        throttle.clone(),
                         cancel.clone(),
                     )?;
                 }
@@ -310,6 +328,7 @@ fn spawn_sender(
     conns: Vec<croc_net::Framed<tokio::net::TcpStream>>,
     plane: Arc<DataPlane>,
     notify: mpsc::Sender<InEvent>,
+    throttle: Option<Arc<Throttle>>,
     cancel: CancellationToken,
 ) -> Result<(), EngineError> {
     let key = key.ok_or_else(|| EngineError::Config("the data key is not ready yet".to_owned()))?;
@@ -317,7 +336,7 @@ fn spawn_sender(
         Arc::new(Mutex::new(ChunkQueue::new(&croc_core::chunk::ChunkRanges::from_wire(ranges.to_vec()), file_size)));
 
     tokio::spawn(async move {
-        match send_file(conns, path, queue, key, compress, cancel).await {
+        match send_file(conns, path, queue, key, compress, throttle, cancel).await {
             // 发完就**什么都不用报**：发送方的收尾由对端的 `close-sender` 驱动
             // （数据面发完 ≠ 对端收完，最后一块可能还在中继的缓冲里）。
             // 报一个事件反而会让状态机在 `Transferring` 上收到不认识的东西。
@@ -329,6 +348,11 @@ fn spawn_sender(
         }
     });
     Ok(())
+}
+
+/// `--internal-dns` → 解析模式。
+fn resolve_mode(internal: bool) -> dns::Mode {
+    if internal { dns::Mode::Internal } else { dns::Mode::System }
 }
 
 /// 给接收方用：一个文件是否走数据面（空文件 / 符号链接不走）。

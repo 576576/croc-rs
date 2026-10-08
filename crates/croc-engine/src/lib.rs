@@ -30,6 +30,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing))]
 
 pub mod data;
+pub mod dns;
 pub mod error;
 pub mod files;
 pub mod hash;
@@ -38,6 +39,7 @@ pub mod proxy;
 pub mod receive;
 pub mod relay;
 pub mod send;
+pub mod throttle;
 
 pub use error::EngineError;
 pub use receive::{ReceiveRequest, Summary as ReceiveSummary, receive};

@@ -23,6 +23,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio_socks::tcp::Socks5Stream;
 
+use crate::dns;
 use crate::error::EngineError;
 use crate::proxy::Proxy;
 
@@ -90,9 +91,10 @@ pub async fn connect(
     password: &str,
     room: &RoomName,
     proxy: &Proxy,
+    dns: dns::Mode,
 ) -> Result<RelayLink, EngineError> {
     let (host, port) = split_host_port(host_port)?;
-    let stream = dial(&host, port, proxy).await?;
+    let stream = dial(&host, port, proxy, dns).await?;
 
     let mut framed = Framed::new(stream);
     let mut randomness = OsRandomness;
@@ -149,6 +151,7 @@ pub async fn connect_any(
     password: &str,
     room: &RoomName,
     proxy: &Proxy,
+    dns: dns::Mode,
 ) -> Result<(RelayLink, String), EngineError> {
     let unique = normalize_addresses(addresses);
     let Some(first) = unique.first().cloned() else {
@@ -156,7 +159,7 @@ pub async fn connect_any(
     };
     // 只有一个地址时不起任务：直接连，省一次 spawn 与几次 move。
     if unique.len() == 1 {
-        let link = connect(&first, password, room, proxy).await?;
+        let link = connect(&first, password, room, proxy, dns).await?;
         return Ok((link, first));
     }
 
@@ -171,7 +174,7 @@ pub async fn connect_any(
             {
                 tokio::time::sleep(delay).await;
             }
-            let result = connect(&address, &password, &room, &proxy).await;
+            let result = connect(&address, &password, &room, &proxy, dns).await;
             (address, result)
         });
     }
@@ -224,10 +227,11 @@ pub async fn connect_data(
     room: &RoomName,
     index: u8,
     proxy: &Proxy,
+    dns: dns::Mode,
 ) -> Result<Framed<TcpStream>, EngineError> {
     let address = format!("{host}:{port}");
     let room = RoomName::new(format!("{}-{index}", room.as_str()));
-    Ok(connect(&address, password, &room, proxy).await?.framed)
+    Ok(connect(&address, password, &room, proxy, dns).await?.framed)
 }
 
 /// 连一条 TCP：直连，或者按 [`Proxy`] 走代理。
@@ -238,48 +242,84 @@ pub async fn connect_data(
 /// # Errors
 ///
 /// 连不上、超时，或者代理拒绝。
-pub async fn dial(host: &str, port: u16, proxy: &Proxy) -> Result<TcpStream, EngineError> {
+pub async fn dial(host: &str, port: u16, proxy: &Proxy, dns: dns::Mode) -> Result<TcpStream, EngineError> {
     let Some(proxy_address) = proxy.address()? else {
-        return connect_direct(host, port).await;
+        return connect_direct(host, port, dns).await;
     };
     if is_local(host) {
-        return connect_direct(host, port).await;
+        return connect_direct(host, port, dns).await;
     }
     // **不在这里做 DNS**：把 `host:port` 原样交给代理，域名由它去解析。Tor 场景下这正是
     // 关键——本地解析会把 DNS 请求漏到网外，等于白挂代理。
     let target = format!("{host}:{port}");
     match proxy {
         Proxy::Socks5(_) => dial_socks5(proxy_address, &target).await,
-        Proxy::Http(_) => dial_http_connect(proxy_address, &target).await,
-        Proxy::Direct => connect_direct(host, port).await,
+        Proxy::Http(_) => dial_http_connect(proxy_address, &target, dns).await,
+        Proxy::Direct => connect_direct(host, port, dns).await,
     }
 }
 
 /// 直连。
 ///
-/// **先把数字 IP 直接解析成 `SocketAddr`**，不要交给 `ToSocketAddrs`。Windows 上
-/// `getaddrinfo("127.0.0.1")` 会绕一圈 DNS 客户端，实测每次 ~370ms——数据面要连 5 条
-/// 连接，那就是 1.8 秒的纯等待，足以让对端先超时。主机名仍然走解析。
-async fn connect_direct(host: &str, port: u16) -> Result<TcpStream, EngineError> {
+/// 地址交给 [`dns::resolve`]，那里对数字 IP 有快路径：**数字 IP 直接构造成
+/// `SocketAddr`**，不走 `getaddrinfo`。Windows 上 `getaddrinfo("127.0.0.1")` 会绕一圈
+/// DNS 客户端，实测每次 ~370ms——数据面要连 5 条连接，那就是 1.8 秒的纯等待，足以
+/// 让对端先超时。
+///
+/// 一个主机名解析出多个地址时**逐个试**（`localhost` 在本机就是 `::1` + `127.0.0.1`）：
+/// 只试第一个的话，中继只绑了 IPv4 就会报"连接被拒绝"，而 Go 的 `net.Dial` 是会回退的。
+/// 用与 [`connect_any`] 相同的错开拨号，免得"第一个地址不可达"变成整个连接的超时。
+async fn connect_direct(host: &str, port: u16, dns: dns::Mode) -> Result<TcpStream, EngineError> {
     let display = format!("{host}:{port}");
-    let target = match host.parse::<IpAddr>() {
-        Ok(ip) => SocketAddr::new(ip, port),
-        Err(_) => tokio::net::lookup_host((host, port))
-            .await
-            .map_err(|error| EngineError::RelayUnreachable { address: display.clone(), reason: error.to_string() })?
-            .next()
-            .ok_or_else(|| EngineError::RelayUnreachable {
-                address: display.clone(),
-                reason: "the host name resolved to nothing".to_owned(),
-            })?,
+    let addresses = dns::resolve(host, port, dns).await?;
+    // `resolve` 已经保证非空，这里只是不想 unwrap。
+    let Some(first) = addresses.first().copied() else {
+        return Err(EngineError::RelayUnreachable {
+            address: display,
+            reason: "the host name resolved to nothing".to_owned(),
+        });
     };
-    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target))
+    if addresses.len() == 1 {
+        return open_socket(first, &display).await;
+    }
+
+    let mut pending = tokio::task::JoinSet::new();
+    for (index, address) in addresses.into_iter().enumerate() {
+        let display = display.clone();
+        pending.spawn(async move {
+            if let Some(delay) = HAPPY_EYEBALLS_STAGGER.checked_mul(u32::try_from(index).unwrap_or(0))
+                && !delay.is_zero()
+            {
+                tokio::time::sleep(delay).await;
+            }
+            open_socket(address, &display).await
+        });
+    }
+    let mut last_error = None;
+    while let Some(joined) = pending.join_next().await {
+        match joined {
+            Ok(Ok(stream)) => {
+                pending.abort_all();
+                return Ok(stream);
+            }
+            Ok(Err(error)) => last_error = Some(error),
+            // 任务被取消或 panic：不算错误，继续等其余地址。
+            Err(_) => {}
+        }
+    }
+    Err(last_error.unwrap_or_else(|| EngineError::RelayUnreachable {
+        address: display,
+        reason: "no address answered".to_owned(),
+    }))
+}
+
+/// 连一个已经解析好的地址。
+async fn open_socket(address: SocketAddr, display: &str) -> Result<TcpStream, EngineError> {
+    let unreachable = |reason: String| EngineError::RelayUnreachable { address: display.to_owned(), reason };
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(address))
         .await
-        .map_err(|_| EngineError::RelayUnreachable {
-            address: display.clone(),
-            reason: "connect timed out".to_owned(),
-        })?
-        .map_err(|error| EngineError::RelayUnreachable { address: display, reason: error.to_string() })?;
+        .map_err(|_| unreachable("connect timed out".to_owned()))?
+        .map_err(|error| unreachable(error.to_string()))?;
     // 中继的 keepalive 是 1 秒一次，禁用 Nagle 能让握手少等几十毫秒。
     let _ = stream.set_nodelay(true);
     Ok(stream)
@@ -301,10 +341,12 @@ async fn dial_socks5(proxy_address: &str, target: &str) -> Result<TcpStream, Eng
 ///
 /// 响应头是**逐字节**读到 `\r\n\r\n` 为止的：一次多读几字节就会把隧道里对端随后发来的
 /// 数据吞掉，握手当场错位。
-async fn dial_http_connect(proxy_address: &str, target: &str) -> Result<TcpStream, EngineError> {
+async fn dial_http_connect(proxy_address: &str, target: &str, dns: dns::Mode) -> Result<TcpStream, EngineError> {
     let refusal = |reason: String| EngineError::RelayUnreachable { address: target.to_owned(), reason };
     let (proxy_host, proxy_port) = split_host_port(proxy_address)?;
-    let mut stream = connect_direct(&proxy_host, proxy_port).await?;
+    // 这一跳连的是**代理本身**，不是中继。用同一个解析模式：用户开 `--internal-dns`
+    // 是为了让解析不依赖本机 DNS 配置，没有理由让代理主机名例外。
+    let mut stream = connect_direct(&proxy_host, proxy_port, dns).await?;
 
     let request = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n");
     stream.write_all(request.as_bytes()).await.map_err(|error| refusal(format!("http proxy: {error}")))?;

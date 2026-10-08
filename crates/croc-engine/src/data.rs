@@ -29,9 +29,11 @@ use croc_protocol::{codec, encrypt};
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
+use crate::dns;
 use crate::error::EngineError;
 use crate::files::{self, Sink};
 use crate::relay;
+use crate::throttle::Throttle;
 
 /// 一条数据流的上限：与 Go 的 `min(len(RelayPorts), 8)` 同一个理由——再多也不会更快。
 pub const MAX_STREAMS: u8 = 8;
@@ -64,6 +66,7 @@ pub struct DataPlane {
     ports: Vec<u16>,
     streams: u8,
     proxy: crate::proxy::Proxy,
+    dns: dns::Mode,
     conns: Mutex<Option<Vec<Framed<TcpStream>>>>,
 }
 
@@ -88,8 +91,9 @@ impl DataPlane {
         ports: Vec<u16>,
         streams: u8,
         proxy: crate::proxy::Proxy,
+        dns: dns::Mode,
     ) -> Self {
-        Self { relay, password, room, ports, streams, proxy, conns: Mutex::new(None) }
+        Self { relay, password, room, ports, streams, proxy, dns, conns: Mutex::new(None) }
     }
 
     /// 要开几条流（也等于 `ports` 里实际会用的条数）。
@@ -119,7 +123,9 @@ impl DataPlane {
         for position in 0..self.width() {
             let port = *self.ports.get(position).unwrap_or(&0);
             let index = u8::try_from(position).unwrap_or(u8::MAX);
-            conns.push(relay::connect_data(&host, port, &self.password, &self.room, index, &self.proxy).await?);
+            conns.push(
+                relay::connect_data(&host, port, &self.password, &self.room, index, &self.proxy, self.dns).await?,
+            );
         }
         Ok(conns)
     }
@@ -226,8 +232,8 @@ impl Progress {
 ///
 /// # 为什么要把连接还回去
 ///
-/// 这是本项目踩过的第二个大坑：写完就 `drop` 掉 `Framed`，socket 立刻关闭。
-/// 数据还在中继那侧的内核缓冲里没被读走，Windows 于是发 **RST** 而不是 FIN——
+/// 数据写完就 `drop` 掉 `Framed`，socket 会立刻关闭：数据还在中继那侧的内核缓冲里没
+/// 被读走，Windows 于是发 **RST** 而不是 FIN——
 /// 中继的 `copy_bidirectional` 直接报错退出，**已经写出去的分块全部丢弃**。
 /// 表现就是"发送方说发完了、接收方一个字节没收到"。
 ///
@@ -243,6 +249,7 @@ pub async fn send_file(
     queue: Arc<Mutex<ChunkQueue>>,
     key: [u8; 32],
     compress: bool,
+    throttle: Option<Arc<Throttle>>,
     cancel: CancellationToken,
 ) -> Result<Vec<Framed<TcpStream>>, EngineError> {
     let file = Arc::new(File::open(&path).map_err(|error| EngineError::file(&path, error))?);
@@ -253,8 +260,9 @@ pub async fn send_file(
         let queue = Arc::clone(&queue);
         let cancel = cancel.clone();
         let path = path.clone();
+        let throttle = throttle.clone();
         handles.push(tokio::spawn(async move {
-            let result = send_stream(conn, file, queue, key, compress, cancel, path).await;
+            let result = send_stream(conn, file, queue, key, compress, throttle, cancel, path).await;
             // 无论成败都把连接还回去——**关连接是调用方的事**，见函数头的说明。
             result
         }));
@@ -276,12 +284,14 @@ pub async fn send_file(
 }
 
 /// 一条数据流上的搬运循环。
+#[allow(clippy::too_many_arguments, reason = "这些参数各自独立，打包成结构体只是把同一个列表挪个地方")]
 async fn send_stream(
     mut conn: Framed<TcpStream>,
     file: Arc<File>,
     queue: Arc<Mutex<ChunkQueue>>,
     key: [u8; 32],
     compress: bool,
+    throttle: Option<Arc<Throttle>>,
     cancel: CancellationToken,
     path: PathBuf,
 ) -> (Framed<TcpStream>, Result<(), EngineError>) {
@@ -323,6 +333,18 @@ async fn send_stream(
         };
         if read.is_empty() {
             return (conn, Err(EngineError::file(&path, format!("short read at offset {offset}"))));
+        }
+
+        // `--throttleUpload`：令牌在**读完之后、加密之前**领，与 Go 的位置一致
+        // （`croc.go:3811`）。桶是跨流共享的，限的是整次上传的速率。
+        if let Some(throttle) = &throttle {
+            let delay = throttle.reserve(u64::try_from(read.len()).unwrap_or(u64::MAX));
+            if !delay.is_zero() {
+                tokio::select! {
+                    () = cancel.cancelled() => return (conn, Err(EngineError::Cancelled)),
+                    () = tokio::time::sleep(delay) => {}
+                }
+            }
         }
 
         // 前 8 字节是偏移（小端），后面是数据。

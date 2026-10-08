@@ -7,11 +7,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use clap::{Parser, Subcommand};
+use clap::parser::ValueSource;
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use croc_core::codephrase::{self, Components};
 use croc_core::policy::Preferences;
 use croc_engine::{EngineEvent, EventSink, ReceiveRequest, SendRequest, silent_sink};
 use croc_pake::CurveKind;
+
+use crate::config::{Remembered, Side, decode_relay, encode_relay};
 use tokio_util::sync::CancellationToken;
 
 /// croc 的默认中继地址。
@@ -68,6 +71,10 @@ pub struct Cli {
     command: Option<Command>,
 
     /// 口令码（接收时直接写在这里）。
+    ///
+    /// 没给就用环境变量 `CROC_SECRET`（`--extended-clipboard` 复制出来的命令靠的
+    /// 就是它）。命令行给的优先。
+    #[arg(env = "CROC_SECRET", hide_env_values = true)]
     code: Option<String>,
 
     #[command(flatten)]
@@ -93,7 +100,11 @@ struct SendArgs {
     paths: Vec<PathBuf>,
 
     /// 自定义口令码（至少 6 个字符）。
-    #[arg(short = 'c', long)]
+    ///
+    /// 没给就用环境变量 `CROC_SECRET`（与 Go 同名）。**命令行给的优先**——环境变量
+    /// 只是省得每次重打。
+    // `hide_env_values`：口令码是凭据，`--help` 不该把它原样打出来——那个输出经常被贴进 issue。
+    #[arg(short = 'c', long, env = "CROC_SECRET", hide_env_values = true)]
     code: Option<String>,
 
     /// 发送一段文本而不是文件。
@@ -158,10 +169,10 @@ struct SendArgs {
 struct Global {
     /// 中继地址。默认 `croc.schollz.com:9009`。
     ///
-    /// 这里是 `Option` 而不是带默认值的 `String`：只有分清"用户给了"与"没给"，才能让
-    /// `--remember` 存下来的值只在**没给**时生效。
-    #[arg(long, env = "CROC_RELAY", global = true)]
-    relay: Option<String>,
+    /// 给了非默认值就不再试 `--relay6`，反之亦然：两个都是候选时，Happy Eyeballs
+    /// 可能连上用户没指定的那一个，而那边的房间是另一套。
+    #[arg(long, default_value = DEFAULT_RELAY, env = "CROC_RELAY", global = true)]
+    relay: String,
 
     /// 中继密码。
     #[arg(long, default_value = DEFAULT_PASSPHRASE, env = "CROC_PASS", global = true)]
@@ -230,15 +241,47 @@ struct Global {
     ///
     /// 默认情况下，stdin 是管道/重定向（而不是终端）时，它的内容会被当成一个文件发出去
     /// ——Go 的 `copyStdinContext` 就是这么做的。脚本里用管道喂别的数据时用这个关掉。
-    #[arg(long)]
+    #[arg(long, global = true)]
     ignore_stdin: bool,
+
+    /// 使用自带的 DNS stub resolver，而不是操作系统的解析器。
+    ///
+    /// 打开后直接问一组公共 DNS（Go 的 `models.publicDNS`），绕过 hosts 文件与
+    /// `systemd-resolved` 这类本机配置。与 `--remember` 一起给会被记下来，之后默认开启。
+    #[arg(long, global = true)]
+    internal_dns: bool,
+
+    /// 切换 classic 模式（切换后直接结束，不传输）。
+    ///
+    /// classic 模式允许把口令码写在命令行上——那会留在 shell 历史与进程表里，多用户
+    /// 机器上别的本地用户能看到并抢先把文件收走。关闭它时，命令行口令码会被拒，改用
+    /// `CROC_SECRET` 环境变量（`--classic` 只影响非 Windows 平台，与 Go 一致）。
+    #[arg(long, global = true)]
+    classic: bool,
+
+    /// 不把口令码复制到剪贴板。
+    #[arg(long, global = true)]
+    disable_clipboard: bool,
+
+    /// 复制整条接收命令，而不是只复制口令码。
+    ///
+    /// 命令形如 `CROC_SECRET="<码>" croc-rs --relay <中继>`，对端直接粘进终端就行，
+    /// 口令码不会进 shell 历史。
+    #[arg(long, global = true)]
+    extended_clipboard: bool,
+
+    /// 上行限速，如 `500k` / `1M` / `1048576`（不带单位就是字节/秒）。
+    ///
+    /// 只对发送方有效。`k` / `m` / `g` 按 1024 进位。
+    #[arg(long, alias = "throttleUpload", default_value = "", global = true)]
+    throttle_upload: String,
 
     /// IPv6 中继地址。默认 `croc6.schollz.com:9009`。
     ///
     /// 与 `--relay` 一起按 Happy Eyeballs 试：谁先握手通用谁，所以 IPv6 可用时不必白等
-    /// IPv4。两者都连不上才算失败。
-    #[arg(long, env = "CROC_RELAY6", global = true)]
-    relay6: Option<String>,
+    /// IPv4。两者都连不上才算失败。只给了其中一个（非默认值）时就用那个一个。
+    #[arg(long, default_value = DEFAULT_RELAY6, env = "CROC_RELAY6", global = true)]
+    relay6: String,
 
     /// 已知的对方地址（如 `10.0.0.1:9009`、`[::1]:9009`）。
     ///
@@ -289,6 +332,22 @@ struct Global {
     debug: bool,
 }
 
+/// 口令码要不要进剪贴板。
+///
+/// 默认会复制——这是 Go 的行为，也是这个功能的价值所在：口令码要交给对端，
+/// 手抄一遍很容易错。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clipboard {
+    /// 只复制口令码。
+    Code,
+    /// `--extended-clipboard`：复制整条接收命令（`CROC_SECRET=… croc-rs …`）。
+    ///
+    /// 这样口令码不会进 shell 历史，也不会出现在进程表里。
+    Command,
+    /// `--disable-clipboard`：不碰剪贴板。
+    Off,
+}
+
 /// 解析好的参数。
 pub struct Parsed {
     /// 打开调试日志。
@@ -299,12 +358,17 @@ pub struct Parsed {
 
 /// 要执行的动作。
 pub enum Action {
-    /// 发送。`qrcode` 是纯展示选项，不进 [`SendRequest`]。
-    Send { request: Box<SendRequest>, qrcode: bool },
+    /// 发送。`qrcode` / `clipboard` 是纯展示选项，不进 [`SendRequest`]。
+    Send { request: Box<SendRequest>, qrcode: bool, clipboard: Clipboard },
     /// 接收。
     Receive(Box<ReceiveRequest>),
     /// 自建中继。
     Relay(Box<RelayRequest>),
+    /// 切换 classic 模式（`--classic`）。
+    ///
+    /// 它是**动作**不是开关：Go 把它放在 `Before` 钩子里，处理完就 `os.Exit(0)`，
+    /// 后面的命令一概不跑。
+    ToggleClassic,
 }
 
 /// 自建中继的请求。
@@ -325,33 +389,58 @@ pub struct RelayRequest {
 /// 参数不合法（曲线名拼错、口令码太短、既没给子命令也没给口令码）时返回
 /// [`ExitCode::FAILURE`]，并且已经把原因打到 stderr 上了。
 pub fn parse() -> Result<Parsed, ExitCode> {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => {
+            let _ = error.print();
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    let given = Given::new(&matches);
 
-    if let Err(reason) = validate_transport(cli.global.local, cli.global.transport) {
+    // `--classic` 是动作：切完就结束。Go 在 `Before` 里处理完直接 `os.Exit(0)`，哪怕
+    // 同一个命令行上还写了别的。
+    if cli.global.classic {
+        return Ok(Parsed { debug: cli.global.debug, action: Action::ToggleClassic });
+    }
+    // 这次读哪一侧的配置：发送读 `send.json`、接收读 `receive.json`（Go 就是两份）。
+    // 带了 `--remember` 就不读旧配置：这一趟是要**覆盖**它（Go 的 `!c.Bool("remember")`）。
+    let side = if cli.command.is_none() { Side::Receive } else { Side::Send };
+    let remembered = if cli.global.remember { Remembered::default() } else { Remembered::load(side) };
+
+    // `--transport` 可能来自配置，所以先合出来再校验。
+    let transport = effective_transport(&cli.global, &given, &remembered);
+    if let Err(reason) = validate_transport(cli.global.local, transport) {
         eprintln!("{reason}");
         return Err(ExitCode::FAILURE);
     }
     // 降级提示在 `--quiet` 下要吞掉——Go 的 `writeTailcatRelayFallbackWarning()`
     // 也是先看 `quiet`（`src/cli/cli.go:581`）。
-    if cli.global.transport == Transport::Derp && !cli.global.quiet {
+    if transport == Transport::Derp && !cli.global.quiet {
         eprintln!("{TAILSCALE_PENDING_NOTE}");
     }
 
-    let curve = match CurveKind::from_name(&cli.global.curve) {
-        Ok(curve) => curve,
-        Err(error) => {
-            eprintln!("croc-rs: {error}");
-            eprintln!("可用曲线：{}", CurveKind::ALL.map(CurveKind::name).join(", "));
+    // `--throttleUpload` 的写错要在这里就报出来：等连上中继再报，用户已经等过一次握手。
+    let throttle_upload = match parse_throttle(&cli.global.throttle_upload) {
+        Ok(rate) => rate,
+        Err(reason) => {
+            eprintln!("{reason}");
             return Err(ExitCode::FAILURE);
         }
     };
+    // `--remember` 与 `--internal-dns` 一起给就把它记下来：Go 用 <config>/internal-dns
+    // 这个空文件记这件事（`constants.go:55`）。
+    if cli.global.remember && cli.global.internal_dns {
+        crate::config::remember_internal_dns(cli.global.quiet);
+    }
+    let internal_dns = cli.global.internal_dns || crate::config::internal_dns_enabled();
+    let clipboard = clipboard_choice(&cli.global, &given, &remembered);
+
     let events = sink(&cli.global);
     let machine_id = machine_id();
-    // `--remember` 存下来的地址只在**本次没给**时生效（Go 的
-    // `applyRememberedSendOptions`，`cli.go:528`）。
-    let remembered = crate::config::Remembered::load();
-    let relay = cli.global.relay.clone().or(remembered.relay).unwrap_or_else(|| DEFAULT_RELAY.to_owned());
-    let relay6 = cli.global.relay6.clone().or(remembered.relay6).unwrap_or_else(|| DEFAULT_RELAY6.to_owned());
+    // classic 模式开着的话，命令行上的口令码是被允许的（Go 的 `classicInsecureMode`）。
+    let classic = crate::config::classic_enabled();
 
     match cli.command {
         Some(Command::Relay(args)) => {
@@ -359,8 +448,19 @@ pub fn parse() -> Result<Parsed, ExitCode> {
             Ok(Parsed { debug: cli.global.debug, action: Action::Relay(Box::new(RelayRequest { args, password })) })
         }
         Some(Command::Send(args)) => {
+            // 命令行给的优先，`--remember` 存下来的只填空位。
+            let options = merge_send(&cli.global, &args, &given, &remembered);
+            // 先算出来：下面 `args.paths` 会被移走，之后就借不到整个 `args` 了。
+            let save_remembered = cli.global.remember.then(|| remembered_for_send(&cli.global, &args, &given));
+            let curve = match parse_curve(&options.curve) {
+                Ok(curve) => curve,
+                Err(reason) => {
+                    eprintln!("{reason}");
+                    return Err(ExitCode::FAILURE);
+                }
+            };
             let mut paths = args.paths;
-            if let Err(reason) = validate_hash(&args.hash) {
+            if let Err(reason) = validate_hash(&options.hash) {
                 eprintln!("{reason}");
                 return Err(ExitCode::FAILURE);
             }
@@ -390,15 +490,17 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                 eprintln!("{reason}");
                 return Err(ExitCode::FAILURE);
             }
-            if cli.global.remember {
-                // 只记"用户确实改过"的：与 Go 的 `non-default: ` 前缀一个意思。
-                crate::config::Remembered {
-                    relay: (relay != DEFAULT_RELAY).then(|| relay.clone()),
-                    relay6: (relay6 != DEFAULT_RELAY6).then(|| relay6.clone()),
-                }
-                .save(cli.global.quiet);
+            // 非 Windows 上拒命令行口令码，除非开了 classic 模式或给了 `CROC_SECRET`
+            // （Go 的 `shouldExitForUnixSendCode`，`cli.go:521`）。
+            if refuses_command_line_code(cfg!(windows), given.sub_on_cli("code"), classic, env_secret().is_some()) {
+                eprintln!("{UNIX_SEND_CODE_REFUSED}");
+                return Err(ExitCode::FAILURE);
             }
-            let (code, components) = match generate_code(args.code.as_deref()) {
+            // 与 Go 一样在开始传输**之前**写（`cli.go:846`）。
+            if let Some(remembered) = save_remembered {
+                remembered.save(Side::Send, cli.global.quiet);
+            }
+            let (code, components) = match generate_code(options.code.as_deref()) {
                 Ok(pair) => pair,
                 Err(error) => {
                     eprintln!("croc-rs: {error}");
@@ -409,28 +511,31 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                 debug: cli.global.debug,
                 action: Action::Send {
                     qrcode: args.qrcode,
+                    clipboard,
                     request: Box::new(SendRequest {
-                        relay: relay.clone(),
-                        relay_password: cli.global.pass,
+                        relay: options.relay.clone(),
+                        relay_password: options.password.clone(),
                         components,
                         code,
                         curve,
                         paths,
-                        hash_algorithm: args.hash,
+                        hash_algorithm: options.hash.clone(),
                         exclude: args.exclude,
                         exclude_file: args.exclude_file,
-                        git: args.git,
+                        git: options.git,
                         zip: args.zip,
                         proxy: croc_engine::proxy::Proxy::from_flags(
                             cli.global.socks5.as_deref(),
                             cli.global.connect.as_deref(),
                         ),
                         multicast: cli.global.multicast,
-                        relay6: relay6.clone(),
+                        relay6: options.relay6.clone(),
                         ip: cli.global.ip.clone(),
                         ask: cli.global.ask,
+                        internal_dns,
+                        throttle_upload,
                         no_compress: cli.global.no_compress,
-                        local: cli.global.local,
+                        local: options.local,
                         relay_base_port: Some(args.port),
                         // 已经由 clap 的 range 限到 1..=8。
                         transfers: usize::from(args.transfers),
@@ -442,9 +547,33 @@ pub fn parse() -> Result<Parsed, ExitCode> {
             })
         }
         None => {
-            let Some(code) = cli.code else {
+            // 接收方的应用集比发送方小：Go 在 `receive()` 里手写的一段（`cli.go:1052`）。
+            let mut options = merge_receive(&cli.global, cli.code.as_deref(), &given, &remembered);
+            // 非 Windows 上命令行口令码会被拒；这时环境变量是唯一出路，与 Go 一样先
+            // 悄悄换掉它（`cli.go:1090`）。
+            if !cfg!(windows) && given.top_on_cli("code") && !classic {
+                if let Some(secret) = env_secret() {
+                    options.code = Some(secret);
+                } else {
+                    eprintln!("{UNIX_RECEIVE_CODE_REFUSED}");
+                    return Err(ExitCode::FAILURE);
+                }
+            }
+            // 一个码都没给就在终端上问一句（Go 的 `Enter receive code: `）。管道里不
+            // 问：那种场合问下去会一直等，直接报错更清楚。
+            let Some(code) = options.code.clone().or_else(prompt_receive_code) else {
                 eprintln!("croc-rs: 需要一个口令码，或者一个子命令（send / relay）");
                 return Err(ExitCode::FAILURE);
+            };
+            if cli.global.remember {
+                remembered_for_receive(&cli.global, &code).save(Side::Receive, cli.global.quiet);
+            }
+            let curve = match parse_curve(&options.curve) {
+                Ok(curve) => curve,
+                Err(reason) => {
+                    eprintln!("{reason}");
+                    return Err(ExitCode::FAILURE);
+                }
             };
             let components = match codephrase::parse(&code) {
                 Ok(components) => components,
@@ -455,7 +584,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
             };
             // 回调**总是**注册：对端的 `Ask` 要到清单到达才知道，而它压得住本端的
             // `--yes`（Go 的 `!NoPrompt || Ask || senderInfo.Ask`）。
-            let (yes, ask) = (cli.global.yes, cli.global.ask);
+            let (yes, ask) = (options.yes, cli.global.ask);
             let prompt_machine_id = machine_id.clone();
             let confirm = Some(Arc::new(move |info: &croc_protocol::SenderInfo| {
                 prompt_confirm(info, yes, ask, &prompt_machine_id)
@@ -463,22 +592,23 @@ pub fn parse() -> Result<Parsed, ExitCode> {
             Ok(Parsed {
                 debug: cli.global.debug,
                 action: Action::Receive(Box::new(ReceiveRequest {
-                    relay: relay.clone(),
-                    relay_password: cli.global.pass,
+                    relay: options.relay.clone(),
+                    relay_password: options.password.clone(),
                     components,
                     curve,
                     out_dir: cli.global.out,
-                    preferences: Preferences { overwrite: cli.global.overwrite, rename: cli.global.rename },
+                    preferences: Preferences { overwrite: options.overwrite, rename: options.rename },
                     no_compress: cli.global.no_compress,
-                    local: cli.global.local,
+                    local: options.local,
                     proxy: croc_engine::proxy::Proxy::from_flags(
                         cli.global.socks5.as_deref(),
                         cli.global.connect.as_deref(),
                     ),
                     multicast: cli.global.multicast,
-                    relay6: relay6.clone(),
+                    relay6: options.relay6.clone(),
                     ip: cli.global.ip.clone(),
                     stdout: cli.global.stdout,
+                    internal_dns,
                     no_multi: cli.global.no_multi,
                     machine_id,
                     confirm,
@@ -495,9 +625,11 @@ pub async fn run(parsed: Parsed) -> ExitCode {
     spawn_signal_handler(cancel.clone());
 
     match parsed.action {
+        // 人机交互动作，与取消令牌无关。
+        Action::ToggleClassic => toggle_classic(),
         Action::Relay(request) => crate::relay_cmd::run(request.args, &request.password, cancel).await,
-        Action::Send { request, qrcode } => {
-            print_send_instructions(&request, qrcode);
+        Action::Send { request, qrcode, clipboard } => {
+            print_send_instructions(&request, qrcode, clipboard);
             match croc_engine::send(*request, cancel).await {
                 Ok(summary) => {
                     println!("发送完成：{} 个文件，{} 字节", summary.files, summary.bytes);
@@ -650,15 +782,26 @@ fn temp_artifact_path() -> PathBuf {
 ///
 /// 打印的是**口令码**而不是房间名：房间名是 `hex(sha256(码 + "croc"))`，它是线路上的
 /// 东西，人对不上。用户之间传递的永远是码。
-fn print_send_instructions(request: &SendRequest, qrcode: bool) {
+fn print_send_instructions(request: &SendRequest, qrcode: bool, clipboard: Clipboard) {
+    // 先复制、再把结果写进提示里：Go 也是这个顺序（`croc.go:1808`），因为"有没有
+    // 复制上"只有试过才知道。
+    let copied = if clipboard == Clipboard::Off {
+        None
+    } else {
+        crate::clipboard::copy(&clipboard_text(request, clipboard)).then_some(match clipboard {
+            Clipboard::Command => "命令已复制到剪贴板",
+            _ => "口令码已复制到剪贴板",
+        })
+    };
+    let notice = copied.map_or_else(String::new, |text| format!("（{text}）"));
     println!("口令码：{}", request.code);
     println!("让对方执行：");
     // `--local` 时中继就是本端，喊出去的端口每次都不同，对端是靠组播找过来的——
     // 打印一个 `--relay` 只会让人拿一个下次就失效的地址。
     if request.local {
-        println!("  croc-rs --local {}", request.code);
+        println!("  croc-rs --local {}{notice}", request.code);
     } else {
-        println!("  croc-rs --relay {} {}", request.relay, request.code);
+        println!("  croc-rs --relay {} {}{notice}", request.relay, request.code);
     }
     // `--ask`：把自己的 ID 打出来，对方那边会问"来的是不是这台"。
     if request.ask {
@@ -673,6 +816,383 @@ fn print_send_instructions(request: &SendRequest, qrcode: bool) {
             Err(reason) => eprintln!("{reason}"),
         }
     }
+}
+
+/// 要放进剪贴板的那段文本。
+///
+/// `--extended-clipboard` 复制的是**整条**接收命令：口令码通过环境变量传，因此不会
+/// 进 shell 历史，也不会留在进程表里（这正是这个开关存在的理由）。
+fn clipboard_text(request: &SendRequest, choice: Clipboard) -> String {
+    match choice {
+        Clipboard::Off | Clipboard::Code => request.code.clone(),
+        Clipboard::Command => {
+            let flags = if request.local { " --local".to_owned() } else { format!(" --relay {}", request.relay) };
+            format!("CROC_SECRET=\"{}\" croc-rs{flags}", request.code)
+        }
+    }
+}
+
+/// 解析 `--throttleUpload`，返回字节/秒。
+///
+/// 语义与 Go 一致（`croc.go:451`）：末位是 `k` / `m` / `g`（大小写都算）就按 1024
+/// 进位，否则整个字符串当字节数。**长度不足 2 的输入等于没给**——Go 的
+/// `len(...) > 1` 就是这个意思，所以 `--throttle-upload 5` 在 Go 那边也不限速。
+///
+/// 与 Go 的差别只在写错时的表现：Go 直接 `panic`（退出码 2 + 一段栈），这里给一行
+/// 能读的报错。
+fn parse_throttle(value: &str) -> Result<Option<u64>, String> {
+    let text = value.trim();
+    if text.len() < 2 {
+        return Ok(None);
+    }
+    let (digits, multiplier) = text
+        .strip_suffix(['g', 'G'])
+        .map(|digits| (digits, 1024_u64 * 1024 * 1024))
+        .or_else(|| text.strip_suffix(['m', 'M']).map(|digits| (digits, 1024 * 1024)))
+        .or_else(|| text.strip_suffix(['k', 'K']).map(|digits| (digits, 1024)))
+        .unwrap_or((text, 1));
+    let invalid = || format!("croc-rs: --throttle-upload {value:?} 不是合法速率（例：500k、1M、1048576）");
+    let number: u64 = digits.trim().parse().map_err(|_| invalid())?;
+    let rate = number.checked_mul(multiplier).filter(|rate| *rate > 0).ok_or_else(invalid)?;
+    Ok(Some(rate))
+}
+
+/// 参数是命令行（或环境变量）给的，还是 clap 填的默认值。
+///
+/// `--remember` 存下来的值**只填空位**，判据就是它——对应 Go 的 `c.IsSet(name)`。
+/// 环境变量也算「给了」：`CROC_RELAY` 与 `--relay` 是同一个开关的两条路。
+///
+/// 查询分**顶层**与**子命令**两层，调用方按参数的归属选：`--relay` / `--curve` 这些在
+/// 顶层，`--code` / `--hash` / `--git` 挂在 `send` 上。`ArgMatches` 只认识自己那一层声明
+/// 过的 id，查错层在 debug 下 panic、release 下静默当作「没给」——后者会把用户给的
+/// 口令码丢掉、另生成一个，两端于是永远握不上手。
+struct Given<'a> {
+    top: &'a ArgMatches,
+    sub: Option<&'a ArgMatches>,
+}
+
+impl<'a> Given<'a> {
+    fn new(top: &'a ArgMatches) -> Self {
+        Self { top, sub: top.subcommand().map(|(_, matches)| matches) }
+    }
+
+    /// 顶层参数给了吗（命令行或环境变量）。
+    fn top_given(&self, id: &str) -> bool {
+        self.top.value_source(id).is_some_and(|source| source != ValueSource::DefaultValue)
+    }
+
+    /// 顶层参数是**命令行**给的吗。安全相关的判断只看它：环境变量不会进 shell 历史。
+    fn top_on_cli(&self, id: &str) -> bool {
+        self.top.value_source(id) == Some(ValueSource::CommandLine)
+    }
+
+    /// `send` 子命令的参数给了吗。没有子命令时恒为假。
+    fn sub_given(&self, id: &str) -> bool {
+        self.sub.and_then(|matches| matches.value_source(id)).is_some_and(|source| source != ValueSource::DefaultValue)
+    }
+
+    /// `send` 子命令的参数是命令行给的吗。
+    fn sub_on_cli(&self, id: &str) -> bool {
+        self.sub.and_then(|matches| matches.value_source(id)) == Some(ValueSource::CommandLine)
+    }
+}
+
+/// 环境变量里的口令码。
+fn env_secret() -> Option<String> {
+    std::env::var("CROC_SECRET").ok().filter(|secret| !secret.is_empty())
+}
+
+/// 「命令行给了就用它；没给就用记住的；记住的是空的就退回默认」。
+fn pick(given: bool, remembered: &str, fallback: &str) -> String {
+    if given || remembered.is_empty() { fallback.to_owned() } else { remembered.to_owned() }
+}
+
+/// 记住的值非空才算数。
+fn non_empty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// 发送方这次真正要用的选项。
+struct SendOptions {
+    relay: String,
+    relay6: String,
+    password: String,
+    curve: String,
+    code: Option<String>,
+    hash: String,
+    git: bool,
+    local: bool,
+}
+
+/// 发送方的合并：Go 的 `applyRememberedSendOptions`（`cli.go:525`）。
+fn merge_send(cli: &Global, args: &SendArgs, given: &Given<'_>, remembered: &Remembered) -> SendOptions {
+    let mut relay = cli.relay.clone();
+    let mut relay6 = cli.relay6.clone();
+    // 只试用户指定的那一个：两个都当候选时会连上他没指定的中继，那边的房间是另一套。
+    // Go 在 `cli.go:682` 做同一件事，而**接收端没有这一步**——那个不对称照抄。
+    if relay != DEFAULT_RELAY {
+        relay6.clear();
+    } else if relay6 != DEFAULT_RELAY6 {
+        relay.clear();
+    }
+    if !given.top_given("relay")
+        && let Some(address) = decode_relay(&remembered.relay_address)
+    {
+        relay = address.to_owned();
+    }
+    if !given.top_given("relay6")
+        && let Some(address) = decode_relay(&remembered.relay_address6)
+    {
+        relay6 = address.to_owned();
+    }
+    SendOptions {
+        relay,
+        relay6,
+        password: pick(given.top_given("pass"), &remembered.relay_password, &cli.pass),
+        curve: pick(given.top_given("curve"), &remembered.curve, &cli.curve),
+        hash: pick(given.sub_given("hash"), &remembered.hash_algorithm, &args.hash),
+        code: if given.sub_given("code") { args.code.clone() } else { non_empty(&remembered.shared_secret) },
+        git: if given.sub_given("git") { args.git } else { remembered.git_ignore },
+        local: if given.top_given("local") { cli.local } else { remembered.only_local },
+    }
+}
+
+/// 接收方这次真正要用的选项。
+struct ReceiveOptions {
+    relay: String,
+    relay6: String,
+    password: String,
+    curve: String,
+    code: Option<String>,
+    yes: bool,
+    overwrite: bool,
+    rename: bool,
+    local: bool,
+}
+
+/// 接收方的合并。Go 在 `receive()` 里手写的一段（`cli.go:1052`），应用集比发送方小：
+/// 少了 `--hash` / `--git` / `--transport` / `--disable-clipboard` / `--no-local`。
+fn merge_receive(cli: &Global, code: Option<&str>, given: &Given<'_>, remembered: &Remembered) -> ReceiveOptions {
+    let mut relay = cli.relay.clone();
+    let mut relay6 = cli.relay6.clone();
+    if !given.top_given("relay")
+        && let Some(address) = decode_relay(&remembered.relay_address)
+    {
+        relay = address.to_owned();
+    }
+    if !given.top_given("relay6")
+        && let Some(address) = decode_relay(&remembered.relay_address6)
+    {
+        relay6 = address.to_owned();
+    }
+    ReceiveOptions {
+        relay,
+        relay6,
+        password: pick(given.top_given("pass"), &remembered.relay_password, &cli.pass),
+        curve: pick(given.top_given("curve"), &remembered.curve, &cli.curve),
+        // 命令行的口令码只可能从位置参数或 `CROC_SECRET` 来，没给就是 `None`。
+        code: code.map(ToOwned::to_owned).or_else(|| non_empty(&remembered.shared_secret)),
+        // 接收端会记 `--yes`（Go 的 `NoPrompt`），发送端不记。
+        yes: if given.top_given("yes") { cli.yes } else { remembered.no_prompt },
+        overwrite: if given.top_given("overwrite") { cli.overwrite } else { remembered.overwrite },
+        rename: if given.top_given("rename") { cli.rename } else { remembered.rename },
+        local: if given.top_given("local") { cli.local } else { remembered.only_local },
+    }
+}
+
+/// 写发送方的配置（Go 的 `saveConfig`，`cli.go:937`）。
+///
+/// 口令码**只在命令行确实给了**时才写：不然会把一个自动生成的一次性码存下来，下次照用。
+fn remembered_for_send(cli: &Global, args: &SendArgs, given: &Given<'_>) -> Remembered {
+    Remembered {
+        shared_secret: if given.sub_given("code") { args.code.clone().unwrap_or_default() } else { String::new() },
+        relay_address: encode_relay(&cli.relay, DEFAULT_RELAY),
+        relay_address6: encode_relay(&cli.relay6, DEFAULT_RELAY6),
+        relay_password: cli.pass.clone(),
+        no_prompt: cli.yes,
+        overwrite: cli.overwrite,
+        rename: cli.rename,
+        curve: cli.curve.clone(),
+        only_local: cli.local,
+        hash_algorithm: args.hash.clone(),
+        git_ignore: args.git,
+        disable_clipboard: cli.disable_clipboard,
+        disable_local: cli.no_local,
+        transport: transport_name(cli.transport).to_owned(),
+    }
+}
+
+/// 写接收方的配置（Go 在 `receive()` 里的那段，`cli.go:1126`）。
+///
+/// 接收端存的口令码是**这次实际用的那个**（可能来自命令行、环境变量或上次记住的）。
+fn remembered_for_receive(cli: &Global, code: &str) -> Remembered {
+    Remembered {
+        shared_secret: code.to_owned(),
+        relay_address: encode_relay(&cli.relay, DEFAULT_RELAY),
+        relay_address6: encode_relay(&cli.relay6, DEFAULT_RELAY6),
+        relay_password: cli.pass.clone(),
+        no_prompt: cli.yes,
+        overwrite: cli.overwrite,
+        rename: cli.rename,
+        curve: cli.curve.clone(),
+        only_local: cli.local,
+        ..Remembered::default()
+    }
+}
+
+/// 这次真正要用的 `--transport`。
+///
+/// 它可能来自配置（只有发送端记它），所以不能只看 `cli.transport`。
+fn effective_transport(cli: &Global, given: &Given<'_>, remembered: &Remembered) -> Transport {
+    if given.top_given("transport") {
+        return cli.transport;
+    }
+    remembered_transport(&remembered.transport).unwrap_or(cli.transport)
+}
+
+/// 口令码要不要进剪贴板，进的话放什么。
+///
+/// `--disable-clipboard` 会跟着 `--remember` 走，`--extended-clipboard` 不会
+/// （Go 的记住项里也没有它）。
+fn clipboard_choice(cli: &Global, given: &Given<'_>, remembered: &Remembered) -> Clipboard {
+    let disabled =
+        if given.top_given("disable-clipboard") { cli.disable_clipboard } else { remembered.disable_clipboard };
+    if disabled {
+        Clipboard::Off
+    } else if cli.extended_clipboard {
+        Clipboard::Command
+    } else {
+        Clipboard::Code
+    }
+}
+
+/// `--transport` 写进配置时用的名字。Go 的 `TransportMode` 也是这三个字符串。
+const fn transport_name(transport: Transport) -> &'static str {
+    match transport {
+        Transport::Auto => "auto",
+        Transport::Relay => "relay",
+        Transport::Derp => "derp",
+    }
+}
+
+/// 读回配置里的 `--transport`。认不出来就当没记过。
+fn remembered_transport(name: &str) -> Option<Transport> {
+    <Transport as clap::ValueEnum>::from_str(name, true).ok()
+}
+
+/// 解析 `--curve`。拼错时把可用曲线一起列出来。
+fn parse_curve(name: &str) -> Result<CurveKind, String> {
+    CurveKind::from_name(name).map_err(|error| {
+        format!(
+            "croc-rs: {error}
+可用曲线：{}",
+            CurveKind::ALL.map(CurveKind::name).join(", ")
+        )
+    })
+}
+
+/// 命令行上的口令码要不要拒。
+///
+/// Go 的 `shouldExitForUnixSendCode`（`cli.go:521`）：非 Windows、命令行给了码、没开
+/// classic 模式、环境变量也没给。**Windows 上不拒**——命令行在那儿本来就是常态。
+#[must_use]
+const fn refuses_command_line_code(
+    is_windows: bool,
+    from_command_line: bool,
+    classic: bool,
+    has_env_secret: bool,
+) -> bool {
+    !is_windows && from_command_line && !classic && !has_env_secret
+}
+
+/// 拒了命令行口令码时给发送方的说明（Go 的原文在 `cli.go:750`）。
+const UNIX_SEND_CODE_REFUSED: &str = "\
+croc-rs: 命令行上的口令码会留在 shell 历史与进程表里，多用户机器上别人能看到。
+
+改用环境变量：
+
+  CROC_SECRET=**** croc-rs send 文件
+
+或者让本程序自己生成一个：
+
+  croc-rs send 文件
+
+要恢复旧行为（允许命令行口令码），启用 classic 模式：
+
+  croc-rs --classic";
+
+/// 拒了命令行口令码时给接收方的说明。
+const UNIX_RECEIVE_CODE_REFUSED: &str = "\
+croc-rs: 命令行上的口令码会留在 shell 历史与进程表里，多用户机器上别人能看到。
+
+改用环境变量：
+
+  CROC_SECRET=**** croc-rs
+
+要恢复旧行为（允许命令行口令码），启用 classic 模式：
+
+  croc-rs --classic";
+
+/// `--classic` 的提示语。默认答案是否——这个开关削弱安全性，不该被顺手确认。
+#[must_use]
+const fn classic_prompt(enabled: bool) -> &'static str {
+    if enabled {
+        "classic 模式当前是**开启**的。\
+\n\n关闭它可以避免口令码出现在进程表里，多用户机器上别的本地用户就看不到它了。\
+\n\n确定要关闭 classic 模式吗？(y/N) "
+    } else {
+        "classic 模式当前是**关闭**的。\
+\n\n开启它会让口令码出现在进程表里，多用户机器上别的本地用户可能看到它、并抢先把文件收走。\
+\n\n确定要开启 classic 模式吗？(y/N) "
+    }
+}
+
+/// 切换成功之后的说明。
+#[must_use]
+const fn classic_notice(enabled: bool) -> &'static str {
+    if enabled {
+        "\nclassic 模式已关闭。\n\n改用环境变量传口令码：\n\n  CROC_SECRET=**** croc-rs send 文件\n  CROC_SECRET=**** croc-rs\n"
+    } else {
+        "\nclassic 模式已开启。\n\n可以直接把口令码写在命令行上：\n\n  croc-rs send --code **** 文件\n  croc-rs ****\n"
+    }
+}
+
+/// `--classic`：切换 classic 模式。
+///
+/// 答完**无论哪一边都以成功退出**（Go 也是 `os.Exit(0)`）：这是一次人机交互，不是一次
+/// 传输，用户选择保持原样不算失败。
+fn toggle_classic() -> ExitCode {
+    use std::io::{BufRead as _, Write as _};
+
+    let enabled = crate::config::classic_enabled();
+    eprint!("{}", classic_prompt(enabled));
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    if std::io::stdin().lock().read_line(&mut line).is_err() {
+        return ExitCode::FAILURE;
+    }
+    if matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        crate::config::set_classic(!enabled, false);
+        print!("{}", classic_notice(enabled));
+    } else {
+        println!("\nclassic 模式{}", if enabled { "保持开启。" } else { "保持关闭。" });
+    }
+    ExitCode::SUCCESS
+}
+
+/// 交互式问接收口令码。**只在 stdin 是终端时问**——脚本里问会一直等下去。
+fn prompt_receive_code() -> Option<String> {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+    eprint!("请输入接收口令码：");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line).ok()?;
+    let code = line.trim().to_owned();
+    (!code.is_empty()).then_some(code)
 }
 
 /// 交互式确认。
@@ -780,6 +1300,94 @@ mod tests {
         for transport in [Transport::Relay, Transport::Derp] {
             let error = validate_transport(true, transport).expect_err("应报互斥");
             assert!(error.contains("--transport must be auto for local-only transfers"), "{error}");
+        }
+    }
+
+    #[test]
+    fn send_subcommand_flags_count_as_given() {
+        // `--code` / `--hash` / `--git` 的来源记在子命令的 matches 里。只查顶层会把
+        // `--code` 读成默认值，发送方于是丢掉用户给的口令码、另生成一个——两端永远
+        // 握不上手，表现为双方都卡住等对方。
+        let matches = Cli::command().get_matches_from(["croc-rs", "send", "--code", "acid-acorn-acre", "--git", "x"]);
+        let given = Given::new(&matches);
+        assert!(given.sub_given("code"), "--code 是命令行给的");
+        assert!(given.sub_on_cli("code"));
+        assert!(given.sub_given("git"), "--git 是命令行给的");
+        // 没给的仍然算没给（`--hash` 有默认值）。
+        assert!(!given.sub_given("hash"));
+        assert!(!given.sub_given("exclude"));
+        // 顶层参数照旧。
+        let matches = Cli::command().get_matches_from(["croc-rs", "--relay", "10.0.0.1:9100", "code11"]);
+        let given = Given::new(&matches);
+        assert!(given.top_given("relay"));
+        assert!(given.top_on_cli("code"), "接收时口令码是顶层位置参数");
+        assert!(!given.sub_given("code"), "没有子命令时子命令那一层恒为未给");
+    }
+
+    #[test]
+    fn only_the_command_line_is_refused() {
+        // Go 的 `shouldExitForUnixSendCode`（`cli.go:521`）四个条件全中才拒。
+        assert!(refuses_command_line_code(false, true, false, false));
+        // Windows 上命令行本来就是常态，拒了等于不能用。
+        assert!(!refuses_command_line_code(true, true, false, false));
+        // 环境变量给的口令码不会进 shell 历史与进程表。
+        assert!(!refuses_command_line_code(false, false, false, false));
+        // 环境变量里有码时，Go 是悄悄换掉它而不是报错。
+        assert!(!refuses_command_line_code(false, true, false, true));
+        // classic 模式就是为这条路留的。
+        assert!(!refuses_command_line_code(false, true, true, false));
+    }
+
+    #[test]
+    fn the_classic_prompt_defaults_to_no() {
+        // 提示以 (y/N) 收尾：这是个削弱安全性的开关，回车应当等于放弃。
+        for enabled in [true, false] {
+            let prompt = classic_prompt(enabled);
+            assert!(prompt.ends_with("(y/N) "), "{prompt}");
+        }
+        assert!(classic_prompt(true).contains("确定要关闭"));
+        assert!(classic_prompt(false).contains("确定要开启"));
+    }
+
+    #[test]
+    fn remembered_values_only_fill_the_gaps() {
+        // 命令行给了就用命令行的；没给才用记住的；记住的是空的就退回默认。
+        assert_eq!(pick(true, "remembered", "cli"), "cli");
+        assert_eq!(pick(false, "remembered", "cli"), "remembered");
+        assert_eq!(pick(false, "", "cli"), "cli");
+        assert_eq!(non_empty(""), None);
+        assert_eq!(non_empty("x"), Some("x".to_owned()));
+    }
+
+    #[test]
+    fn the_transport_name_round_trips() {
+        // 配置文件里的名字与 Go 的 `TransportMode` 是同一组字符串。
+        for transport in [Transport::Auto, Transport::Relay, Transport::Derp] {
+            assert_eq!(remembered_transport(transport_name(transport)), Some(transport));
+        }
+        assert_eq!(remembered_transport(""), None);
+        assert_eq!(remembered_transport("bogus"), None);
+    }
+
+    #[test]
+    fn throttle_units_follow_go() {
+        // Go：`if len(...) > 1`，所以一个字符的输入等于没给（`croc.go:451`）。
+        assert_eq!(parse_throttle(""), Ok(None));
+        assert_eq!(parse_throttle("5"), Ok(None));
+        // 不带单位就是**字节**/秒，不是 kB/s。
+        assert_eq!(parse_throttle("500"), Ok(Some(500)));
+        assert_eq!(parse_throttle("500k"), Ok(Some(500 * 1024)));
+        assert_eq!(parse_throttle("1M"), Ok(Some(1024 * 1024)));
+        assert_eq!(parse_throttle("2G"), Ok(Some(2 * 1024 * 1024 * 1024)));
+        assert_eq!(parse_throttle(" 1m "), Ok(Some(1024 * 1024)));
+    }
+
+    #[test]
+    fn bad_throttle_values_are_rejected() {
+        // Go 这里直接 panic；我们给一行能读的报错，但同样**不静默忽略**——
+        // 一个没生效的限速会让用户以为带宽被限住了。
+        for wrong in ["12x", "abc", "k5", "0k", "1.5m"] {
+            assert!(parse_throttle(wrong).is_err(), "{wrong} 应当被拒");
         }
     }
 

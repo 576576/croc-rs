@@ -168,6 +168,9 @@ pub async fn send(
         relay6: DEFAULT_RELAY6.to_owned(),
         ip: String::new(),
         ask: false,
+        // GUI 还没有 DNS 与限速的输入口。
+        internal_dns: false,
+        throttle_upload: None,
         hash_algorithm: "xxhash".to_owned(),
         no_compress: args.no_compress,
         // GUI 还没有 `--local` 的开关：默认走中继。下面三个只影响 `--local` 下的内建
@@ -220,6 +223,7 @@ pub async fn receive(
         relay6: DEFAULT_RELAY6.to_owned(),
         ip: String::new(),
         stdout: false,
+        internal_dns: false,
         no_multi: false,
         machine_id: machine_id(),
         // GUI 里"收不收"由前端的确认弹窗决定，这里给一个恒真的回调；

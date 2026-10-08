@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::data::{DataPlane, receive_file, stream_count};
+use crate::dns;
 use crate::error::EngineError;
 use crate::files::{self, Plan, Sink};
 use crate::local;
@@ -52,6 +53,8 @@ pub struct ReceiveRequest {
     pub ip: String,
     /// `--stdout`：收完把内容打到标准输出（`--text` 会自动开）。
     pub stdout: bool,
+    /// `--internal-dns`：用自带的 DNS stub resolver，而不是操作系统的解析器。
+    pub internal_dns: bool,
     /// `--no-multi`：禁用多端口复用，只用一条数据流。
     ///
     /// 必须与发送方**一致**：流数不在握手里协商，两端各自按中继 banner 推导，只有一端
@@ -130,9 +133,15 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
     } else {
         relay::candidate_addresses("", &request.relay, &request.relay6)
     };
-    let (mut link, relay_address) =
-        relay::connect_any(&relay_addresses, &request.relay_password, &request.components.room_name, &request.proxy)
-            .await?;
+    let resolve_with = if request.internal_dns { dns::Mode::Internal } else { dns::Mode::System };
+    let (mut link, relay_address) = relay::connect_any(
+        &relay_addresses,
+        &request.relay_password,
+        &request.components.room_name,
+        &request.proxy,
+        resolve_with,
+    )
+    .await?;
     let ports = link.data_ports();
     if ports.is_empty() {
         return Err(EngineError::Relay("the relay banner carried no data ports".to_owned()));
@@ -164,6 +173,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
         ports.clone(),
         streams,
         request.proxy.clone(),
+        resolve_with,
     ));
 
     // 文件循环的状态。
