@@ -19,7 +19,6 @@
 | Go 命令 | Rust v1 | 说明 |
 |---------|---------|------|
 | `croc update` | ⚠️ 仅 `--check` | 自更新推迟到 v1.1（需要签名基础设施） |
-| `croc store` | ❌ v2 | 依赖 store 服务端 |
 | `croc ssh` | ❌ v2 | 需要 PTY 与 tailcat 数据面 |
 | `croc generate-fish-completion` | ⚠️ | 由 clap_complete 生成 bash / zsh / fish 补全 |
 
@@ -28,13 +27,11 @@
 | Go flag | Rust v1 | 说明 |
 |---------|---------|------|
 | `--ts-authkey` | ⏸ 暂缓 | 见 §1.4 |
-| `--store` | ❌ v2 | 与 `croc store` 同源：需要先存入 store 服务端才能分享，故一并实现 |
 
 ### 1.3 全局参数
 
 | Go flag | Rust v1 | 说明 |
 |---------|---------|------|
-| `--revoke` | ❌ v2 | 与 `croc store` 同源，依赖 store 服务端 |
 
 ### 1.4 `--transport derp` —— ⏸ 暂缓实现
 
@@ -80,7 +77,7 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 
 1. **`--transport derp` 暂缓**（见 §1.4）。当前行为是「提示 + 走 relay」，既不是 Go 版的
    Tailcat 匿名节点协议，也没有采用官方 `tailscale` crate——后者虽已发布，但模型不匹配。
-2. **`croc store` 与 `croc ssh` 未实现**。
+2. **`croc ssh` 未实现**（`croc store` 的客户端已实现，见 §3.2 第 14 条）。
 3. **自更新机制不同**。v1 只提供 `croc-rs update --check`。
 
 ### 3.2 已实现，但方式与 Go 不同
@@ -120,6 +117,12 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
     `<config>/receive.json`，字段名与 Go 的 `croc.Options` 一致，但本实现只写出 Go 也会应用
     的那部分字段。Go 读取本实现写出的文件时，其余字段取零值，与 Go 自身在未设置时写出的值
     相同。
+14. **`croc store` 只做客户端**。Go 的 `croc-web` 既是网站又是暂存服务端；本实现只实现
+    客户端（`croc-rs store`、`send --store`、`--revoke`），服务端请用 Go 的。协议名
+    `croc-store-v1`，加密格式与九个 HTTP 端点都逐字节兼容：`crates/croc-store` 的黄金向量
+    测试比对 HKDF 派生、AAD、清单 JSON 与 Share 编码，互通由端到端验证（Rust 上传 → Go
+    下载，反向亦然，两个方向内容都一致）。上传成功后打印的过期时间用的是本实现的日期格式，
+    Go 用 RFC1123。
 
 ### 3.3 不构成差异，但影响验证
 

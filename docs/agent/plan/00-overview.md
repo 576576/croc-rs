@@ -42,7 +42,7 @@ Rust 化之后：**一套核心（`croc-core`）+ 两个前端（CLI / Tauri）*
 ### 非目标（Out of scope，v1 不做）
 
 - ❌ `croc ssh`（共享终端）——依赖 PTY 与 tailcat 的完整能力，放到 v2 评估
-- ❌ `croc store`（加密暂存、下载次数限制）——依赖 `storeclient` / `storecrypto` 服务端，v2
+- ❌ `croc store` 的**服务端**（Go 的 `croc-web`）——客户端已实现（`croc-rs store` / `send --store` / `--revoke`），服务端沿用 Go 的
 - ❌ 复刻 Go 版 tailcat 的 **CBOR ConnBlob wire**（匿名临时节点 + 自签名 DERP 引导 + 一次性客户端密钥授权）——见 [08-tailscale.md](08-tailscale.md)，v1 用官方 `tailscale` crate 走另一条路
 - ❌ Web 版（`getcroc.com` 那种 WASM 接收端）——v2
 - ❌ 自研新协议 / 新加密套件——本项目的立身之本是"兼容"，任何协议改动都是 v2 之后的独立提案

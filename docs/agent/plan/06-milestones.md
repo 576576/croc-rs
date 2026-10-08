@@ -107,6 +107,6 @@ P0 基建 + 黄金向量 ──┐
 | v1.1.0 | + `crocw-rs` GUI 桌面版（取代 FlCroc 桌面端） | 公开 |
 | v1.2.0 | + Android（取代 FlCroc Android 端） | 公开 |
 | ~~v1.3.0~~ | ~~Tailscale 数据面~~ | ⏸ pending，等上游 tailcat-rs |
-| v2.0.0 | store / ssh / Tailscale 数据面（若上游已稳定） | 待定 |
+| v2.0.0 | ssh / Tailscale 数据面（若上游已稳定） | 待定 |
 
 > 每个版本的产物均为 `croc-rs` 与 `crocw-rs` 两个，见 [09-build-and-ci.md](09-build-and-ci.md)。
