@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Rust ↔ Go 互通矩阵（I1–I18）。矩阵定义见 docs/agent/plan/07-risks-and-testing.md §2.2。
+# Rust ↔ Go 互通矩阵（I1–I21）。矩阵定义见 docs/agent/testing.md §2。
 #
 # 这是本项目的**生命线测试**：协议字节必须与 Go 版 croc v11.5.4 逐字节兼容，
 # 单测全绿也不代表能互通 —— 只有真跑一遍才知道。
@@ -908,7 +908,7 @@ case_i15() {
 }
 
 # I16–I18：`--transport derp` 在 pending 期间必须**降级到 relay 并成功**（不能崩）。
-# 语义见 docs/agent/plan/08-tailscale.md —— tailscale 整块 PENDING。
+# 语义见 docs/agent/plan/tailscale.md —— tailscale 整块 PENDING。
 case_derp() {  # <id> <发送方> <接收方> <relay kind> <描述后缀>
   local id="$1" sbin="$2" rbin="$3" relaykind="$4" suffix="$5"
   begin_case "$id" "--transport derp 降级为 relay（$suffix）" || return 0
@@ -989,7 +989,7 @@ main() {
   log ""
   log "通过 $PASSED · 失败 $FAILED · 跳过 $SKIPPED"
   if [ "${#SKIP_REASONS[@]}" -gt 0 ]; then
-    log "跳过用例（依赖尚未实现的能力）："
+    log "跳过的用例："
     local reason
     for reason in "${SKIP_REASONS[@]}"; do
       log "  $reason"

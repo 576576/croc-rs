@@ -4,7 +4,7 @@ name: Release
 #
 # 链路：prep（算参数）→ lint（门禁，与 prep 并行）→ build（needs: prep+lint）→ publish。
 # 质量门禁挂在 build 的 needs 上，所以门禁不过就直接不进编译 —— 没有绕过路径。
-# 决策与背景见 docs/agent/plan/09-build-and-ci.md。
+# 决策与背景见 docs/agent/build-and-ci.md。
 
 on:
   push:

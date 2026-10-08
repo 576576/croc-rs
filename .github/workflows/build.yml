@@ -3,7 +3,7 @@ name: Build
 # 可复用构建工作流（仅 workflow_call）：只负责把包做出来。
 #
 # **不推导任何参数** —— 版本号、通道后缀、矩阵 include 全在 release.yml 的 prep 里算一次。
-# 产物命名规则与背景见 docs/agent/plan/09-build-and-ci.md §3 / §5.2。
+# 产物命名规则与背景见 docs/agent/build-and-ci.md §3 / §5.2。
 #
 # # 一个 target 一个包，包里装两个二进制
 #

@@ -180,7 +180,7 @@ pub fn internal_dns_enabled() -> bool {
 ///
 /// Go 的触发条件是「`--remember` 出现在 argv 里」——**不带 `--internal-dns` 也会把标记
 /// 写上**，于是一次 `croc --remember file.txt` 就把内置 DNS 永久打开了。这里要求两个
-/// 开关同时给出，差异见 plan/04 的行为差异一节。
+/// 开关同时给出，差异见 docs/agent/cli.md 的行为差异一节。
 pub fn remember_internal_dns(quiet: bool) {
     let Some(path) = internal_dns_marker() else {
         return;

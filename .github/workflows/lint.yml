@@ -3,13 +3,13 @@ name: Lint
 # 质量门禁：格式 / 静态检查 / 测试 / 架构门禁 / MSRV。
 #
 # **互通矩阵不在这里，而且是有意不挂**：它只在本地跑（`cargo xtask ci-interop`）。
-# 理由见 docs/agent/plan/09-build-and-ci.md §5.3 —— 简单说，矩阵要在同一台机器上
+# 理由见 docs/agent/build-and-ci.md §5.3 —— 简单说，矩阵要在同一台机器上
 # 同时有 Rust 版与 Go 版 croc，还原样起 18 个用例的进程，进了 CI 就成了发布链路上一段
 # 又慢又不稳的环节；它的价值是"改动协议字节之后本地跑一遍"，不是"挡住某个 commit"。
 #
 # **不跟 push / PR**：由 release.yml 在调用 build 之前作为一个 job 调起（`workflow_call`），
 # 所以发布链路上没有任何一道能绕过它；单独跑它用 workflow_dispatch。
-# 决策与背景见 docs/agent/plan/09-build-and-ci.md §1.2 / §5.3。
+# 决策与背景见 docs/agent/build-and-ci.md §1.2 / §5.3。
 #
 # 代价是 PR 阶段没有绿灯信号 —— 由本地 `cargo xtask ci-lint` 补（见 §6）。
 

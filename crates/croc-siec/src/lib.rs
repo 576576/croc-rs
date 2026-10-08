@@ -26,7 +26,7 @@
 //! 3. **无穷远点是 `(0, 0)`**，不是 `None` → [`AffinePoint::identity`]。
 //!
 //! 这些差异都封在类型和函数里，而不是散落成注释，见
-//! `docs/agent/plan/02-crypto.md` §6。
+//! `docs/agent/crypto.md` §6。
 
 #![cfg_attr(
     test,

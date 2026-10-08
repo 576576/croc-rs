@@ -24,7 +24,7 @@
 
 **协议基线：Go 版 croc `v11.5.4`。** 线路字节是硬契约，目标是与 Go 版**双向互通**——
 所以你能用 `croc-rs` 发送、用 `croc` 接收，反过来也一样。实现层按 Rust 惯用法重写，
-不做 Go 的逐行翻译（见 [设计原则](docs/agent/plan/00-overview.md)）。
+不做 Go 的逐行翻译（见 [设计原则](docs/agent/overview.md)）。
 
 ## 两个产物
 
@@ -186,7 +186,7 @@ croc-rs --relay "myrelay.example.com:9009" --pass 你的口令 send [文件]
 ## 与 Go 版的差距
 
 哪些 flag 和子命令已经实现、哪些还没有，逐项列在
-[docs/agent/plan/04-cli-plan.md](docs/agent/plan/04-cli-plan.md)。
+[docs/agent/cli.md](docs/agent/cli.md)。
 
 ## 开发
 
@@ -196,12 +196,11 @@ cargo xtask ci-build     # = build.yml 的本机 target
 cargo xtask ci-interop   # = 与 Go 版的互通矩阵（需要 Go 版 croc）
 
 cargo xtask purity       # 纯 crate 里不许有 IO
-cargo xtask deps         # 核心 crate 不许引入 openssl / ring
 ```
 
 **互通矩阵不在 CI 里，只在本地跑** —— 它要同一台机器上同时有 Rust 版与 Go 版，每个用例还
-各自起中继与两端进程。它真正的用途是"改了协议字节之后本地跑一遍"。详见
-[docs/agent/release.md](docs/agent/release.md)。
+各自起中继与两端进程。它真正的用途是"改了协议字节之后本地跑一遍"。理由与取舍见
+[docs/agent/build-and-ci.md](docs/agent/build-and-ci.md) §5.3。
 
 质量门禁**不跟 push / PR**，而是挂在发布链路上（`build` 的 `needs` 带上 `lint`），
 所以发布链路上没有绕过路径。代价是 PR 阶段没有绿灯信号——由上面这几条本地命令补。
@@ -235,8 +234,8 @@ croc-pakekey / croc-pake / croc-siec    纯数学与密钥协商
 
 ### 协议改动的规矩
 
-**先改文档再改代码。** 协议理解沉淀在 [`docs/agent/plan/`](docs/agent/plan)（`01-protocol.md` /
-`02-crypto.md`），改完才动实现。兼容性知识靠黄金向量与互通测试钉住，不靠代码里的
+**先改文档再改代码。** 协议理解沉淀在 [`docs/agent/`](docs/agent)（`protocol.md` /
+`crypto.md`），改完才动实现。兼容性知识靠黄金向量与互通测试钉住，不靠代码里的
 `// COMPAT:` 注释。
 
 ## 致谢
@@ -257,4 +256,4 @@ croc-pakekey / croc-pake / croc-siec    纯数学与密钥协商
 **LGPL-3.0-only**（弱化 copyleft：库可被闭源程序链接，CLI 整体分发仍受 copyleft 约束）。
 
 协议与算法来自 MIT 许可的 Go 版 croc（© Zack Schollz）与 `tscholl2/siec`；口令码词表来自 EFF（CC-BY-4.0，许可证原文已随词表入库）。完整的第三方署名清单在打磨阶段统一补齐，见
-[plan/07-risks-and-testing.md §4](docs/agent/plan/07-risks-and-testing.md)。
+[testing.md §5](docs/agent/testing.md)。

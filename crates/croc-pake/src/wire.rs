@@ -16,7 +16,7 @@
 //! `ᵤ` 和 `ᤤ` 长得几乎一样，抄错一个码点就是一次静默的互通失败。
 //!
 //! 这套怪癖集中在一个模块里，而不是散落成 `// COMPAT:` 注释——见
-//! `docs/agent/plan/02-crypto.md` §6「丑的地方要被封装，而不是被注释」。
+//! `docs/agent/crypto.md` §6「丑的地方要被封装，而不是被注释」。
 
 use croc_siec::{AffinePoint, parse_int};
 use num_bigint::BigInt;

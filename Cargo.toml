@@ -20,7 +20,7 @@ members = [
 # 每一条 `warn` 都是硬门禁。
 #
 # 注意 `todo = "warn"`：**禁止用 `todo!()` 占位**。未实现的路径要返回
-# `Err(...Unavailable)` 并走降级逻辑，见 docs/agent/plan/03-architecture.md §8.3。
+# `Err(...Unavailable)` 并走降级逻辑，见 docs/agent/architecture.md §8.3。
 [workspace.lints.rust]
 unsafe_code = "warn"
 rust_2018_idioms = "warn"

@@ -43,8 +43,8 @@
 //! | 中继控制端口握手 | [`croc_protocol::relay`] | 它已经是独立状态机 |
 //! | 数据面上的分块搬运 | `croc-engine` | 需要文件 IO 与并发 |
 //! | 本地中继 / 局域网发现 | `croc-engine` | 需要 socket 与组播 |
-//! | tailcat（`--transport derp`） | ⏸ pending | `docs/agent/plan/08-tailscale.md` |
-//! | 断线重连、store、ssh | 后续增量 | 见 `docs/agent/plan/06-milestones.md` |
+//! | tailcat（`--transport derp`） | ⏸ pending | `docs/agent/plan/tailscale.md` |
+//! | 断线重连、ssh | 后续增量 | — |
 //!
 //! `externalip` 只在**对端不支持** `inline-peer-metadata-v1` 时才会出现（Go 的
 //! `finishDataTransportActivation`）。本状态机宣告该能力，但**能收也能回**，这样与
@@ -141,7 +141,7 @@ pub enum InEvent {
 
 /// 状态机希望外部执行的效果。
 ///
-/// **`apply` 里不许做协议判断** —— 见 `docs/agent/plan/03-architecture.md` §7。
+/// **`apply` 里不许做协议判断** —— 见 `docs/agent/architecture.md` §2。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// 把这一帧发到控制连接上。

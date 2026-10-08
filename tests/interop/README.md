@@ -1,6 +1,6 @@
 # 互通测试（Rust ↔ Go）
 
-`run.sh` 跑 I1–I21 互通矩阵，定义见 [07-risks-and-testing.md](../../docs/agent/plan/07-risks-and-testing.md) §2.2。
+`run.sh` 跑 I1–I21 互通矩阵，定义见 [testing.md](../../docs/agent/testing.md) §2.2。
 这是本项目的**生命线测试** —— 协议字节必须与 Go 版 croc v11.5.4 逐字节兼容。
 
 ## 怎么跑
@@ -80,7 +80,7 @@ CROC_GO_BIN=../croc-playground/croc.exe bash tests/interop/run.sh
 **不进 CI，也不需要进** —— 只在本地跑（`cargo xtask ci-interop`）。
 
 这不是"还没腾出手"，是一个有意的决定，理由见
-[09-build-and-ci.md §5.3](../../docs/agent/plan/09-build-and-ci.md)。简版：矩阵要求同一台
+[build-and-ci.md §5.3](../../docs/agent/build-and-ci.md)。简版：矩阵要求同一台
 机器上同时有 Rust 版、Go 版和它们各自的运行时，每个用例还要各自起中继与两端进程；
 挂进 `lint.yml` 会让它变成发布链路上一段又慢又不稳的环节，而它真正的作用是
 "改了协议字节之后本地跑一遍"，不是"挡住某个 commit"。

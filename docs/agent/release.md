@@ -1,9 +1,9 @@
 # 发布与 CI（操作手册）
 
 > 本文档是 `.github/workflows/` 的**决策与操作说明**。设计推导过程见
-> [plan/09-build-and-ci.md](plan/09-build-and-ci.md)；本文只讲"怎么用、为什么这么用"。
+> [build-and-ci.md](build-and-ci.md)；本文只讲"怎么用、为什么这么用"。
 >
-> 对齐 `Suwayomi-next` 的组织方式（同为 Rust workspace 项目），差异清单见 plan/09 §7。
+> 对齐 `Suwayomi-next` 的组织方式（同为 Rust workspace 项目），差异清单见 [build-and-ci.md](build-and-ci.md) §7。
 
 ---
 
@@ -126,7 +126,7 @@ Windows runner 上 `tar` 与 `zip` 的行为差异最容易出坑，各用各的
 **互通矩阵不在 CI 里，只在本地跑**（`cargo xtask ci-interop`）——这是有意的决定，不是
 待办：矩阵要同一台机器上同时有 Rust 版与 Go 版，每个用例还各自起中继与两端进程，
 挂进 `lint.yml` 只会把一段慢且依赖外部产物的环节塞进 `build` 的 `needs`。理由与
-取舍见 [plan/09-build-and-ci.md §5.3](plan/09-build-and-ci.md)。
+取舍见 [build-and-ci.md §5.3](build-and-ci.md)。
 
 **全仓只用 stable。**
 

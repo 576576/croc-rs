@@ -10,7 +10,7 @@
 //! **标量约简的不对称性是契约的一部分**：Go 的 `nistCurve.normalizeScalar` 只对
 //! *过长* 的标量取模，*过短* 的只左补零；而 `siec.ScalarMult` **完全不做约简**。
 //! 两条路径都用 [`WeierstrassCurve::normalize_scalars`] 开关区分，见
-//! `docs/agent/plan/02-crypto.md` §2.2。
+//! `docs/agent/crypto.md` §2.2。
 
 use num_bigint::{BigInt, Sign};
 use num_traits::Zero;

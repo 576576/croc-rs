@@ -4,7 +4,7 @@ name: Clear Pre-release
 #
 # 为什么需要它：推送 main 每次都出一个 alpha 预发布，几天下来 Release 页会被刷满。
 # 保留窗口是「至少间隔这么久才有资格成为新的保留点」—— 窗口内的其余预发布全删。
-# 语义见 docs/agent/plan/09-build-and-ci.md §5.4。
+# 语义见 docs/agent/build-and-ci.md §5.4。
 
 on:
   workflow_dispatch:

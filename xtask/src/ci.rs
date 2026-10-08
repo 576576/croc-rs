@@ -1,7 +1,7 @@
 //! `cargo xtask ci-*`：本地跑 CI 的等价检查。
 //!
 //! 因为 `lint.yml` **不跟 push / PR**（门禁只挂在发布链路上，见
-//! `docs/agent/plan/09-build-and-ci.md` §1.2），本地必须能一键跑完等价检查，
+//! `docs/agent/build-and-ci.md` §1.2），本地必须能一键跑完等价检查，
 //! 否则只能靠推 `main` 才发现红灯。
 //!
 //! 三个子命令对应三个 workflow：
@@ -14,7 +14,7 @@
 //!
 //! MSRV 需要额外工具链，不在这里跑（见 `release.md` §4）。
 //! 互通矩阵只在本地跑（`ci-interop`），**有意不进 CI** —— 决策与理由见
-//! `docs/agent/plan/09-build-and-ci.md` §5.3。
+//! `docs/agent/build-and-ci.md` §5.3。
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -100,7 +100,7 @@ pub fn build() -> ExitCode {
 
 /// `cargo xtask ci-interop`：跑与 Go 版的互通矩阵。
 ///
-/// **不在 CI 里**，这是有意的决定（`docs/agent/plan/09-build-and-ci.md` §5.3）。
+/// **不在 CI 里**，这是有意的决定（`docs/agent/build-and-ci.md` §5.3）。
 /// 需要两样东西：本机的 Go 版 croc 二进制，以及能跑的 `tests/interop/run.sh`。
 /// 缺哪样就明确报出来，不静默跳过。
 #[must_use]

@@ -4,7 +4,7 @@
 //! 的前提下编译运行。这不是洁癖：
 //!
 //! - 它们要交叉编译到 Android（`aarch64-linux-android` 等），少一层运行时少一堆坑；
-//! - 状态机要能在单元测试里**确定性重放**（见 `docs/agent/plan/03-architecture.md` §2）。
+//! - 状态机要能在单元测试里**确定性重放**（见 `docs/agent/architecture.md` §2）。
 //!   一个 `Instant::now()` 就足以让"同样的输入序列得到同样的输出"不再成立。
 //!
 //! 检查两件事：
@@ -192,7 +192,7 @@ pub fn run() -> std::process::ExitCode {
     }
     let _ = write!(
         report,
-        "\n{} 必须保持纯：不许出现 IO / 时钟 / 网络 / OS 随机源。\n详见 docs/agent/plan/03-architecture.md §8.5。",
+        "\n{} 必须保持纯：不许出现 IO / 时钟 / 网络 / OS 随机源。\n详见 docs/agent/architecture.md §7.4。",
         PURE_CRATES.join(" / ")
     );
     eprintln!("{report}");
