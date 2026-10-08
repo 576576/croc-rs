@@ -17,6 +17,12 @@ croc-net.workspace = true
 croc-pake.workspace = true
 # `--local`：把中继嵌进发送方进程里。
 croc-relay.workspace = true
+# `--git`：解析 `.gitignore`。
+ignore.workspace = true
+# `--zip`：目录打包。
+zip.workspace = true
+# `--socks5`。
+tokio-socks.workspace = true
 socket2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

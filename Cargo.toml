@@ -128,6 +128,13 @@ bytes = "1"
 # 只为 `--local` 的组播监听设置 `SO_REUSEADDR`：`std::net::UdpSocket` 不暴露它，
 # 而同一台机器上发送方与接收方常常同时在收同一个组播端口。
 socket2 = "0.6"
+ignore = "0.4"
+zip = "2"
+# `--qrcode`：只用它的编码器，渲染是自己拼的半角块字符，所以关掉默认的
+# image / svg 特性（那俩会拉一整套图形依赖）。
+qrcode = { version = "0.14", default-features = false }
+# `--socks5`：只做 CONNECT，握手自己写不值得。
+tokio-socks = "0.5"
 # OS 随机源。选 `getrandom` 而不是 `rand`：Android 上同样可用，且不带任何额外抽象。
 getrandom = "0.3"
 

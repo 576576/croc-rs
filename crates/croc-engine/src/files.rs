@@ -30,6 +30,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+
 use croc_core::chunk::{self, CHUNK_SIZE, ChunkRanges};
 use croc_core::policy::{self, Action, Preferences, Situation};
 use croc_protocol::{FileInfo, ModTime, SenderInfo};
@@ -44,6 +46,27 @@ pub struct SourceEntry {
     pub path: PathBuf,
     /// 线路元信息。
     pub info: FileInfo,
+    /// 这个文件是 `--zip` 现造的临时文件，传输结束后要删。
+    pub temporary: bool,
+}
+
+/// 收集时的过滤选项，对应 Go `GetFilesInfoWithExactExclusionsContext` 的那几个参数。
+///
+/// 两个排除项语义**不同**，不能互相替代：
+///
+/// - [`Self::exclude`]（`--exclude`）是**子串**匹配、大小写不敏感——`--exclude node_modules`
+///   会连 `my_node_modules_backup/` 一起排掉（Go 就是这么做的）；
+/// - [`Self::exclude_file`]（`--exclude-file`）是**精确相对路径**相等，用来点掉某个具体文件。
+#[derive(Debug, Clone, Default)]
+pub struct CollectOptions {
+    /// `--exclude`：相对路径里包含任一子串（小写比较）就排除。
+    pub exclude: Vec<String>,
+    /// `--exclude-file`：相对路径精确等于任一项就排除。
+    pub exclude_file: Vec<String>,
+    /// `--git`：尊重被传目录下的 `.gitignore`。
+    pub git: bool,
+    /// `--zip`：目录先打成 zip 再发。
+    pub zip: bool,
 }
 
 /// 收集待发送条目，并顺手算好哈希。
@@ -54,7 +77,11 @@ pub struct SourceEntry {
 /// # Errors
 ///
 /// 路径不存在、读不了、或者目录里出现了不支持的条目（FIFO、设备节点等）。
-pub fn collect(paths: &[PathBuf], algorithm: &str) -> Result<(Vec<SourceEntry>, Vec<FileInfo>), EngineError> {
+pub fn collect(
+    paths: &[PathBuf],
+    algorithm: &str,
+    options: &CollectOptions,
+) -> Result<(Vec<SourceEntry>, Vec<FileInfo>), EngineError> {
     let mut files = Vec::new();
     let mut empty_folders = Vec::new();
 
@@ -64,11 +91,29 @@ pub fn collect(paths: &[PathBuf], algorithm: &str) -> Result<(Vec<SourceEntry>, 
             // **先补成绝对路径**再往下走。`folder_remote` 的算法要"目录名 + 相对子目录"，
             // 而 `.` / `..` 这类路径取不出目录名；Go 同样是先 `filepath.Abs()`。
             let root = std::path::absolute(path).map_err(|error| EngineError::file(path, error))?;
-            collect_directory(&root, &root, &mut files, &mut empty_folders, algorithm)?;
+            let gitignore = options.git.then(|| load_gitignore(&root)).flatten();
+            if options.zip {
+                // `--zip`：先把目录打成一个 zip，再把它当普通文件发出去（Go 同）。
+                files.push(zip_directory(&root, algorithm, options, gitignore.as_ref())?);
+                continue;
+            }
+            collect_directory(&root, &root, &mut files, &mut empty_folders, algorithm, options, gitignore.as_ref())?;
         } else {
-            // 单个文件：Go 给的是 `"./"`（见 `croc.go:1178`）。
+            // 单个文件：Go 比的是**文件名**本身（`croc.go:1258`），给的 `folder_remote`
+            // 是 `"./"`（`croc.go:1178`）。
+            let name = path.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            if excluded_exactly(options, &name) {
+                continue;
+            }
             files.push(entry_for(path, "./", algorithm)?);
         }
+    }
+
+    // `--exclude` 是**清单级**过滤：Go 在文件收集完之后按 `folder_remote + name` 再筛一遍
+    // （`src/cli/cli.go:794`）。空目录走同一套规则。
+    if !options.exclude.is_empty() {
+        files.retain(|entry| !substring_excluded(&entry.info, &options.exclude));
+        empty_folders.retain(|folder| !substring_excluded(folder, &options.exclude));
     }
 
     Ok((files, empty_folders))
@@ -81,6 +126,8 @@ fn collect_directory(
     files: &mut Vec<SourceEntry>,
     empty_folders: &mut Vec<FileInfo>,
     algorithm: &str,
+    options: &CollectOptions,
+    gitignore: Option<&Gitignore>,
 ) -> Result<(), EngineError> {
     let entries = fs::read_dir(directory).map_err(|error| EngineError::file(directory, error))?;
     let mut names: Vec<PathBuf> = entries.filter_map(Result::ok).map(|entry| entry.path()).collect();
@@ -90,9 +137,22 @@ fn collect_directory(
     let base = remote_base(root);
     for path in names {
         let metadata = fs::symlink_metadata(&path).map_err(|error| EngineError::file(&path, error))?;
+        // `--exclude-file` 比的是**相对被传路径**的路径（Go 用 `filepath.Rel(absPath, pathName)`）。
+        // 命中目录就整棵跳过——等价 Go 的 `filepath.SkipDir`。
+        if excluded_exactly(options, &relative_components(root, &path)) {
+            continue;
+        }
+        // `--git`：命中 `.gitignore` 的条目直接跳过。目录整棵跳过（git 的语义也是
+        // "目录被忽略后，里面的 `!` 规则不再生效"）。
+        if let Some(gitignore) = gitignore {
+            let relative = relative_components(root, &path);
+            if gitignore.matched(&relative, metadata.is_dir()).is_ignore() {
+                continue;
+            }
+        }
         if metadata.is_dir() {
             let before = files.len() + empty_folders.len();
-            collect_directory(root, &path, files, empty_folders, algorithm)?;
+            collect_directory(root, &path, files, empty_folders, algorithm, options, gitignore)?;
             if files.len() + empty_folders.len() == before {
                 // 空目录（或只有空目录）也要在对端建出来。`folder_remote` 里**含它自己
                 // 的名字**，接收方直接 `mkdir -p` 就对了（Go 的 `croc.go:1242`）。
@@ -121,16 +181,165 @@ fn remote_base(root: &Path) -> PathBuf {
 /// `relative` 会是绝对路径，照抄过去就是 `/a/`——对端会当"想写到接收目录外面"拒掉。
 /// 这里宁可产出空串，让接收方的路径检查去报错，也不产出一个我们明知不该发的字符串。
 fn remote_folder_of(base: &Path, target: &Path) -> String {
+    let text = relative_components(base, target);
+    if text.is_empty() { "/".to_owned() } else { format!("{text}/") }
+}
+
+/// `target` 相对 `base` 的路径段，斜杠分隔、**无**尾斜杠。
+fn relative_components(base: &Path, target: &Path) -> String {
     let relative = target.strip_prefix(base).unwrap_or(target);
-    let text = relative
+    relative
         .components()
         .filter_map(|component| match component {
             std::path::Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
             _ => None,
         })
         .collect::<Vec<_>>()
-        .join("/");
-    if text.is_empty() { "/".to_owned() } else { format!("{text}/") }
+        .join("/")
+}
+
+/// 归一到 Go `utils.NormalizeRelativePath` 的形态：斜杠分隔，去掉 `.` 段与前导 `./`。
+///
+/// 用户给的排除项与候选项都过一遍再比，于是 `--exclude-file ./a/b.txt` 与 `a/b.txt` 等价。
+fn normalize_relative(path: &str) -> String {
+    let slashed = path.replace('\\', "/");
+    let mut parts: Vec<&str> = Vec::new();
+    for part in slashed.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
+}
+
+/// zip 条目的选项：**不压缩**。
+///
+/// croc 的数据面自己会压一遍，这里再压等于白费 CPU（Go 也注册了
+/// `flate.NoCompression`）。
+fn zip_options() -> zip::write::SimpleFileOptions {
+    zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)
+}
+
+/// `--zip`：把一个目录打成 `<父目录>/<目录名>.zip`，返回它的条目。
+///
+/// 与 Go 的 `ZipDirectoryWithExactExclusionsContext` 对齐的三点：zip 内以**目录名**为
+/// 顶层（`photos/a.jpg`，解压出来还是一棵 `photos/` 树）、条目不压缩、目标文件已存在
+/// 就报错（不悄悄覆盖别人的文件）。
+///
+/// 返回的条目 `temporary` 为真——传输结束后要删掉这个 zip。
+///
+/// # Errors
+///
+/// 目标 zip 已存在，或读目录 / 写 zip 时出错。
+fn zip_directory(
+    root: &Path,
+    algorithm: &str,
+    options: &CollectOptions,
+    gitignore: Option<&Gitignore>,
+) -> Result<SourceEntry, EngineError> {
+    let name = file_name(root)?;
+    let destination = root.parent().unwrap_or_else(|| Path::new(".")).join(format!("{name}.zip"));
+    if destination.exists() {
+        return Err(EngineError::Config(format!("--zip 的目标 {} 已经存在，先删掉它", destination.display())));
+    }
+    let file = File::create(&destination).map_err(|error| EngineError::file(&destination, error))?;
+    let mut writer = zip::ZipWriter::new(file);
+    zip_into(&mut writer, root, root, &name, options, gitignore)?;
+    writer.finish().map_err(|error| EngineError::file(&destination, error))?;
+
+    let mut entry = entry_for(&destination, "./", algorithm)?;
+    entry.temporary = true;
+    Ok(entry)
+}
+
+/// 递归把 `directory` 塞进 zip。`zip_root` 是顶层目录名（Go 的 `baseName`）。
+fn zip_into<W: std::io::Write + std::io::Seek>(
+    writer: &mut zip::ZipWriter<W>,
+    root: &Path,
+    directory: &Path,
+    zip_root: &str,
+    options: &CollectOptions,
+    gitignore: Option<&Gitignore>,
+) -> Result<(), EngineError> {
+    let mut names: Vec<PathBuf> = fs::read_dir(directory)
+        .map_err(|error| EngineError::file(directory, error))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect();
+    names.sort();
+
+    for path in names {
+        let metadata = fs::symlink_metadata(&path).map_err(|error| EngineError::file(&path, error))?;
+        let relative = relative_components(root, &path);
+        if excluded_exactly(options, &relative) {
+            continue;
+        }
+        if let Some(rules) = gitignore
+            && rules.matched(&relative, metadata.is_dir()).is_ignore()
+        {
+            continue;
+        }
+        // zip 内的完整路径 = 顶层目录名 + 相对路径，`--exclude` 比的就是这一串
+        // （Go 在 zip 里用的也是含 `baseName` 的 `zipPath`）。
+        let zip_path = format!("{zip_root}/{relative}");
+        let lowered = zip_path.to_lowercase();
+        if options.exclude.iter().any(|item| lowered.contains(&item.to_lowercase())) {
+            continue;
+        }
+
+        if metadata.is_dir() {
+            writer
+                .add_directory(format!("{zip_path}/"), zip_options())
+                .map_err(|error| EngineError::file(&path, error))?;
+            zip_into(writer, root, &path, zip_root, options, gitignore)?;
+        } else if metadata.is_file() {
+            // 符号链接进不了 zip（Go 同样只收 `IsRegular()`）。
+            writer.start_file(&zip_path, zip_options()).map_err(|error| EngineError::file(&path, error))?;
+            let mut source = File::open(&path).map_err(|error| EngineError::file(&path, error))?;
+            std::io::copy(&mut source, writer).map_err(|error| EngineError::file(&path, error))?;
+        }
+    }
+    Ok(())
+}
+
+/// 按 `--git` 读入被传目录下的 `.gitignore`。
+///
+/// 只读**被传目录根下**那一个文件——Go 的 `gitWalk` 同样只 `CompileIgnoreFile` 一次，
+/// 子目录里的 `.gitignore` 不参与。
+///
+/// ⚠️ 与 Go 有一处**有意的差异**：Go 拿 `info.Name()`（只有 basename）去匹配，于是
+/// `src/*.log` 这类带路径的规则在它那边根本不生效；这里按**相对路径**匹配，规则能正常
+/// 起作用。差别只影响"发哪些文件"，不涉及协议与互通。
+fn load_gitignore(root: &Path) -> Option<Gitignore> {
+    let path = root.join(".gitignore");
+    if !path.is_file() {
+        return None;
+    }
+    let mut builder = GitignoreBuilder::new(root);
+    // `add` 返回的是"解析这个文件时出的错"。读不动就当没有忽略规则——它只影响少发哪些
+    // 文件，不该让整次传输失败。
+    if builder.add(&path).is_some() {
+        return None;
+    }
+    builder.build().ok()
+}
+
+/// `--exclude-file`：规范化后的相对路径**精确相等**。
+fn excluded_exactly(options: &CollectOptions, candidate: &str) -> bool {
+    let candidate = normalize_relative(candidate);
+    options.exclude_file.iter().any(|item| normalize_relative(item) == candidate)
+}
+
+/// `--exclude`：`folder_remote + name` 小写后**包含**任一子串。
+///
+/// 与 Go 一样按 `path.Join` 拼（`"./"` + `"x"` 给 `"x"`），所以拼完还要归一一次。
+fn substring_excluded(info: &FileInfo, exclude: &[String]) -> bool {
+    let joined = normalize_relative(&format!("{}{}", info.folder_remote, info.name)).to_lowercase();
+    exclude.iter().any(|item| joined.contains(&item.to_lowercase()))
 }
 
 /// 构造一个普通文件（或符号链接）的条目。
@@ -142,6 +351,7 @@ fn entry_for(path: &Path, folder_remote: &str, algorithm: &str) -> Result<Source
         let target = fs::read_link(path).map_err(|error| EngineError::file(path, error))?;
         return Ok(SourceEntry {
             path: path.to_path_buf(),
+            temporary: false,
             info: FileInfo {
                 name,
                 folder_remote: folder_remote.to_owned(),
@@ -167,6 +377,7 @@ fn entry_for(path: &Path, folder_remote: &str, algorithm: &str) -> Result<Source
 
     Ok(SourceEntry {
         path: path.to_path_buf(),
+        temporary: false,
         info: FileInfo {
             name,
             folder_remote: folder_remote.to_owned(),
@@ -430,7 +641,9 @@ fn safe_folder(folder_remote: &str) -> Result<PathBuf, EngineError> {
             "" | "." => {}
             ".." => return Err(unsafe_remote_path(folder_remote)),
             // Windows 上 `C:` 这类"驱动器相对"前缀会让 `join` 改掉盘符。
-            _ if cfg!(windows) && segment.contains(':') => return Err(unsafe_remote_path(folder_remote)),
+            _ if cfg!(windows) && segment.contains(':') => {
+                return Err(unsafe_remote_path(folder_remote));
+            }
             other => relative.push(other),
         }
     }
@@ -754,7 +967,7 @@ mod tests {
         let file = dir.join("payload.bin");
         fs::write(&file, b"hello croc").expect("写");
 
-        let (files, empty) = collect(std::slice::from_ref(&file), "xxhash").expect("收集");
+        let (files, empty) = collect(std::slice::from_ref(&file), "xxhash", &CollectOptions::default()).expect("收集");
         assert_eq!(files.len(), 1);
         assert!(empty.is_empty());
         let info = &files[0].info;
@@ -777,7 +990,7 @@ mod tests {
         fs::write(root.join("a/b/c.txt"), b"c").expect("写");
         fs::write(root.join("top.txt"), b"t").expect("写");
 
-        let (files, empty) = collect(&[root], "xxhash").expect("收集");
+        let (files, empty) = collect(&[root], "xxhash", &CollectOptions::default()).expect("收集");
         let names: Vec<&str> = files.iter().map(|entry| entry.info.name.as_str()).collect();
         assert_eq!(names, vec!["c.txt", "top.txt"], "顺序应稳定（按路径排序）");
 
@@ -797,7 +1010,7 @@ mod tests {
         let dir = temp_dir("info");
         let file = dir.join("x.bin");
         fs::write(&file, b"x").expect("写");
-        let (files, empty) = collect(&[file], "xxhash").expect("收集");
+        let (files, empty) = collect(&[file], "xxhash", &CollectOptions::default()).expect("收集");
         let info = sender_info(&files, empty, "machine", "xxhash");
         assert_eq!(info.machine_id, "machine");
         assert_eq!(info.hash_algorithm, croc_protocol::payload::HashAlgorithm::Xxhash);
@@ -820,16 +1033,139 @@ mod tests {
     }
 
     #[test]
+    fn substring_exclusion_matches_case_insensitively() {
+        let dir = temp_dir("exclude-substring");
+        let root = dir.join("tree");
+        fs::create_dir_all(root.join("node_modules")).expect("建");
+        fs::create_dir_all(root.join("src")).expect("建");
+        fs::write(root.join("node_modules").join("dep.js"), b"x").expect("写");
+        fs::write(root.join("src").join("Node_Modules_Note.txt"), b"x").expect("写");
+        fs::write(root.join("src").join("main.rs"), b"x").expect("写");
+
+        let options = CollectOptions { exclude: vec!["node_modules".to_owned()], ..CollectOptions::default() };
+        let (files, _) = collect(&[root], "xxhash", &options).expect("收集");
+        // 子串匹配且不分大小写：连 `Node_Modules_Note.txt` 一起排掉——Go 就是这个语义。
+        let names: Vec<&str> = files.iter().map(|entry| entry.info.name.as_str()).collect();
+        assert_eq!(names, vec!["main.rs"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exact_exclusion_drops_a_whole_subtree() {
+        let dir = temp_dir("exclude-exact");
+        let root = dir.join("tree");
+        fs::create_dir_all(root.join("keep")).expect("建");
+        fs::create_dir_all(root.join("skip")).expect("建");
+        fs::write(root.join("keep").join("a.txt"), b"x").expect("写");
+        fs::write(root.join("skip").join("b.txt"), b"x").expect("写");
+
+        // 两边都归一后再比，所以 `./skip` 与 `skip` 是同一个路径。
+        let options = CollectOptions { exclude_file: vec!["./skip".to_owned()], ..CollectOptions::default() };
+        let (files, _) = collect(&[root], "xxhash", &options).expect("收集");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].info.folder_remote, "tree/keep/");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn substring_and_exact_exclusions_are_not_interchangeable() {
+        let dir = temp_dir("exclude-both");
+        let root = dir.join("tree");
+        fs::create_dir_all(&root).expect("建");
+        fs::write(root.join("data.txt"), b"x").expect("写");
+        fs::write(root.join("data.txt.bak"), b"x").expect("写");
+
+        // 精确：只点掉 `data.txt` 本身，`data.txt.bak` 留着。
+        let exact = CollectOptions { exclude_file: vec!["data.txt".to_owned()], ..CollectOptions::default() };
+        let (files, _) = collect(std::slice::from_ref(&root), "xxhash", &exact).expect("收集");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].info.name, "data.txt.bak");
+
+        // 子串：`data.txt.bak` 也含 `data.txt`，一起排掉。
+        let substring = CollectOptions { exclude: vec!["data.txt".to_owned()], ..CollectOptions::default() };
+        let (files, _) = collect(&[root], "xxhash", &substring).expect("收集");
+        assert!(files.is_empty(), "子串匹配应当把 data.txt.bak 也排掉");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gitignore_rules_are_honoured_only_when_asked() {
+        let dir = temp_dir("git-ignore");
+        let root = dir.join("tree");
+        fs::create_dir_all(root.join("target")).expect("建");
+        fs::create_dir_all(root.join("src")).expect("建");
+        fs::write(root.join(".gitignore"), "target\n*.log\n").expect("写");
+        fs::write(root.join("target").join("out.bin"), b"x").expect("写");
+        fs::write(root.join("src").join("main.rs"), b"x").expect("写");
+        fs::write(root.join("src").join("dev.log"), b"x").expect("写");
+
+        // 不开 `--git`：`.gitignore` 自己也算一个文件，一共 4 个。
+        let (all, _) = collect(std::slice::from_ref(&root), "xxhash", &CollectOptions::default()).expect("收集");
+        assert_eq!(all.len(), 4);
+
+        // 开 `--git`：`target/` 整棵与所有 `*.log` 都排掉。
+        let options = CollectOptions { git: true, ..CollectOptions::default() };
+        let (files, _) = collect(&[root], "xxhash", &options).expect("收集");
+        let names: Vec<&str> = files.iter().map(|entry| entry.info.name.as_str()).collect();
+        assert_eq!(names, vec![".gitignore", "main.rs"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn zip_packs_the_directory_with_its_name_on_top() {
+        let dir = temp_dir("zip");
+        let root = dir.join("tree");
+        fs::create_dir_all(root.join("sub")).expect("建");
+        fs::write(root.join("a.txt"), b"aaa").expect("写");
+        fs::write(root.join("sub").join("b.txt"), b"bbb").expect("写");
+
+        let options = CollectOptions { zip: true, ..CollectOptions::default() };
+        let (files, empty) = collect(std::slice::from_ref(&root), "xxhash", &options).expect("收集");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].info.name, "tree.zip");
+        assert_eq!(files[0].info.folder_remote, "./");
+        assert!(files[0].temporary, "zip 是现造的临时文件，传输结束后要删");
+        assert!(empty.is_empty(), "打进 zip 之后没有空目录要单独建");
+
+        // zip 内以**目录名**为顶层，解压出来还是一棵 `tree/`。
+        let reader = fs::File::open(&files[0].path).expect("读 zip");
+        let mut archive = zip::ZipArchive::new(reader).expect("解析 zip");
+        let mut names = Vec::new();
+        for index in 0..archive.len() {
+            names.push(archive.by_index(index).expect("条目").name().to_owned());
+        }
+        names.sort();
+        assert_eq!(names, vec!["tree/a.txt", "tree/sub/", "tree/sub/b.txt"]);
+        drop(archive);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn zip_refuses_to_overwrite_an_existing_archive() {
+        let dir = temp_dir("zip-exists");
+        let root = dir.join("tree");
+        fs::create_dir_all(&root).expect("建");
+        fs::write(dir.join("tree.zip"), b"placeholder").expect("写");
+        let options = CollectOptions { zip: true, ..CollectOptions::default() };
+        let error = collect(&[root], "xxhash", &options).expect_err("目标已存在应当报错");
+        assert!(error.to_string().contains("已经存在"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn unsupported_hash_algorithms_are_rejected_early() {
         let dir = temp_dir("hash");
         let file = dir.join("x.bin");
         fs::write(&file, b"x").expect("写");
         // 四种受支持的算法都得能算。
         for name in ["xxhash", "md5", "imohash", "highway"] {
-            assert!(collect(std::slice::from_ref(&file), name).is_ok(), "{name} 应当被支持");
+            assert!(
+                collect(std::slice::from_ref(&file), name, &CollectOptions::default()).is_ok(),
+                "{name} 应当被支持"
+            );
         }
         // 不在名单里的名字要**报错**，不能静默退化成 xxhash——那会让对端拿到对不上的摘要。
-        assert!(matches!(collect(&[file], "sha256"), Err(EngineError::UnsupportedHash(_))));
+        assert!(matches!(collect(&[file], "sha256", &CollectOptions::default()), Err(EngineError::UnsupportedHash(_))));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1022,6 +1358,7 @@ mod tests {
         let entry = |folder: &str| SourceEntry {
             path: PathBuf::from("/x"),
             info: FileInfo { folder_remote: folder.to_owned(), ..FileInfo::default() },
+            temporary: false,
         };
         let files = vec![entry("tree/"), entry("tree/sub/"), entry("tree/sub/deep/deeper/")];
         let empty = vec![FileInfo { folder_remote: "tree/empty/".to_owned(), ..FileInfo::default() }];

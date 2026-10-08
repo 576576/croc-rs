@@ -42,6 +42,8 @@ pub struct ReceiveRequest {
     pub no_compress: bool,
     /// `--local`：只走局域网——先组播找出发送方，用它的地址当中继，**不连公网中继**。
     pub local: bool,
+    /// 出站代理（`--socks5` / `--connect`）。
+    pub proxy: crate::proxy::Proxy,
     /// `--no-multi`：禁用多端口复用，只用一条数据流。
     ///
     /// 必须与发送方**一致**：流数不在握手里协商，两端各自按中继 banner 推导，只有一端
@@ -93,7 +95,8 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
     } else {
         request.relay.clone()
     };
-    let mut link = relay::connect(&relay_address, &request.relay_password, &request.components.room_name).await?;
+    let mut link =
+        relay::connect(&relay_address, &request.relay_password, &request.components.room_name, &request.proxy).await?;
     let ports = link.data_ports();
     if ports.is_empty() {
         return Err(EngineError::Relay("the relay banner carried no data ports".to_owned()));
@@ -124,6 +127,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
         request.components.room_name.clone(),
         ports.clone(),
         streams,
+        request.proxy.clone(),
     ));
 
     // 文件循环的状态。

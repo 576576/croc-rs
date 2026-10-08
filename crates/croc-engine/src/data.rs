@@ -63,6 +63,7 @@ pub struct DataPlane {
     room: RoomName,
     ports: Vec<u16>,
     streams: u8,
+    proxy: crate::proxy::Proxy,
     conns: Mutex<Option<Vec<Framed<TcpStream>>>>,
 }
 
@@ -80,8 +81,15 @@ impl core::fmt::Debug for DataPlane {
 impl DataPlane {
     /// 建一个还没连的持有者。
     #[must_use]
-    pub fn new(relay: String, password: String, room: RoomName, ports: Vec<u16>, streams: u8) -> Self {
-        Self { relay, password, room, ports, streams, conns: Mutex::new(None) }
+    pub fn new(
+        relay: String,
+        password: String,
+        room: RoomName,
+        ports: Vec<u16>,
+        streams: u8,
+        proxy: crate::proxy::Proxy,
+    ) -> Self {
+        Self { relay, password, room, ports, streams, proxy, conns: Mutex::new(None) }
     }
 
     /// 要开几条流（也等于 `ports` 里实际会用的条数）。
@@ -111,7 +119,7 @@ impl DataPlane {
         for position in 0..self.width() {
             let port = *self.ports.get(position).unwrap_or(&0);
             let index = u8::try_from(position).unwrap_or(u8::MAX);
-            conns.push(relay::connect_data(&host, port, &self.password, &self.room, index).await?);
+            conns.push(relay::connect_data(&host, port, &self.password, &self.room, index, &self.proxy).await?);
         }
         Ok(conns)
     }

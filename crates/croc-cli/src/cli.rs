@@ -104,6 +104,37 @@ struct SendArgs {
     #[arg(long, default_value = "xxhash")]
     hash: String,
 
+    /// 排除相对路径里**包含**任一子串的文件（逗号分隔，大小写不敏感）。
+    ///
+    /// 子串匹配，不是路径匹配：`--exclude node_modules` 会连 `my_node_modules_backup/`
+    /// 一起排掉。要精确点掉某个文件用 [`Self::exclude_file`]。
+    #[arg(long, value_delimiter = ',')]
+    exclude: Vec<String>,
+
+    /// 排除相对路径**精确等于**任一项的文件（逗号分隔）。
+    ///
+    /// 相对基准是命令行上给的那个路径：`send --exclude-file a/b.txt photos` 排掉的是
+    /// `photos/a/b.txt`。
+    #[arg(long, value_delimiter = ',')]
+    exclude_file: Vec<String>,
+
+    /// 尊重被传目录下的 `.gitignore`。
+    #[arg(long)]
+    git: bool,
+
+    /// 目录先打成 zip 再发（zip 里以目录名为顶层，解压后还是一棵目录树）。
+    ///
+    /// 临时 zip 落在被传目录的**父目录**下，传输结束后删掉；同名文件已存在会报错。
+    #[arg(long)]
+    zip: bool,
+
+    /// 发送前把 web 接收链接显示成二维码。
+    ///
+    /// 链接是 `getcroc.com` 的官方接收页（Go 的 `webReceiveURL`），扫开就能在浏览器里收，
+    /// 不需要对方装 croc。
+    #[arg(long, alias = "qr")]
+    qrcode: bool,
+
     /// `--local` 下内建中继的**基准**端口（被占了会往后顺延）。
     ///
     /// 只在 `--local` 下有意义：连外部中继时端口由中继的 banner 说了算，Go 也是这样
@@ -176,6 +207,19 @@ struct Global {
     #[arg(long, global = true, conflicts_with = "local")]
     no_local: bool,
 
+    /// 经 SOCKS5 代理连中继（如 Tor）。
+    ///
+    /// 地址可以带 `socks5://` 前缀。目标不是局域网地址时才生效，且**域名交给代理去解析**
+    /// ——本地解析会把 DNS 请求漏到网外。与 [`Self::connect`] 同时给出时这个优先。
+    #[arg(long, env = "SOCKS5_PROXY", global = true)]
+    socks5: Option<String>,
+
+    /// 经 HTTP CONNECT 代理连中继。
+    ///
+    /// 地址可以带 `http://` 前缀。其余同 [`Self::socks5`]。
+    #[arg(long, global = true)]
+    connect: Option<String>,
+
     /// 禁用多端口复用（只用一条数据流）。
     ///
     /// 两端要**各自**设：流数不在握手里协商，收发两端各自按中继的 banner 推导，只有一
@@ -202,8 +246,8 @@ pub struct Parsed {
 
 /// 要执行的动作。
 pub enum Action {
-    /// 发送。
-    Send(Box<SendRequest>),
+    /// 发送。`qrcode` 是纯展示选项，不进 [`SendRequest`]。
+    Send { request: Box<SendRequest>, qrcode: bool },
     /// 接收。
     Receive(Box<ReceiveRequest>),
     /// 自建中继。
@@ -286,23 +330,34 @@ pub fn parse() -> Result<Parsed, ExitCode> {
             };
             Ok(Parsed {
                 debug: cli.global.debug,
-                action: Action::Send(Box::new(SendRequest {
-                    relay: cli.global.relay,
-                    relay_password: cli.global.pass,
-                    components,
-                    code,
-                    curve,
-                    paths,
-                    hash_algorithm: args.hash,
-                    no_compress: cli.global.no_compress,
-                    local: cli.global.local,
-                    relay_base_port: Some(args.port),
-                    // 已经由 clap 的 range 限到 1..=8。
-                    transfers: usize::from(args.transfers),
-                    no_multi: cli.global.no_multi,
-                    machine_id,
-                    events,
-                })),
+                action: Action::Send {
+                    qrcode: args.qrcode,
+                    request: Box::new(SendRequest {
+                        relay: cli.global.relay,
+                        relay_password: cli.global.pass,
+                        components,
+                        code,
+                        curve,
+                        paths,
+                        hash_algorithm: args.hash,
+                        exclude: args.exclude,
+                        exclude_file: args.exclude_file,
+                        git: args.git,
+                        zip: args.zip,
+                        proxy: croc_engine::proxy::Proxy::from_flags(
+                            cli.global.socks5.as_deref(),
+                            cli.global.connect.as_deref(),
+                        ),
+                        no_compress: cli.global.no_compress,
+                        local: cli.global.local,
+                        relay_base_port: Some(args.port),
+                        // 已经由 clap 的 range 限到 1..=8。
+                        transfers: usize::from(args.transfers),
+                        no_multi: cli.global.no_multi,
+                        machine_id,
+                        events,
+                    }),
+                },
             })
         }
         None => {
@@ -333,6 +388,10 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     preferences: Preferences { overwrite: cli.global.overwrite, rename: cli.global.rename },
                     no_compress: cli.global.no_compress,
                     local: cli.global.local,
+                    proxy: croc_engine::proxy::Proxy::from_flags(
+                        cli.global.socks5.as_deref(),
+                        cli.global.connect.as_deref(),
+                    ),
                     no_multi: cli.global.no_multi,
                     machine_id,
                     confirm,
@@ -350,8 +409,8 @@ pub async fn run(parsed: Parsed) -> ExitCode {
 
     match parsed.action {
         Action::Relay(request) => crate::relay_cmd::run(request.args, &request.password, cancel).await,
-        Action::Send(request) => {
-            print_send_instructions(&request);
+        Action::Send { request, qrcode } => {
+            print_send_instructions(&request, qrcode);
             match croc_engine::send(*request, cancel).await {
                 Ok(summary) => {
                     println!("发送完成：{} 个文件，{} 字节", summary.files, summary.bytes);
@@ -474,7 +533,7 @@ fn write_text_artifact(text: &str) -> Result<PathBuf, String> {
 ///
 /// 打印的是**口令码**而不是房间名：房间名是 `hex(sha256(码 + "croc"))`，它是线路上的
 /// 东西，人对不上。用户之间传递的永远是码。
-fn print_send_instructions(request: &SendRequest) {
+fn print_send_instructions(request: &SendRequest, qrcode: bool) {
     println!("口令码：{}", request.code);
     println!("让对方执行：");
     // `--local` 时中继就是本端，喊出去的端口每次都不同，对端是靠组播找过来的——
@@ -483,6 +542,15 @@ fn print_send_instructions(request: &SendRequest) {
         println!("  croc-rs --local {}", request.code);
     } else {
         println!("  croc-rs --relay {} {}", request.relay, request.code);
+    }
+    // web 接收页。链接只由口令码拼成，跟中继是谁无关。
+    let url = crate::qr::web_receive_url(&request.code);
+    println!("或访问：{url}");
+    if qrcode {
+        match crate::qr::render(&url) {
+            Ok(text) => println!("{text}"),
+            Err(reason) => eprintln!("{reason}"),
+        }
     }
 }
 

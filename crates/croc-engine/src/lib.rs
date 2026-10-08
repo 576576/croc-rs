@@ -34,6 +34,7 @@ pub mod error;
 pub mod files;
 pub mod hash;
 pub mod local;
+pub mod proxy;
 pub mod receive;
 pub mod relay;
 pub mod send;

@@ -156,6 +156,13 @@ pub async fn send(
         code,
         curve,
         paths: args.paths.into_iter().map(PathBuf::from).collect(),
+        // GUI 还没有排除项与 .gitignore 的输入口，先给空。
+        exclude: Vec::new(),
+        exclude_file: Vec::new(),
+        git: false,
+        zip: false,
+        // GUI 还没有代理设置，先直连。
+        proxy: croc_engine::proxy::Proxy::default(),
         hash_algorithm: "xxhash".to_owned(),
         no_compress: args.no_compress,
         // GUI 还没有 `--local` 的开关：默认走中继。下面三个只影响 `--local` 下的内建
@@ -203,6 +210,7 @@ pub async fn receive(
         no_compress: false,
         // GUI 还没有 `--local` 的开关：默认走中继。
         local: false,
+        proxy: croc_engine::proxy::Proxy::default(),
         no_multi: false,
         machine_id: machine_id(),
         // GUI 里"收不收"由前端的确认弹窗决定，这里给一个恒真的回调；

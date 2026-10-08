@@ -27,6 +27,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror.workspace = true
+qrcode.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

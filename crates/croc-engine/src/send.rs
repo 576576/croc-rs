@@ -1,5 +1,6 @@
 //! 发送方驱动：把 `croc-core::Session` 的效果落到 socket 与磁盘上。
 
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +34,19 @@ pub struct SendRequest {
     pub curve: croc_pake::CurveKind,
     /// 要发送的路径（文件或目录）。
     pub paths: Vec<PathBuf>,
+    /// `--exclude`：相对路径里**包含**任一子串就跳过（大小写不敏感）。
+    ///
+    /// 与 [`Self::exclude_file`] 不是一回事：这个是子串，`--exclude node_modules` 会连
+    /// `my_node_modules_backup/` 一起排掉。
+    pub exclude: Vec<String>,
+    /// `--exclude-file`：相对路径**精确等于**任一项就跳过。
+    pub exclude_file: Vec<String>,
+    /// `--git`：尊重被传目录下的 `.gitignore`。
+    pub git: bool,
+    /// `--zip`：目录先打成 zip 再发（临时 zip 随本次传输结束而删）。
+    pub zip: bool,
+    /// 出站代理（`--socks5` / `--connect`）。
+    pub proxy: crate::proxy::Proxy,
     /// 哈希算法：`xxhash` / `md5` / `imohash` / `highway`。
     pub hash_algorithm: String,
     /// `--local`：只走局域网——本端起一个内建中继，**不连公网中继**。
@@ -57,6 +71,17 @@ pub struct SendRequest {
     pub machine_id: String,
     /// 事件出口。
     pub events: EventSink,
+}
+
+/// `--zip` 现造的临时文件，跟随作用域清理。
+struct ZipCleanup(Vec<PathBuf>);
+
+impl Drop for ZipCleanup {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 impl core::fmt::Debug for SendRequest {
@@ -111,15 +136,26 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
     emit(&request.events, EngineEvent::Status("hashing the files…".to_owned()));
     let paths = request.paths.clone();
     let algorithm = request.hash_algorithm.clone();
+    let options = files::CollectOptions {
+        exclude: request.exclude.clone(),
+        exclude_file: request.exclude_file.clone(),
+        git: request.git,
+        zip: request.zip,
+    };
     // `collect` 是同步的阻塞式文件 IO，直接放在 async 上下文里会把 worker 线程占住，
     // 连中继的 future 就没机会推进——并行也就名存实亡。
-    let hashing = tokio::task::spawn_blocking(move || files::collect(&paths, &algorithm));
-    let connecting = relay::connect(&relay_address, &request.relay_password, &request.components.room_name);
+    let hashing = tokio::task::spawn_blocking(move || files::collect(&paths, &algorithm, &options));
+    let connecting =
+        relay::connect(&relay_address, &request.relay_password, &request.components.room_name, &request.proxy);
     let (manifest, mut link) = tokio::try_join!(
         async { hashing.await.map_err(|error| EngineError::Config(format!("the hashing task {error}")))? },
         connecting,
     )?;
     let (mut entries, empty_folders) = manifest;
+    // `--zip` 现造的临时 zip 跟着本次 `send()` 的作用域清理。用 Drop 而不是在每个返回点
+    // 手写删除：这函数的返回点很多，漏一个就在磁盘上留一个几百 MB 的垃圾。
+    let _zip_cleanup =
+        ZipCleanup(entries.iter().filter(|entry| entry.temporary).map(|entry| entry.path.clone()).collect());
     let compress = !request.no_compress;
     for entry in &mut entries {
         // 逐文件压缩开关：接收方靠这个字段决定要不要解压，所以必须随清单一起过去。
@@ -162,6 +198,7 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         request.components.room_name.clone(),
         ports.clone(),
         streams,
+        request.proxy.clone(),
     ));
     let mut transferred: u64 = 0;
 

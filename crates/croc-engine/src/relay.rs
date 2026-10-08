@@ -13,14 +13,18 @@
 //! 握手完成后连接就变成裸转发，中继会周期性插入 keepalive（帧体是单字节 `0x01`）。
 //! **读循环必须跳过它**，否则会被当成一条空消息喂给状态机。
 
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use croc_core::RoomName;
 use croc_net::{Framed, OsRandomness};
 use croc_protocol::relay::{ClientHandshake, RelayError};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
+use tokio_socks::tcp::Socks5Stream;
 
 use crate::error::EngineError;
+use crate::proxy::Proxy;
 
 /// 连接超时。
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -75,35 +79,14 @@ pub fn parse_data_ports(banner: &str) -> Vec<u16> {
 /// # Errors
 ///
 /// 连不上、超时、口令不对、房间已满、被限流，或者对端不是 croc 中继。
-pub async fn connect(host_port: &str, password: &str, room: &RoomName) -> Result<RelayLink, EngineError> {
+pub async fn connect(
+    host_port: &str,
+    password: &str,
+    room: &RoomName,
+    proxy: &Proxy,
+) -> Result<RelayLink, EngineError> {
     let (host, port) = split_host_port(host_port)?;
-    // **先把数字 IP 直接解析成 `SocketAddr`**，不要交给 `ToSocketAddrs`。
-    // Windows 上 `getaddrinfo("127.0.0.1")` 会绕一圈 DNS 客户端，实测每次 ~370ms——
-    // 数据面要连 5 条连接，那就是 1.8 秒的纯等待，足以让对端先超时。
-    // 主机名（`croc.schollz.com`）仍然走解析。
-    let target = match host.parse::<std::net::IpAddr>() {
-        Ok(ip) => std::net::SocketAddr::new(ip, port),
-        Err(_) => tokio::net::lookup_host((host.as_str(), port))
-            .await
-            .map_err(|error| EngineError::RelayUnreachable {
-                address: host_port.to_owned(),
-                reason: error.to_string(),
-            })?
-            .next()
-            .ok_or_else(|| EngineError::RelayUnreachable {
-                address: host_port.to_owned(),
-                reason: "the host name resolved to nothing".to_owned(),
-            })?,
-    };
-    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target))
-        .await
-        .map_err(|_| EngineError::RelayUnreachable {
-            address: host_port.to_owned(),
-            reason: "connect timed out".to_owned(),
-        })?
-        .map_err(|error| EngineError::RelayUnreachable { address: host_port.to_owned(), reason: error.to_string() })?;
-    // 中继的 keepalive 是 1 秒一次，禁用 Nagle 能让握手少等几十毫秒。
-    let _ = stream.set_nodelay(true);
+    let stream = dial(&host, port, proxy).await?;
 
     let mut framed = Framed::new(stream);
     let mut randomness = OsRandomness;
@@ -142,10 +125,125 @@ pub async fn connect_data(
     password: &str,
     room: &RoomName,
     index: u8,
+    proxy: &Proxy,
 ) -> Result<Framed<TcpStream>, EngineError> {
     let address = format!("{host}:{port}");
     let room = RoomName::new(format!("{}-{index}", room.as_str()));
-    Ok(connect(&address, password, &room).await?.framed)
+    Ok(connect(&address, password, &room, proxy).await?.framed)
+}
+
+/// 连一条 TCP：直连，或者按 [`Proxy`] 走代理。
+///
+/// 目标是**局域网地址**时不走代理——Go 的 `comm.Dial` 也是
+/// `Proxy != "" && !utils.IsLocalIP(address)` 才用代理（`src/comm/comm.go:67`）。
+///
+/// # Errors
+///
+/// 连不上、超时，或者代理拒绝。
+pub async fn dial(host: &str, port: u16, proxy: &Proxy) -> Result<TcpStream, EngineError> {
+    let Some(proxy_address) = proxy.address()? else {
+        return connect_direct(host, port).await;
+    };
+    if is_local(host) {
+        return connect_direct(host, port).await;
+    }
+    // **不在这里做 DNS**：把 `host:port` 原样交给代理，域名由它去解析。Tor 场景下这正是
+    // 关键——本地解析会把 DNS 请求漏到网外，等于白挂代理。
+    let target = format!("{host}:{port}");
+    match proxy {
+        Proxy::Socks5(_) => dial_socks5(proxy_address, &target).await,
+        Proxy::Http(_) => dial_http_connect(proxy_address, &target).await,
+        Proxy::Direct => connect_direct(host, port).await,
+    }
+}
+
+/// 直连。
+///
+/// **先把数字 IP 直接解析成 `SocketAddr`**，不要交给 `ToSocketAddrs`。Windows 上
+/// `getaddrinfo("127.0.0.1")` 会绕一圈 DNS 客户端，实测每次 ~370ms——数据面要连 5 条
+/// 连接，那就是 1.8 秒的纯等待，足以让对端先超时。主机名仍然走解析。
+async fn connect_direct(host: &str, port: u16) -> Result<TcpStream, EngineError> {
+    let display = format!("{host}:{port}");
+    let target = match host.parse::<IpAddr>() {
+        Ok(ip) => SocketAddr::new(ip, port),
+        Err(_) => tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|error| EngineError::RelayUnreachable { address: display.clone(), reason: error.to_string() })?
+            .next()
+            .ok_or_else(|| EngineError::RelayUnreachable {
+                address: display.clone(),
+                reason: "the host name resolved to nothing".to_owned(),
+            })?,
+    };
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target))
+        .await
+        .map_err(|_| EngineError::RelayUnreachable {
+            address: display.clone(),
+            reason: "connect timed out".to_owned(),
+        })?
+        .map_err(|error| EngineError::RelayUnreachable { address: display, reason: error.to_string() })?;
+    // 中继的 keepalive 是 1 秒一次，禁用 Nagle 能让握手少等几十毫秒。
+    let _ = stream.set_nodelay(true);
+    Ok(stream)
+}
+
+/// 经 SOCKS5 拨号。目标可以是域名——`Socks5Stream` 会把域名交给代理解析。
+async fn dial_socks5(proxy_address: &str, target: &str) -> Result<TcpStream, EngineError> {
+    let refusal = |reason: String| EngineError::RelayUnreachable { address: target.to_owned(), reason };
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, Socks5Stream::connect(proxy_address, target))
+        .await
+        .map_err(|_| refusal("socks5 connect timed out".to_owned()))?
+        .map_err(|error| refusal(format!("socks5: {error}")))?;
+    let stream = stream.into_inner();
+    let _ = stream.set_nodelay(true);
+    Ok(stream)
+}
+
+/// 经 HTTP CONNECT 隧道拨号。
+///
+/// 响应头是**逐字节**读到 `\r\n\r\n` 为止的：一次多读几字节就会把隧道里对端随后发来的
+/// 数据吞掉，握手当场错位。
+async fn dial_http_connect(proxy_address: &str, target: &str) -> Result<TcpStream, EngineError> {
+    let refusal = |reason: String| EngineError::RelayUnreachable { address: target.to_owned(), reason };
+    let (proxy_host, proxy_port) = split_host_port(proxy_address)?;
+    let mut stream = connect_direct(&proxy_host, proxy_port).await?;
+
+    let request = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.map_err(|error| refusal(format!("http proxy: {error}")))?;
+
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while head.len() < 8192 {
+        let read = stream.read(&mut byte).await.map_err(|error| refusal(format!("http proxy: {error}")))?;
+        if read == 0 {
+            break;
+        }
+        head.push(byte[0]);
+        if head.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    let head = String::from_utf8_lossy(&head);
+    let status = head.lines().next().unwrap_or_default();
+    if !status.contains(" 200") {
+        return Err(refusal(format!("the http proxy refused CONNECT: {}", status.trim())));
+    }
+    let _ = stream.set_nodelay(true);
+    Ok(stream)
+}
+
+/// 目标是不是局域网 / 回环地址。
+///
+/// 域名一律返回 false——不知道它解析到哪；Go 的 `utils.IsLocalIP` 对 `net.ParseIP`
+/// 解不出来的字符串同样返回 false。
+fn is_local(host: &str) -> bool {
+    let Ok(ip) = host.parse::<IpAddr>() else {
+        return false;
+    };
+    match ip {
+        IpAddr::V4(address) => address.is_loopback() || address.is_private() || address.is_link_local(),
+        IpAddr::V6(address) => address.is_loopback() || address.is_unique_local() || address.is_unicast_link_local(),
+    }
 }
 
 /// 拆 `host:port`。IPv6 字面量要带方括号（`[::1]:9009`）。
