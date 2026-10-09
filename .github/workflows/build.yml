@@ -260,6 +260,51 @@ jobs:
         # gen/android 是生成物（已 gitignore），每次构建现生成，避免模板漂移。
         working-directory: crates/croc-gui
         run: cargo tauri android init
+      - name: 准备签名
+        working-directory: crates/croc-gui
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # 预发布签名：密钥与口令都写在这里，只用来签 alpha 与没有 secret 时的构建，
+          # 不参与正式发布。它的包名是 .pr 变体，可以和正式版装在同一台机器上。
+          PR_KEYSTORE_BASE64: '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'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          USE_PR="false"
+          if [ "${{ inputs.channel }}" = "alpha" ] \
+            || [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] || [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] \
+            || [ -z "${ANDROID_KEY_ALIAS:-}" ] || [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
+            USE_PR="true"
+          fi
+
+          if [ "$USE_PR" = "true" ]; then
+            KS_B64="$PR_KEYSTORE_BASE64"
+            KS_PW="crocw-prerelease"
+            KS_ALIAS="crocw-pr"
+            KS_KP="crocw-prerelease"
+            echo "CROC_ANDROID_APPLICATION_ID=cn.sumitm.crocw.pr" >> "$GITHUB_ENV"
+            sed -i 's|<string name="app_name">"[^"]*"|<string name="app_name">"Crocw PR"|' \
+              gen/android/app/src/main/res/values/strings.xml \
+              gen/android/app/src/main/res/values-zh-rCN/strings.xml
+          else
+            KS_B64="$ANDROID_KEYSTORE_BASE64"
+            KS_PW="$ANDROID_KEYSTORE_PASSWORD"
+            KS_ALIAS="$ANDROID_KEY_ALIAS"
+            KS_KP="$ANDROID_KEY_PASSWORD"
+          fi
+
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/crocw.keystore"
+          {
+            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/crocw.keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=$KS_PW"
+            echo "ANDROID_KEY_ALIAS=$KS_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$KS_KP"
+          } >> "$GITHUB_ENV"
+          echo "signature: $([ "$USE_PR" = "true" ] && echo prerelease || echo release)"
       - name: 构建 APK
         working-directory: crates/croc-gui
         run: cargo tauri android build --apk --target ${{ matrix.abi }}

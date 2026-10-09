@@ -14,16 +14,38 @@ val tauriProperties = Properties().apply {
     }
 }
 
+val keystoreProps = Properties().apply {
+    val file = file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
+// 签名优先读环境变量，其次读 gen/android/app/keystore.properties（不入库）。
+fun signingValue(property: String, env: String): String? =
+    System.getenv(env) ?: keystoreProps.getProperty(property)
+
+val keystoreFile = signingValue("storeFile", "ANDROID_KEYSTORE_FILE")
+
 android {
     compileSdk = 37
     namespace = "cn.sumitm.crocw"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "cn.sumitm.crocw"
+        // Java 包名（namespace）不动，只换 APK 的包标识：预发布那份要能和正式版共存。
+        applicationId = System.getenv("CROC_ANDROID_APPLICATION_ID") ?: "cn.sumitm.crocw"
         minSdk = 30
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        create("release") {
+            if (keystoreFile != null) {
+                storeFile = file(keystoreFile)
+                storePassword = signingValue("storePassword", "ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "ANDROID_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "ANDROID_KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -39,6 +61,9 @@ android {
             }
         }
         getByName("release") {
+            if (keystoreFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                enable = true
             }
