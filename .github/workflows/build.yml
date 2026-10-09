@@ -229,6 +229,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v4.0.4
+        with:
+          # 包之间用空格分隔；写成逗号会被当作一个包名。
+          packages: 'platforms;android-37.0 build-tools;36.0.0 platform-tools ndk;27.3.13750724'
       - name: Android SDK 环境
         # ubuntu 镜像已预装 platforms;android-37.2 / build-tools;37.0.0 / NDK，并导出
         # ANDROID_HOME 与 ANDROID_NDK_HOME，所以这里只做校验与补齐，不装包：
