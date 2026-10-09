@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # gh release delete --cleanup-tag 内部要跑 git 删本地 tag，所以必须有仓库且 tag 已拉全。
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: 列出待清理的预发布

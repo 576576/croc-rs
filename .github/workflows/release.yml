@@ -92,7 +92,7 @@ jobs:
       pack_cli: ${{ steps.out.outputs.pack_cli }}
       pack_gui: ${{ steps.out.outputs.pack_gui }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           # count 由提交数推导，必须拿到完整历史。
           fetch-depth: 0
@@ -276,13 +276,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           # `gh release create --generate-notes` 要读提交历史来生成 changelog。
           # 少了这一步它会报 "failed to run git: not a git repository"——
           # 而 artifacts 是纯下载来的，工作目录里本来什么都没有。
           fetch-depth: 0
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
