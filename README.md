@@ -176,13 +176,13 @@ croc-rs --relay "myrelay.example.com:9009" --pass 你的口令 send [文件]
 
 `crates/croc-cli/locales/` 下每种语言一个 yml 文件，缺的键回退英文。
 
+GUI 另有一套 `crates/croc-gui/locales/`，键与前端 `crates/croc-gui/ui/src/locales.ts`
+对齐，由界面上的语言开关把两边一起切换。
+
 ```bash
 LC_ALL=zh_CN.UTF-8 croc-rs -h    # 强制中文
 LC_ALL=en_US.UTF-8 croc-rs -h    # Force using English
 ```
-
-英文的帮助输出与 Go 版 `croc -h` **逐字相同**（只有程序名和版本号不同），所以从 `croc` 过来的人
-看到的是同一份说明。`-h` / `--help` 等价，`help` / `h` 子命令也认：
 
 ```bash
 croc-rs help send                # 等价于 croc-rs send -h
@@ -190,8 +190,7 @@ croc-rs help send                # 等价于 croc-rs send -h
 
 ## 与 Go 版的差距
 
-哪些 flag 和子命令已经实现、哪些还没有，逐项列在
-[docs/agent/cli.md](docs/agent/cli.md)。
+一致和不同的 flag / 子命令逐项列在 [docs/agent/cli.md](docs/agent/cli.md)。
 
 ## 开发
 
@@ -202,13 +201,6 @@ cargo xtask ci-interop   # = 与 Go 版的互通矩阵（需要 Go 版 croc）
 
 cargo xtask purity       # 纯 crate 里不许有 IO
 ```
-
-**互通矩阵不在 CI 里，只在本地跑** —— 它要同一台机器上同时有 Rust 版与 Go 版，每个用例还
-各自起中继与两端进程。它真正的用途是"改了协议字节之后本地跑一遍"。理由与取舍见
-[docs/agent/build-and-ci.md](docs/agent/build-and-ci.md) §5.3。
-
-质量门禁**不跟 push / PR**，而是挂在发布链路上（`build` 的 `needs` 带上 `lint`），
-所以发布链路上没有绕过路径。代价是 PR 阶段没有绿灯信号——由上面这几条本地命令补。
 
 ### 架构：纯核心 + 副作用边缘
 
@@ -223,13 +215,6 @@ croc-protocol              sans-io 线路层：帧、消息、中继握手、清
         │
 croc-pakekey / croc-pake / croc-siec    纯数学与密钥协商
 ```
-
-**本仓库是纯 Rust 仓库，不含任何 Go 源码。** 需要 Go 的辅助工具（基准向量生成器）与
-互通用的 Go 版二进制都放在平级的 `croc-playground/` 里。
-
-### 协议改动的规矩
-
-**先改文档再改代码。** 协议理解沉淀在 [`docs/agent/`](docs/agent)（`protocol.md` / `crypto.md`），改完才动实现。兼容性知识靠基准向量与互通测试保证。
 
 ## 致谢
 
