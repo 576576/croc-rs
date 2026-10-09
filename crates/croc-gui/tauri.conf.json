@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "cn.sumitm.croc_rs",
   "build": {
-    "beforeDevCommand": "npm --prefix ui run dev",
-    "beforeBuildCommand": "npm --prefix ui run build",
+    "beforeDevCommand": "pnpm --prefix ui run dev",
+    "beforeBuildCommand": "pnpm --prefix ui run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "ui/dist"
   },
