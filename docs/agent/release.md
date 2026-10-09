@@ -30,18 +30,23 @@
 
 | 通道 | 触发 | versionName | tag | prerelease |
 |------|------|-------------|-----|-----------|
-| alpha | 推送 main（自动） | `r{count}` | `r{count}-alpha.{run_id}` | ✅ |
-| alpha | 手动 dispatch | `r{count}` | `r{count}-alpha.{run_id}` | ✅ |
+| alpha | 推送 main（自动） | `r{count+1000}` | `r{count+1000}-alpha.{run_id}` | ✅ |
+| alpha | 手动 dispatch | `r{count+1000}` | `r{count+1000}-alpha.{run_id}` | ✅ |
 | beta | 手动 dispatch | `1.{count/100}.{count%100}` | `v1.y.z-beta.{run_id}` | ❌ |
 | release | 手动 dispatch | `1.y.z` | `v1.y.z` | ❌ |
 
 - `count` = `git rev-list --count HEAD`，由 `prep` 算一次。**没有手填版本号的输入框** ——
   版本号只能从提交历史推导，避免"两个 release 抢同一个号"。
-- 3 段版本号的末两位**必须补零**（`1.2.05` 而不是 `1.2.5`）：tag 去非数字后要能当数字比
-  大小，`1.2.5` → `125` 会小于 `r1205` 被判成旧版本，`1.2.05` → `10205` 才对。
+- **tag 去非数字后要能当数字比大小**，两条规则都是为它服务的：
+  - 3 段版本号的末两位**必须补零**（`1.2.05` 而不是 `1.2.5`）：`1.2.5` → `125` 会小于 `r1205`
+    被判成旧版本，`1.2.05` → `10205` 才对；
+  - alpha 要 **+1000**：`r50` → `50` 会小于同一个 count 的 `1.0.50` → `1050`，alpha 反倒被排到
+    它的 release 之后。
 - **通道段只有 beta 非空**（`-beta`）：beta 与 release 共用 `1.y.z` 版本名，不区分就会重名；
-  alpha 的 `r{count}` 本身已表明通道，不再加段。
+  alpha 的 `r{…}` 本身已表明通道，不再加段。
 - release 通道重复发布同一个版本号时，`publish` 会先 `gh release delete --cleanup-tag`。
+- 这个版本号会烘进二进制，`croc-rs --version` 打的就是它（机制见
+  [build-and-ci.md](build-and-ci.md) §2.1）。
 
 ---
 

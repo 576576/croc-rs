@@ -23,6 +23,16 @@ pub const DEFAULT_RELAY: &str = "croc.schollz.com:9009";
 /// IPv6 中继的默认地址。Go 的 `models.DEFAULT_RELAY6`。
 pub const DEFAULT_RELAY6: &str = "croc6.schollz.com:9009";
 
+/// `--version` 打出的那一行。
+///
+/// 版本号由 `build.rs` 烘进来：CI 用 `release.yml` 算出的 `CROC_VERSION_NAME`，本地构建
+/// 用提交数推。**不是** `Cargo.toml` 里那个包版本——那个与发布通道无关，任何一次构建打出来
+/// 都一样，分不清手上的二进制是哪次提交。
+///
+/// 前面加上 `version ` 是为了形状与 Go 版一致（`croc version 11.5.4`）；clap 打印的是
+/// `<name> <version>`，所以这一串正好拼成 `croc-rs version 1.0.50`。
+const VERSION_LINE: &str = concat!("version ", env!("CROC_CLI_VERSION"));
+
 /// croc 的默认中继密码。
 pub const DEFAULT_PASSPHRASE: &str = "pass123";
 
@@ -78,7 +88,7 @@ pub enum Transport {
 #[derive(Debug, Parser)]
 #[command(
     name = "croc-rs",
-    version,
+    version = VERSION_LINE,
     // clap 默认给 `-V`，但 Go 版（urfave/cli）的默认版本开关是 `--version, -v`——
     // 习惯 `croc -v` 的人会撞到 "unexpected argument"。这里关掉内置的，自己声明一个，
     // 两个短选项都收。

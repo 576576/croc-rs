@@ -142,11 +142,15 @@ jobs:
           # 版本计数只能由提交历史推导，没有手填输入框。
           COUNT="$(git rev-list --count HEAD)"
 
-          # alpha 用 r{count}（本身就是通道标记，不再加后缀段）；
-          # beta/release 用 1.{count/100}.{count%100}，末两位**必须补零**：
-          # tag 去非数字后要能当数字比大小，1.2.5 → 125 会小于 r1205 被判旧，1.2.05 → 10205 才对。
+          # alpha 用 r{count+1000}（本身就是通道标记，不再加后缀段；+1000 的理由见下）；
+          # beta/release 用 1.{count/100}.{count%100}，末两位**必须补零**。
+          #
+          # 两处都是为了同一个约束：**tag 去非数字后要能当数字比大小**。
+          #   - 1.2.5 → 125 会小于 r1205 被判旧，1.2.05 → 10205 才对；
+          #   - r50 → 50 会小于同一个 count 的 1.0.50 → 1050，alpha 反倒比它的 release 旧，
+          #     所以 alpha 也要抬到同一条数轴上：count=50 → r1050。
           if [ "$CHANNEL" = "alpha" ]; then
-            VER_NAME="r${COUNT}"
+            VER_NAME="r$((COUNT + 1000))"
           else
             VER_NAME="1.$((COUNT / 100)).$(printf '%02d' $((COUNT % 100)))"
           fi

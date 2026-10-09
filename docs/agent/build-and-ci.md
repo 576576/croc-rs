@@ -31,18 +31,38 @@
 
 | 通道 | 触发 | versionName | tag | prerelease |
 |------|------|-------------|-----|-----------|
-| alpha | 推送 main（自动） | `r{count}` | `r{count}-alpha.{run_id}` | ✅ |
-| alpha | 手动 dispatch | `r{count}` | `r{count}-alpha.{run_id}` | ✅ |
+| alpha | 推送 main（自动） | `r{count+1000}` | `r{count+1000}-alpha.{run_id}` | ✅ |
+| alpha | 手动 dispatch | `r{count+1000}` | `r{count+1000}-alpha.{run_id}` | ✅ |
 | beta | 手动 dispatch | `1.{n/100}.{n%100 补零两位}` | `v1.y.z-beta.{run_id}` | ❌ |
 | release | 手动 dispatch | `1.y.z` | `v1.y.z` | ❌ |
 
 - `count` = 提交数（`git rev-list --count HEAD`），由 `prep` 算一次。**没有手填版本号的输入框**——
   版本号只能从提交历史推导，避免"两个 release 抢同一个号"。
-- 3 段版本号的末两位**必须补零**：tag 去非数字后要能当数字比大小，`1.2.5`→125 会小于 `r1205`
-  被判旧。
+- **tag 去非数字后要能当数字比大小**，两条规则都是为它服务的：
+  - 3 段版本号的末两位**必须补零**：`1.2.5` → 125 会小于 `r1205` 被判旧，`1.2.05` → 10205 才对；
+  - alpha 要 **+1000**：`r50` → 50 会小于同一个 count 的 `1.0.50` → 1050，alpha 反倒被排到它的
+    release 之后，所以抬到同一条数轴上（count=50 → `r1050`）。
 - **通道段只有 beta 非空**（`-beta`）：beta 与 release 共用 `1.y.z`，不区分就重名；alpha 的
-  `r{count}` 本身已表明通道。
+  `r{…}` 本身已表明通道。
 - release 同名 tag 已存在时先 `gh release delete --cleanup-tag`。
+
+### 2.1 版本号怎么进二进制
+
+`prep` 算出的版本号经三个环境变量交给 `cargo build`（在 `build.yml` 的 job `env:` 上）：
+`CROC_BUILD_TYPE`（通道）、`CROC_VERSION_NAME`、`CROC_VERSION_COUNT`。
+
+`crates/croc-cli/build.rs` 读 `CROC_VERSION_NAME`，用 `cargo:rustc-env` 变成编译期常量；
+`croc-rs --version` 打的就是它。本地构建没有这个变量，就按同一条公式从提交数推一遍
+（取不到 git 才退回 `Cargo.toml` 的包版本）。
+
+两个要点：
+
+- **不能用 `CARGO_PKG_VERSION` 当版本号**：`Cargo.toml` 里那个是包版本，与发布通道无关，任何
+  一次构建打出来都一样，分不清手上的二进制是哪次提交。
+- **`build.rs` 必须声明 `rerun-if-env-changed`**：`rust-cache` 的缓存键只看 `Cargo.lock` 与
+  rustc 版本，不含这两个变量；不声明的话新一次发布可能复用上一次的构建脚本输出，把旧版本号
+  烘进去。另外还盯着 `.git/HEAD` 与它指向的 ref，本地提交后才会重算。
+- 输出形状与 Go 一致：`croc-rs version 1.0.50`（Go 是 `croc version 11.5.4`）。
 
 ## 3. 两个产物与命名
 
