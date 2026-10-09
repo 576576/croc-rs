@@ -229,21 +229,29 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v4.0.4
-        with:
-          # NDK 必须显式装：预装列表里没有，而 Tauri 的 gradle 模板会引用它。
-          # 逗号分隔的**单个**字符串。写成三个并列的引号会直接让 YAML 解析失败——
-          # 而 GitHub 对 workflow 语法错误只给一句"workflow file issue"，非常难查。
-          packages: 'platforms;android-35,build-tools;35.0.0,ndk;26.1.10909125'
-      - name: 安装 NDK 环境变量
+      - name: Android SDK 环境
+        # ubuntu 镜像已预装 platforms;android-37.2 / build-tools;37.0.0 / NDK，并导出
+        # ANDROID_HOME 与 ANDROID_NDK_HOME，所以这里只做校验与补齐，不装包：
+        # sdkmanager 已废弃（Android CLI 的 `android sdk` 取代它），setup-android 仍是
+        # 调 sdkmanager 去装的，在新镜像上必然失败。
+        shell: bash
         run: |
+          set -euo pipefail
+
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          test -d "$SDK/platforms/android-37" || { echo "::error::缺 platforms;android-37"; exit 1; }
+          # 优先用镜像导出的默认 NDK，没有再退回目录里版本号最大的那个。
+          NDK="${ANDROID_NDK_HOME:-}"
+          [ -n "$NDK" ] || NDK="$(ls -d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)"
+          test -d "${NDK:?找不到 NDK}" || exit 1
+
           {
             echo "ANDROID_HOME=$SDK"
             echo "ANDROID_SDK_ROOT=$SDK"
-            echo "NDK_HOME=$SDK/ndk/26.1.10909125"
+            echo "NDK_HOME=$NDK"
+            echo "ANDROID_NDK_HOME=$NDK"
           } >> "$GITHUB_ENV"
+          echo "SDK=$SDK NDK=$NDK"
       - name: 安装 Tauri CLI
         # Android 这条路径绕不开 CLI（要生成 Gradle 工程）。`cargo install` 会从源码
         # 编一遍，约 12–15 分钟——所以 Android 默认关闭，只在真出 APK 时付这个代价。
