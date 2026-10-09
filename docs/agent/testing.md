@@ -78,13 +78,13 @@ harness 自身的要求：**每个用例必须显式收尾**（停中继、清�
 
 ## 5. 合规与许可
 
-**本项目以 `LGPL-3.0-only` 发布**。选弱化许可证是为了让**库**能被闭源程序链接使用，而 CLI 整体
-分发仍受 copyleft 约束。FlCroc 与本项目同为本人作品，因此复用其 i18n 文案与图标不存在授权障碍。
+**本项目以 `LGPL-3.0-or-later` 发布**。选弱化许可证是为了让**库**能被闭源程序链接使用，而 CLI 整体
+分发仍受 copyleft 约束；`-or-later` 让下游可以采用后续版本的 LGPL，不必等本项目改声明。
 
 | 项 | 说明 | 状态 |
 |----|------|------|
-| 本项目 | **LGPL-3.0-only**（弱化 copyleft，允许链接） | ✅ 已确定 |
-| FlCroc 文案 / 图标复用 | 同为本人项目 | ✅ 无阻碍 |
+| 本项目 | **LGPL-3.0-or-later**（弱化 copyleft，允许链接） | ✅ 已确定 |
+| 上游 croc web（`croc/web`，MIT © Schollz） | GUI 以它的 UI 为基准，会照搬 `styles.css` 与组件结构。MIT 的保留条件要求在分发物里带上版权声明与许可文本，落点是 `THIRD_PARTY_NOTICES.md` 与 `ui/src/styles.css` 的头部注释 | ⏸ 随 GUI 里程碑 G0 一并补齐 |
 | 上游 croc（MIT, © Schollz） | 独立实现而非 fork；协议与算法是事实标准，但**搬运的词表、常量点等素材需保留署名** | ⏸ 搁置到打磨阶段统一处理 |
 | `tscholl2/siec`（曲线参数） | 需在 `croc-siec` README 注明参数来源 | ⏸ 同上 |
 | `schollz/pake` v3（算法移植） | 需在文档中说明来源 | ⏸ 同上 |

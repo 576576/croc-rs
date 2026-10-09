@@ -143,6 +143,6 @@ mod tests {
         let second = registry.register("b".to_owned(), "send");
         registry.cancel("a");
         assert!(first.is_cancelled());
-        assert!(!second.is_cancelled(), "多任务并发是 GUI 相对 FlCroc 的增量能力，不能互相干扰");
+        assert!(!second.is_cancelled(), "多任务并发不能互相干扰");
     }
 }

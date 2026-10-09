@@ -1,8 +1,8 @@
 // 前端：只做两件事——调 Tauri 命令、渲染事件。
 //
 // 刻意不引任何前端框架：这个界面只有三个面板加一个列表，加一层构建链只会让
-// `cargo tauri build` 多一个失败点。状态全部在内存里，刷新即重置（历史留给后续的
-// SQLite 插件，见 docs/agent/plan/05-gui-plan.md）。
+// `cargo tauri build` 多一个失败点。状态全部在内存里，刷新即重置
+// （传输历史还没排进计划，见 docs/agent/plan/gui.md）。
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 

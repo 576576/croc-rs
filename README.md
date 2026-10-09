@@ -1,7 +1,6 @@
 # croc-rs
 
-[croc](https://github.com/schollz/croc) 的 Rust 重写版 —— 在任意两台电脑之间端到端加密地传文件，
-配一个可自建的中继。
+[croc](https://github.com/schollz/croc) 的 Rust 实现 —— 在任意两台电脑之间端到端加密地传文件。
 
 [croc]: https://github.com/schollz/croc
 
@@ -19,19 +18,12 @@
 - **自建中继**，也可以直连公共中继
 - **口令码代替 IP** —— 双方交换一句三词口令就能连上，不用交换地址
 
-口令码走的是 [PAKE](https://en.wikipedia.org/wiki/Password-authenticated_key_agreement)：
-口令本身不出现在线路里，两端各自算出的会话密钥相同，从而得到端到端加密。
-
-**协议基线：Go 版 croc `v11.5.4`。** 线路字节是硬契约，目标是与 Go 版**双向互通**——
-所以你能用 `croc-rs` 发送、用 `croc` 接收，反过来也一样。实现层按 Rust 惯用法重写，
-不做 Go 的逐行翻译（见 [设计原则](docs/agent/overview.md)）。
-
 ## 两个产物
 
 | 产物 | crate | 说明 |
 |------|-------|------|
 | **`croc-rs`** | [`crates/croc-cli`](crates/croc-cli) | CLI，跨平台 |
-| **`crocw-rs`** | [`crates/croc-gui`](crates/croc-gui)（Tauri 2，w = window） | 图形界面，与 CLI 共享 `croc-core` 核心 |
+| **`crocw-rs`** | [`crates/croc-gui`](crates/croc-gui) | 图形界面，跨平台 |
 
 GUI 与 CLI 用的是同一套协议与引擎，只是入口不同——所以下面的互通矩阵结论对两者同时成立。
 
@@ -55,7 +47,7 @@ cargo build --release -p croc-cli
 # 产物在 target/release/croc-rs（Windows 是 .exe）
 ```
 
-需要 Rust stable（edition 2024，MSRV 1.98）。
+需要 Rust stable（edition 2024，MSRV 1.98+）。
 
 ## 用法
 
@@ -104,7 +96,7 @@ croc-rs send --code [口令码] [文件]
 croc-rs send --text "hello world"
 ```
 
-### 不问任何问题
+### 自动同意
 
 ```bash
 croc-rs --yes [口令码]
@@ -180,13 +172,13 @@ croc-rs --relay "myrelay.example.com:9009" --pass 你的口令 send [文件]
 
 ## 界面语言
 
-界面文案只有中文与英文，按 `LC_ALL` → `LC_MESSAGES` → `LANG` → 系统区域依次判定，前缀 `zh`
-用中文，其余用英文；都判不出来时用英文。文案不在代码里：`crates/croc-cli/locales/` 下每种
-语言一个 yml，键一一对应，缺的键回退英文。
+界面按 `LC_ALL` → `LC_MESSAGES` → `LANG` → 系统区域依次判定 i18n。
+
+`crates/croc-cli/locales/` 下每种语言一个 yml 文件，缺的键回退英文。
 
 ```bash
 LC_ALL=zh_CN.UTF-8 croc-rs -h    # 强制中文
-LC_ALL=en_US.UTF-8 croc-rs -h    # 强制英文
+LC_ALL=en_US.UTF-8 croc-rs -h    # Force using English
 ```
 
 英文的帮助输出与 Go 版 `croc -h` **逐字相同**（只有程序名和版本号不同），所以从 `croc` 过来的人
@@ -232,24 +224,12 @@ croc-protocol              sans-io 线路层：帧、消息、中继握手、清
 croc-pakekey / croc-pake / croc-siec    纯数学与密钥协商
 ```
 
-**硬约束**：`croc-protocol` / `croc-pake` / `croc-siec` **禁止**出现 `tokio::`、`std::fs`、
-`Instant::now`、OS 随机源。随机数由调用方注入，于是**一次完整的握手与清单交换可以在单元测试里
-确定性重放**——不需要 socket、不需要超时。CI 用 `cargo xtask purity` 强制这条线。
-
-**本仓库没有 `unsafe`**：0 处 `unsafe`、0 处 FFI、0 处 `transmute` / `from_raw` / `as_ptr`，
-构建脚本里也没有 `cc` / `bindgen`。`[workspace.lints]` 的 `unsafe_code = "warn"` 配上 CI 的
-`-D warnings`，让"加一处 `unsafe`"变成一个必须显式面对的编译错误。
-
-所以也**不跑 Miri**（安全 Rust 产不出 UB）。全仓只用 stable 工具链。
-
 **本仓库是纯 Rust 仓库，不含任何 Go 源码。** 需要 Go 的辅助工具（基准向量生成器）与
 互通用的 Go 版二进制都放在平级的 `croc-playground/` 里。
 
 ### 协议改动的规矩
 
-**先改文档再改代码。** 协议理解沉淀在 [`docs/agent/`](docs/agent)（`protocol.md` /
-`crypto.md`），改完才动实现。兼容性知识靠基准向量与互通测试保证，不靠代码里的
-`// COMPAT:` 注释。
+**先改文档再改代码。** 协议理解沉淀在 [`docs/agent/`](docs/agent)（`protocol.md` / `crypto.md`），改完才动实现。兼容性知识靠基准向量与互通测试保证。
 
 ## 致谢
 
@@ -260,13 +240,11 @@ croc-pakekey / croc-pake / croc-siec    纯数学与密钥协商
 - [@warner](https://github.com/warner) —— 触发 PAKE 这个想法的
   [magic-wormhole](https://github.com/magic-wormhole/magic-wormhole)。
 - [EFF 词表](https://www.eff.org/dice) —— 三词口令码的词源。
-- [576576/FlCroc](https://github.com/576576/FlCroc) —— 同为本人作品，本项目要取代它。
 
 完整的第三方署名清单待打磨阶段补齐。
 
 ## 许可
 
-**LGPL-3.0-only**（弱化 copyleft：库可被闭源程序链接，CLI 整体分发仍受 copyleft 约束）。
+**LGPL-3.0-or-later**
 
-协议与算法来自 MIT 许可的 Go 版 croc（© Zack Schollz）与 `tscholl2/siec`；口令码词表来自 EFF（CC-BY-4.0，许可证原文已随词表入库）。完整的第三方署名清单在打磨阶段统一补齐，见
-[testing.md §5](docs/agent/testing.md)。
+完整的第三方署名清单在打磨阶段统一补齐，见 [testing.md §5](docs/agent/testing.md)。

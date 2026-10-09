@@ -5,7 +5,7 @@
 
 | 计划 | 状态 | 说明 |
 |------|------|------|
-| [gui.md](gui.md) | [PENDING] | Tauri 2 GUI（产物 `crocw-rs`）。后端骨架已有，**前端未创建** |
+| [gui.md](gui.md) | [PENDING] | Tauri 2 GUI（产物 `crocw-rs`）。后端命令齐全，前端有一套无构建的原生三文件；UI 基准改为 getcroc.com，待换成 Vite + React + TS |
 | [tailscale.md](tailscale.md) | [PENDING] | Tailscale / Tailcat 数据面。等上游 tailcat-rs；数据面抽象本身尚未实现 |
 
 > 标记约定：`[PENDING]` = **尚未实现**。参考文档里描述未实现能力的段落也用它标注，

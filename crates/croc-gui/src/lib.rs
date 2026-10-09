@@ -9,8 +9,7 @@
 //!    "哪些传输可以被取消"，别的一概不存；
 //! 3. 把 `Result<T, EngineError>` 折成 `Result<T, String>`（Tauri 命令的错误必须可序列化）。
 //!
-//! 这样做的直接好处：GUI 与 CLI 的行为不可能漂移。FlCroc 那套（Flutter + Go CGO）
-//! 之所以难维护，正是因为同一个协议在两端各有一份状态机。
+//! 协议只在 `croc-engine` 里有一份，GUI 与 CLI 的行为因此不可能漂移。
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing))]
 

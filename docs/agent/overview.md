@@ -8,7 +8,7 @@
   客户端互相收发文件、能连官方中继 `croc.schollz.com:9009`、能自建 Rust 中继（`croc-rs relay`），
   命令行参数与 Go 版对齐，可以当作替代品使用。
 - **`crocw-rs`（Tauri 2 GUI）**：复用同一套核心（`croc-core` + `croc-engine`）的跨平台图形界面，
-  取代 FlCroc（Flutter UI + Go CGO）。计划见 [plan/gui.md](plan/gui.md)。
+  界面基准是上游的 croc web（getcroc.com）。计划见 [plan/gui.md](plan/gui.md)。
 
 基线是 `schollz/croc` **v11.5.4**（`v11.5.4-4-g62fc9d17`）。
 
@@ -16,7 +16,6 @@
 
 | 原方案 | 问题 |
 |--------|------|
-| FlCroc = Flutter UI + Go `go_bridge`（CGO 动态库）+ croc submodule | 三条工具链（Dart / Go / CGO），任何一端升级都要全链路回归 |
 | CGO 交叉编译 Android（`build.sh` 编 `.so`） | 每个 ABI 一套产物，构建脚本脆弱，本地开发几乎无法调试 |
 | Go 版 `src/croc/croc.go` 近 4000 行 | 状态机、UI、协议、文件系统耦合，改一处要读全篇 |
 | 进度上报靠 `CrocPollProgress` 轮询全局单例 | 不支持并发传输，取消 / 暂停语义弱 |
@@ -101,4 +100,4 @@ croc-rs/
 | 项目 | 关系 | 处理方式 |
 |------|------|---------|
 | `schollz/croc` v11.5.4 | 协议与行为基线 | **不作为 submodule**；`tests/golden/` 保留由 Go 版生成的向量；互通矩阵需要 Go 版二进制（放在平级的 `croc-playground/`） |
-| `FlCroc` | 被取代对象 | GUI 需求以它的功能清单为基准（见 [plan/gui.md](plan/gui.md)），代码不复用；过渡期两者可并存 |
+| 同仓库 `web/`（croc web，MIT） | GUI 的**界面**基准 | 照搬设计令牌、`styles.css` 与组件结构到 `crates/croc-gui/ui`，见 [plan/gui.md](plan/gui.md)；MIT 的署名义务记在 [testing.md §5](testing.md) |
