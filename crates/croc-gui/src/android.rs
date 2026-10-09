@@ -9,7 +9,7 @@
 
 /// 桥的类（斜杠分隔的 JNI 写法）。只有 Android 用到。
 #[cfg(target_os = "android")]
-const BRIDGE: &str = "cn/sumitm/croc_rs/CrocBridge";
+const BRIDGE: &str = "cn/sumitm/crocw/CrocBridge";
 
 /// 起前台服务。
 #[cfg(target_os = "android")]

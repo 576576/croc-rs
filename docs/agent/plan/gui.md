@@ -102,7 +102,8 @@ crates/croc-gui/
 
 ## 4. Android
 
-- **包名 `cn.sumitm.croc_rs`**（`tauri.conf.json` 的 `identifier`）。Java 包名每段必须以字母
+- **包名 `cn.sumitm.crocw`**（`tauri.conf.json` 的 `identifier`），应用名 `Crocw`（`strings.xml`
+  的 `app_name` / `main_activity_title`）。Java 包名每段必须以字母
   开头，纯数字的用户名不能直接当包段。
 - **整个 `gen/android/` 入库**（里面有自写 Kotlin）。`cargo tauri android init` 对已存在的
   文件是幂等的，重跑不需要手工合并；`.gitignore` 只忽略 Gradle 产物。

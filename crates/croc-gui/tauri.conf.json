@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "crocw-rs",
+  "productName": "Crocw",
   "version": "0.1.0",
-  "identifier": "cn.sumitm.croc_rs",
+  "identifier": "cn.sumitm.crocw",
   "build": {
     "beforeDevCommand": "pnpm --prefix ui run dev",
     "beforeBuildCommand": "pnpm --prefix ui run build",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "croc",
+        "title": "Crocw",
         "width": 920,
         "height": 660,
         "minWidth": 720,

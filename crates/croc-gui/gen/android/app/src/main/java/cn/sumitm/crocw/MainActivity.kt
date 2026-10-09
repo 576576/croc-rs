@@ -1,4 +1,4 @@
-package cn.sumitm.croc_rs
+package cn.sumitm.crocw
 
 import android.Manifest
 import android.os.Build

@@ -1,4 +1,4 @@
-package cn.sumitm.croc_rs
+package cn.sumitm.crocw
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -29,7 +29,7 @@ class TransferForegroundService : Service() {
     const val CHANNEL_ID = "croc_transfers"
     private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
     const val NOTIFICATION_ID = 1001
-    const val ACTION_STOP = "cn.sumitm.croc_rs.STOP_TRANSFERS"
+    const val ACTION_STOP = "cn.sumitm.crocw.STOP_TRANSFERS"
 
     @Volatile private var wakeLock: PowerManager.WakeLock? = null
 
