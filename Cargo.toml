@@ -121,7 +121,7 @@ bytes = "1"
 # 而同一台机器上发送方与接收方常常同时在收同一个组播端口。
 socket2 = "0.6"
 ignore = "0.4"
-zip = "2"
+zip = "9"
 # `--qrcode`：只用它的编码器，渲染是自己拼的半角块字符，所以关掉默认的
 # image / svg 特性（那俩会拉一整套图形依赖）。
 qrcode = { version = "0.14", default-features = false }
@@ -162,3 +162,4 @@ croc-gui = { path = "crates/croc-gui" }
 lto = "thin"
 codegen-units = 1
 panic = "abort"
+strip = true

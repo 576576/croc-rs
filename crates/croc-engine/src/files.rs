@@ -1162,7 +1162,8 @@ mod tests {
         let mut archive = zip::ZipArchive::new(reader).expect("解析 zip");
         let mut names = Vec::new();
         for index in 0..archive.len() {
-            names.push(archive.by_index(index).expect("条目").name().to_owned());
+            let entry = archive.by_index(index).expect("条目");
+            names.push(entry.name().expect("条目名").into_owned());
         }
         names.sort();
         assert_eq!(names, vec!["tree/a.txt", "tree/sub/", "tree/sub/b.txt"]);
