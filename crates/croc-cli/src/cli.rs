@@ -79,6 +79,10 @@ pub enum Transport {
 #[command(
     name = "croc-rs",
     version,
+    // clap 默认给 `-V`，但 Go 版（urfave/cli）的默认版本开关是 `--version, -v`——
+    // 习惯 `croc -v` 的人会撞到 "unexpected argument"。这里关掉内置的，自己声明一个，
+    // 两个短选项都收。
+    disable_version_flag = true,
     about = "Send files anywhere, simply and securely.",
     // 允许 `croc-rs <口令码>` 这种"没有子命令"的用法：clap 先试子命令，匹配不上就
     // 落到位置参数上。
@@ -95,6 +99,13 @@ pub struct Cli {
     /// 就是它）。命令行给的优先。
     #[arg(env = "CROC_SECRET", hide_env_values = true)]
     code: Option<String>,
+
+    /// 打印版本并退出。
+    ///
+    /// 主短选项是 `-v`（Go 版的形式）；`-V`（clap 的惯例）作为隐藏别名保留，免得已经
+    /// 习惯它的人撞车。
+    #[arg(short = 'v', long = "version", short_alias = 'V', action = clap::ArgAction::Version)]
+    print_version: Option<bool>,
 
     #[command(flatten)]
     global: Global,
