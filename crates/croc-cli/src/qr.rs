@@ -1,17 +1,17 @@
 //! `--qrcode`：把 web 接收链接渲染成终端里的二维码。
 //!
-//! Go 用 `skip2/go-qrcode` 的 `ToSmallString`（`croc.go:1914`）。这里只拿它的编码器，
+//! Go 用 `skip2/go-qrcode` 的 `ToSmallString`。这里只拿它的编码器，
 //! 渲染是自己拼的半角块字符——省掉一整套图形依赖。
 
 use qrcode::{Color, EcLevel, QrCode};
 
 /// 二维码四周的静默区（模块数）。
 ///
-/// 留白不够扫描器就找不到定位角。这里左右各留 2 个模块，上下各留 1 **行**——上下是
+/// 留白不够扫描器就找不到定位角。这里左右各留 2 个模块，上下各留 1 行——上下是
 /// 两行像素合成一行，所以 1 行等于 2 个模块。
 const QUIET: isize = 2;
 
-/// web 接收页的链接，对应 Go 的 `webReceiveURL`（`croc.go:1927`）。
+/// web 接收页的链接，对应 Go 的 `webReceiveURL`。
 #[must_use]
 pub fn web_receive_url(code: &str) -> String {
     format!("https://getcroc.com/?code={}", percent_encode(code))
@@ -19,7 +19,7 @@ pub fn web_receive_url(code: &str) -> String {
 
 /// 把链接渲染成终端可打印的二维码。
 ///
-/// 每两行像素合成一行，用 `▀` `▄` `█` 与空格表示。**黑模块画成亮块**——深色终端下
+/// 每两行像素合成一行，用 `▀` `▄` `█` 与空格表示。黑模块画成亮块——深色终端下
 /// 这才呈现出"白底黑块"，跟 `qrencode -t UTF8` 一样。
 ///
 /// # Errors
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn the_web_url_matches_go() {
-        // Go：`"https://getcroc.com/?code=" + url.QueryEscape(code)`（`croc.go:1927`）。
+        // Go：`"https://getcroc.com/?code=" + url.QueryEscape(code)`。
         assert_eq!(web_receive_url("acid-acorn-acre"), "https://getcroc.com/?code=acid-acorn-acre");
         assert_eq!(web_receive_url("a b&c"), "https://getcroc.com/?code=a%20b%26c");
     }

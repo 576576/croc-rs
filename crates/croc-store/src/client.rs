@@ -14,7 +14,7 @@
 //! | POST | `/<id>/commit` | 取件能力 | 确认下载完成 |
 //! | DELETE | `/<id>` | 上传令牌 | 撤销 |
 //!
-//! 两把凭据的分工：**上传令牌**只能写与删，**取件能力**只能读。两者都从主密钥派生，
+//! 两把凭据的分工：上传令牌只能写与删，取件能力只能读。两者都从主密钥派生，
 //! 服务端手里的只是取件能力的 SHA-256。
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -141,7 +141,7 @@ impl Client {
 
     /// 上传一组普通文件。
     ///
-    /// 中途失败会把已经建好的传输**撤销掉**，不在服务端留一份谁也不认识的密文。
+    /// 中途失败会把已经建好的传输撤销掉，不在服务端留一份谁也不认识的密文。
     ///
     /// # Errors
     ///
@@ -402,14 +402,14 @@ impl Client {
         Err(last.unwrap_or_else(|| Error::Transport("upload failed".to_owned())))
     }
 
-    /// 取清单。这一条用**取件能力**——领取下载名额之前也要能看清单。
+    /// 取清单。这一条用取件能力——领取下载名额之前也要能看清单。
     async fn get_manifest(&self, share: &Share) -> Result<Response, Error> {
         let token = base64url::encode(&crypto::redeem_capability(&share.master_key)?);
         let url = api_url(&share.origin, &format!("/{}/manifest", share.id));
         self.http.send(Request::new("GET", &url).bearer(&token)).await
     }
 
-    /// 取一个分片。这一条用**名额令牌**：取件能力只能拿清单，拿不动密文。
+    /// 取一个分片。这一条用名额令牌：取件能力只能拿清单，拿不动密文。
     async fn get_chunk(&self, share: &Share, claim_token: &str, index: i64) -> Result<Response, Error> {
         let url = api_url(&share.origin, &format!("/{}/chunks/{index}", share.id));
         self.http.send(Request::new("GET", &url).bearer(claim_token)).await

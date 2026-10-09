@@ -5,7 +5,7 @@
 //! `fmt.Fprintf`。这里把它抽成 [`decide`]：输入是调用方先探好的事实，输出是一个
 //! [`Action`]。没有 IO，没有提示框，没有全局开关。
 //!
-//! 抽出来的好处很直接：**决策表可以穷举测试**。Go 那套要跑起来得先有文件系统、
+//! 抽出来的好处很直接：决策表可以穷举测试。Go 那套要跑起来得先有文件系统、
 //! 有终端、有用户输入。
 //!
 //! # 判定顺序（与 Go 逐条对应）
@@ -16,7 +16,7 @@
 //! 4. 空文件或符号链接 → [`Action::CreateDirectly`]，不走数据面；
 //! 5. 其余 → [`Action::Proceed`]。
 //!
-//! 顺序本身是语义的一部分：`--rename` 和 `--overwrite` 同时给出时，Go 选**重命名**。
+//! 顺序本身是语义的一部分：`--rename` 和 `--overwrite` 同时给出时，Go 选重命名。
 
 use croc_protocol::FileInfo;
 
@@ -99,7 +99,7 @@ pub fn decide(situation: Situation, preferences: Preferences) -> Action {
     if situation.hashes_equal {
         return Action::AlreadyCurrent;
     }
-    // 文本传输的临时文件名是**接收方**生成的（`croc-stdin-*`），不可能撞上用户自己
+    // 文本传输的临时文件名是接收方生成的（`croc-stdin-*`），不可能撞上用户自己
     // 的文件，所以重命名和询问都跳过。
     let collides = situation.destination_exists && !situation.is_text_artifact;
     if collides && preferences.rename {
@@ -128,7 +128,7 @@ pub fn resolve(action: Action, answer: Answer) -> Action {
 
 /// 这个条目是不是发送方为文本传输生成的临时文件。
 ///
-/// Go 要求**同时**满足"这次是文本传输"和"文件名带 `croc-stdin-` 前缀"。
+/// Go 要求同时满足"这次是文本传输"和"文件名带 `croc-stdin-` 前缀"。
 #[must_use]
 pub fn is_text_artifact(sending_text: bool, name: &str) -> bool {
     sending_text && name.starts_with(TEXT_ARTIFACT_PREFIX)
@@ -168,7 +168,7 @@ pub fn completion_percent(missing_bytes: u64, total_bytes: u64) -> f64 {
 /// 判定为"续传"还是"整个重来"。
 ///
 /// Go 的判据是 `100 - missing/total*100 < 99`，两边化简后等价于
-/// **`missing * 100 > total`**（本地已有超过 1%）。这里用整数比较，避免浮点误差。
+/// `missing * 100 > total`（本地已有超过 1%）。这里用整数比较，避免浮点误差。
 #[must_use]
 pub fn resume_kind(missing_bytes: u64, total_bytes: u64) -> ResumeKind {
     if total_bytes > 0 && missing_bytes.saturating_mul(100) > total_bytes {
@@ -184,7 +184,7 @@ pub fn resume_kind(missing_bytes: u64, total_bytes: u64) -> ResumeKind {
 ///
 /// # 照抄的怪癖
 ///
-/// Go 的 `path.Ext` 对 `.bashrc` 这种"整名就是扩展名"的文件返回**整个名字**，于是
+/// Go 的 `path.Ext` 对 `.bashrc` 这种"整名就是扩展名"的文件返回整个名字，于是
 /// 第二个候选会变成 `" (1).bashrc"`。这里照抄：它影响的是用户看到的文件名，改掉
 /// 会让两个实现的行为对不上，而这种对不上没有任何好处。
 pub fn rename_candidates(name: &str) -> impl Iterator<Item = String> + '_ {
@@ -192,7 +192,7 @@ pub fn rename_candidates(name: &str) -> impl Iterator<Item = String> + '_ {
     std::iter::once(name.to_owned()).chain((1u32..).map(move |index| format!("{base} ({index}){extension}")))
 }
 
-/// 按 Go `path.Ext` 的规则切 `(主干, 扩展名)`：扩展名从最后一个 `.` 开始且**含点**，
+/// 按 Go `path.Ext` 的规则切 `(主干, 扩展名)`：扩展名从最后一个 `.` 开始且含点，
 /// 没有点则为空串。
 fn split_extension(name: &str) -> (&str, &str) {
     // `FileInfo.Name` 是裸文件名，正常不含路径分隔符；真含了也只在最后一段里找点。

@@ -4,9 +4,9 @@
 //!
 //! croc 的握手分两层：
 //!
-//! 1. **本 crate**：把「口令」变成一把 32 字节的 SPAKE2 会话密钥。双方的公开值走
+//! 1. 本 crate：把「口令」变成一把 32 字节的 SPAKE2 会话密钥。双方的公开值走
 //!    JSON（见 [`wire`]），会话密钥走 SHA-256 转录哈希（见 [`spake2`]）。
-//! 2. **`croc-pakekey`**：把会话密钥经 HKDF 扩展成流量密钥与双向确认标签，并把
+//! 2. `croc-pakekey`：把会话密钥经 HKDF 扩展成流量密钥与双向确认标签，并把
 //!    「房间名 / 用途 / 曲线 / 双方公开值」绑进转录。
 //!
 //! 这里只做第 1 层。
@@ -34,16 +34,16 @@
 //!
 //! # 设计约束
 //!
-//! 这个 crate **没有** `tokio`、`std::fs`、`Instant::now`（`cargo xtask purity` 会把
+//! 这个 crate 没有 `tokio`、`std::fs`、`Instant::now`（`cargo xtask purity` 会把
 //! 它们挡在门外）。随机数不在这里取，由调用方通过 `ephemeral` 参数注入，所以整个
 //! crate 是确定性的、可回归测试的。
 //!
 //! # 与 Go 版的三处刻意的结构差异
 //!
-//! 1. **A/B 拆成两个类型**（[`Initiator`] / [`Responder`]），而不是一个带 `Role`
+//! 1. A/B 拆成两个类型（[`Initiator`] / [`Responder`]），而不是一个带 `Role`
 //!    字段的结构 + 运行期分支。调错方向编译不过。
-//! 2. **随机数注入**，而不是内部 `rand.Read`。
-//! 3. **公开值编码手写**，而不是拉 `serde_json` + `arbitrary_precision`。
+//! 2. 随机数注入，而不是内部 `rand.Read`。
+//! 3. 公开值编码手写，而不是拉 `serde_json` + `arbitrary_precision`。
 //!
 //! 三处差异都只影响 Rust 侧的代码形状；线路字节、转录哈希、会话密钥全部与 Go 版一致。
 

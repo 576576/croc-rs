@@ -17,7 +17,7 @@
 //! # 与 Go 版的结构差异
 //!
 //! Go 用一个 `Pake` 结构 + `Role int` 字段，`Init`/`Update` 靠运行期分支。这里拆成
-//! [`Initiator`] 与 [`Responder`] 两个类型——**调错方向在编译期就过不去**，`Update`
+//! [`Initiator`] 与 [`Responder`] 两个类型——调错方向在编译期就过不去，`Update`
 //! 里那两个大分支也就不用写运行期 role 判断。
 //!
 //! 另一处差异是随机数：Go 在 `Init`/`Update` 内部 `rand.Read`。这里把 32 字节临时
@@ -44,12 +44,12 @@ pub const EPHEMERAL_LEN: usize = 32;
 
 /// 会话密钥的转录模式——对应 Go 里那个 `withIDs` 布尔值。
 ///
-/// `schollz/pake` v3 有**两条**派生路径，哈希输入的结构完全不同：一条带 domain 与
+/// `schollz/pake` v3 有两条派生路径，哈希输入的结构完全不同：一条带 domain 与
 /// u64-LE 长度前缀，另一条什么都不带。这是线路契约，不能统一，所以这里把"走哪条"
 /// 提升成一个显式参数，而不是藏在两个构造函数重载里。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Identities<'a> {
-    /// Go 的 `InitCurve`：`sha256(pw ‖ Xᵤ ‖ Xᵥ ‖ Yᵤ ‖ Yᵥ ‖ Zᵤ ‖ Zᵥ)`，**没有长度前缀**。
+    /// Go 的 `InitCurve`：`sha256(pw ‖ Xᵤ ‖ Xᵥ ‖ Yᵤ ‖ Yᵥ ‖ Zᵤ ‖ Zᵥ)`，没有长度前缀。
     ///
     /// croc 用在中继握手：双方共用编译期固定的弱口令 `[1,2,3]`，没有身份可绑。
     Unbound,
@@ -197,7 +197,7 @@ fn write_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-/// A 方（role 0）。在 croc 里是**接收方**，也就是 PAKE 的发起方。
+/// A 方（role 0）。在 croc 里是接收方，也就是 PAKE 的发起方。
 pub struct Initiator {
     exchange: Exchange,
 }
@@ -266,7 +266,7 @@ impl core::fmt::Debug for Initiator {
     }
 }
 
-/// B 方（role 1）。在 croc 里是**发送方**，也就是 PAKE 的响应方。
+/// B 方（role 1）。在 croc 里是发送方，也就是 PAKE 的响应方。
 pub struct Responder {
     exchange: Exchange,
 }
@@ -304,7 +304,7 @@ impl Responder {
         self.exchange.finish()
     }
 
-    /// 要回送给 A 方的公开值。**必须在 [`Self::accept_request`] 之后调用**，
+    /// 要回送给 A 方的公开值。必须在 [`Self::accept_request`] 之后调用，
     /// 此时才包含 `Y`——Go 版同样是 `Update` 之后才取 `Bytes()`。
     pub fn public_bytes(&self) -> String {
         self.exchange.public_bytes()

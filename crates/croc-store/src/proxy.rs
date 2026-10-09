@@ -3,7 +3,7 @@
 //! store 的请求也走这两个开关——Go 那边是全局的 `comm.Dial`，store 客户端与普通传输
 //! 共用同一份代理配置。
 //!
-//! 两个都给时 **socks5 优先**（Go 的 `comm.Dial` 就是 if / else if）。
+//! 两个都给时 socks5 优先（Go 的 `comm.Dial` 就是 if / else if）。
 
 /// 出站代理。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +26,7 @@ impl Proxy {
 
     /// 交给 `reqwest` 的代理 URL。
     ///
-    /// socks5 用 `socks5h`：域名交给**代理**去解析。用 `socks5` 的话本地会先解析一遍，
+    /// socks5 用 `socks5h`：域名交给代理去解析。用 `socks5` 的话本地会先解析一遍，
     /// DNS 请求就漏到网外了——`--socks5` 的典型用途（Tor）要的正是避免这个。
     #[must_use]
     pub fn url(&self) -> String {
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn socks5_wins_when_both_are_given() {
-        // Go 的 `comm.Dial` 先查 Socks5Proxy（`src/comm/comm.go:67`）。
+        // Go 的 `comm.Dial` 先查 Socks5Proxy。
         assert_eq!(
             Proxy::from_flags(Some("127.0.0.1:9050"), Some("127.0.0.1:8080")),
             Some(Proxy::Socks5("127.0.0.1:9050".to_owned()))

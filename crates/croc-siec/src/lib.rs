@@ -1,7 +1,7 @@
 //! croc 的底层椭圆曲线算术。
 //!
 //! 这一层只做一件事：把 Go 版 croc 依赖的两套曲线实现，用同一组 Rust 类型复现到
-//! **字节级等价**。
+//! 字节级等价。
 //!
 //! | Go 侧 | 本 crate |
 //! |---|---|
@@ -18,12 +18,12 @@
 //!
 //! # 三条必须照抄的怪癖
 //!
-//! 1. **欧几里得取模**。Go 的 `Mod` 结果恒非负，Rust 的 `%` 跟随被除数符号 →
+//! 1. 欧几里得取模。Go 的 `Mod` 结果恒非负，Rust 的 `%` 跟随被除数符号 →
 //!    [`emod`]。
-//! 2. **标量约简的不对称**。`nistCurve.normalizeScalar` 只对过长标量取模，过短的只
+//! 2. 标量约简的不对称。`nistCurve.normalizeScalar` 只对过长标量取模，过短的只
 //!    左补零；`siec.ScalarMult` 完全不约简 → [`WeierstrassCurve::normalize_scalar`]
 //!    与 [`WeierstrassCurve::normalize_scalars`] 开关。
-//! 3. **无穷远点是 `(0, 0)`**，不是 `None` → [`AffinePoint::identity`]。
+//! 3. 无穷远点是 `(0, 0)`，不是 `None` → [`AffinePoint::identity`]。
 //!
 //! 这些差异都封在类型和函数里，而不是散落成注释，见
 //! `docs/agent/crypto.md` §6。
@@ -46,7 +46,7 @@ pub use weierstrass::{CurveSpec, WeierstrassCurve};
 
 /// 曲线算术的失败模式。
 ///
-/// 注意这里**没有**"点不在曲线上"之外的用法错误：曲线参数是编译期常量，不可能
+/// 注意这里没有"点不在曲线上"之外的用法错误：曲线参数是编译期常量，不可能
 /// 运行期失效。真正的输入校验（对方送来的点是否在曲线上）由 `croc-pake` 负责。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CurveError {

@@ -1,16 +1,16 @@
 //! `--throttleUpload`：发送方向的令牌桶限速。
 //!
-//! 参数与 Go 的 `rate.NewLimiter(rate.Every(time.Second/limit), burst)`（`croc.go:474`）
+//! 参数与 Go 的 `rate.NewLimiter(rate.Every(time.Second/limit), burst)`
 //! 对齐：速率 `limit` 字节/秒，桶容量取 `max(65536, limit)`（Go 的
 //! `models.TCP_BUFFER_SIZE` 与 `uploadLimit` 取大者）。
 //!
-//! **桶初始是满的**，这一点不是细节：一个 100 kB/s 的限制如果从空桶起步，头一个 64 KiB
+//! 桶初始是满的，这一点不是细节：一个 100 kB/s 的限制如果从空桶起步，头一个 64 KiB
 //! 的块就要白等 0.64 秒才开始发，对端会先以为断了。Go 的 `rate.NewLimiter` 同样是满桶。
 //!
-//! # 令牌是**允许为负**的
+//! # 令牌是允许为负的
 //!
 //! 这是 Go 的 `rate.Limiter.ReserveN` 的做法，也是唯一不会让速率翻倍的做法：领走一笔
-//! 就走成负数，等负数按速率自己涨回 0 才放行。反过来，如果领不动时把余额**清成 0**
+//! 就走成负数，等负数按速率自己涨回 0 才放行。反过来，如果领不动时把余额清成 0
 //! 再睡一觉，那段时间长出来的令牌会在下一次 `reserve` 里按 `elapsed` 再算一遍——
 //! 实测等效速率正好是两倍。多条流共享一个桶时更糟：每条流都在重复这件事。
 
@@ -32,7 +32,7 @@ pub fn burst_for(bytes_per_second: u64) -> u64 {
 /// 令牌桶的当前状态。
 #[derive(Debug)]
 struct State {
-    /// 桶里的令牌（字节）。**可以是负数**：那是已经领超、等着按速率补上的欠账。
+    /// 桶里的令牌（字节）。可以是负数：那是已经领超、等着按速率补上的欠账。
     tokens: f64,
     /// 上次结算的时刻。
     updated: Instant,
@@ -40,7 +40,7 @@ struct State {
 
 /// 跨流共享的上行限速器。
 ///
-/// 数据面有多条流，Go 那边也只有**一个** `c.limiter`（`croc.go:222`），所以限速是
+/// 数据面有多条流，Go 那边也只有一个 `c.limiter`，所以限速是
 /// "整个上传"的速率，不是"每条流"的——否则 `--throttleUpload 100k` 在 4 条流下会跑出
 /// 400 kB/s。
 #[derive(Debug)]
@@ -63,11 +63,11 @@ impl Throttle {
 
     /// 领 `bytes` 个令牌，返回需要等多久才能发。
     ///
-    /// **先扣费、后等待**：调用方拿到时长再自己 sleep。这样一条流在睡的时候，另一条流
+    /// 先扣费、后等待：调用方拿到时长再自己 sleep。这样一条流在睡的时候，另一条流
     /// 拿到的是已经扣过费的桶——限速是对整次上传生效的。
     #[must_use]
     pub fn reserve(&self, bytes: u64) -> Duration {
-        // 锁中毒说明别处 panic 过。这时**不能**返回零延迟——那等于把限速关掉，
+        // 锁中毒说明别处 panic 过。这时不能返回零延迟——那等于把限速关掉，
         // 用户给的是"别占满带宽"，静默失效比报错更难查。取出内层状态继续算。
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let now = Instant::now();
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn the_aggregate_rate_is_not_doubled() {
         // 盯的是"等待期间长出来的令牌被算两遍"那个错。只能实测耗时：把余额清成 0 的
-        // 写法只在**跨 reserve 的真实等待**里露馅——一次 reserve 的返回值看不出区别。
+        // 写法只在跨 reserve 的真实等待里露馅——一次 reserve 的返回值看不出区别。
         let rate = 100_000;
         let throttle = Throttle::new(rate);
         assert_eq!(throttle.reserve(burst_for(rate)), Duration::ZERO, "先把桶清空");

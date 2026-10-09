@@ -1,21 +1,21 @@
 //! 数据面：N 条流上的分块搬运。
 //!
-//! 数据端口上跑的还是 comm 帧，但帧体是**裸的 AEAD 密文**（不走 JSON，也不走消息层）：
+//! 数据端口上跑的还是 comm 帧，但帧体是裸的 AEAD 密文（不走 JSON，也不走消息层）：
 //!
 //! ```text
 //! 明文 = u64 LE 偏移 ‖ 数据          （可选：DEFLATE 包一层）
 //! 帧体 = nonce(12) ‖ ciphertext ‖ tag(16)
 //! ```
 //!
-//! 密钥就是 PAKE 派生出的那个 `encryptionKey`，与消息层共用。压缩开关**按文件**决定
+//! 密钥就是 PAKE 派生出的那个 `encryptionKey`，与消息层共用。压缩开关按文件决定
 //! （`FileInfo.IsCompressed` 与全局 `--no-compress` 一起看），两端必须一致，否则解出来
 //! 是乱码。
 //!
 //! # 为什么每条流自己 `claim()`
 //!
 //! Go 用一个带锁的 `requestedChunkQueue` 把偏移分给 worker，后加入的流不会抢走已被
-//! 认领的块。这里照做：队列在锁内只做整数运算，锁外才读写磁盘——**持锁做 IO 会让所有
-//! 流串行化**，那正是多流想避免的事。
+//! 认领的块。这里照做：队列在锁内只做整数运算，锁外才读写磁盘——持锁做 IO 会让所有
+//! 流串行化，那正是多流想避免的事。
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -38,12 +38,12 @@ use crate::throttle::Throttle;
 /// 一条数据流的上限：与 Go 的 `min(len(RelayPorts), 8)` 同一个理由——再多也不会更快。
 pub const MAX_STREAMS: u8 = 8;
 
-/// 数据面连接的持有者：**一次传输只建一次，全程复用**。
+/// 数据面连接的持有者：一次传输只建一次，全程复用。
 ///
 /// # 为什么必须复用
 ///
 /// 数据端口的房间名是 `{room}-{j}`，而中继的一个房间只容得下两端各一条连接。要是每条
-/// 文件都重建一次，第二条文件就会撞上自己上一条文件**还开着**的连接，中继回 `room full`
+/// 文件都重建一次，第二条文件就会撞上自己上一条文件还开着的连接，中继回 `room full`
 /// —— 表现就是"单文件传得好好的，目录一传就断在第二个文件上"。
 ///
 /// Go 也是这么做的：连接在 PAKE 完成时建一次（`openRelayChannels()`），留到整个 attempt
@@ -51,7 +51,7 @@ pub const MAX_STREAMS: u8 = 8;
 ///
 /// # 为什么可以复用
 ///
-/// 发送方**只发被请求的块**（[`ChunkQueue`] 是认领制，一块不多），接收方数够就收工，
+/// 发送方只发被请求的块（[`ChunkQueue`] 是认领制，一块不多），接收方数够就收工，
 /// 所以文件之间不会留下半条帧。即便有（中继会往数据连接里插 keepalive），
 /// [`Framed`] 的缓冲是持久的、`read_frame()` 会从缓冲里接着解析，也不会串包。
 ///
@@ -130,7 +130,7 @@ impl DataPlane {
         Ok(conns)
     }
 
-    /// 把连接放回去。**不是关闭**——见类型头的说明。
+    /// 把连接放回去。不是关闭——见类型头的说明。
     pub fn release(&self, conns: Vec<Framed<TcpStream>>) {
         match self.conns.lock() {
             Ok(mut guard) => *guard = Some(conns),
@@ -143,7 +143,7 @@ impl DataPlane {
 /// "还差哪些块"的游标。
 ///
 /// 内部就是线路形态的 `Vec<i64>` 加一个游标，`claim()` 每次吐一个字节偏移。
-/// **不做预展开**：一个 10 GB 文件有 30 万个块，展开成 `Vec<u64>` 是 2.4 MB 的浪费，
+/// 不做预展开：一个 10 GB 文件有 30 万个块，展开成 `Vec<u64>` 是 2.4 MB 的浪费，
 /// 而这个结构体只需要几十字节。
 #[derive(Debug, Clone)]
 pub struct ChunkQueue {
@@ -228,13 +228,13 @@ impl Progress {
     }
 }
 
-/// 发送一个文件。**返回数据连接**，调用方必须继续持有它们。
+/// 发送一个文件。返回数据连接，调用方必须继续持有它们。
 ///
 /// # 为什么要把连接还回去
 ///
 /// 数据写完就 `drop` 掉 `Framed`，socket 会立刻关闭：数据还在中继那侧的内核缓冲里没
-/// 被读走，Windows 于是发 **RST** 而不是 FIN——
-/// 中继的 `copy_bidirectional` 直接报错退出，**已经写出去的分块全部丢弃**。
+/// 被读走，Windows 于是发 RST 而不是 FIN——
+/// 中继的 `copy_bidirectional` 直接报错退出，已经写出去的分块全部丢弃。
 /// 表现就是"发送方说发完了、接收方一个字节没收到"。
 ///
 /// Go 的发送方同样把数据连接留到整个 attempt 结束（`c.dataConns`），不是在 worker
@@ -263,7 +263,7 @@ pub async fn send_file(
         let throttle = throttle.clone();
         handles.push(tokio::spawn(async move {
             let result = send_stream(conn, file, queue, key, compress, throttle, cancel, path).await;
-            // 无论成败都把连接还回去——**关连接是调用方的事**，见函数头的说明。
+            // 无论成败都把连接还回去——关连接是调用方的事，见函数头的说明。
             result
         }));
     }
@@ -335,8 +335,8 @@ async fn send_stream(
             return (conn, Err(EngineError::file(&path, format!("short read at offset {offset}"))));
         }
 
-        // `--throttleUpload`：令牌在**读完之后、加密之前**领，与 Go 的位置一致
-        // （`croc.go:3811`）。桶是跨流共享的，限的是整次上传的速率。
+        // `--throttleUpload`：令牌在读完之后、加密之前领，与 Go 的位置一致
+        // 。桶是跨流共享的，限的是整次上传的速率。
         if let Some(throttle) = &throttle {
             let delay = throttle.reserve(u64::try_from(read.len()).unwrap_or(u64::MAX));
             if !delay.is_zero() {
@@ -382,21 +382,21 @@ async fn send_stream(
     }
 }
 
-/// 接收一个文件。返回**数据连接**（连接是复用的，必须交回 [`DataPlane`]）与进度。
+/// 接收一个文件。返回数据连接（连接是复用的，必须交回 [`DataPlane`]）与进度。
 ///
-/// 收全与否**由调用方**判断，不在这里判——理由见下面这段。
+/// 收全与否由调用方判断，不在这里判——理由见下面这段。
 ///
 /// # 为什么收全判定不在这里
 ///
 /// 一条流写完最后一块时，另外几条可能正阻塞在 `read_frame` 上。如果每条流都自己
 /// 判"没写全 = 断线"，那它们会在计数器更新之前抢到 EOF，把一次成功的传输报成失败。
-/// 所以：**任何流看到 EOF 都算正常结束**，是否收全留给调用方在全部流收工之后判定——
+/// 所以：任何流看到 EOF 都算正常结束，是否收全留给调用方在全部流收工之后判定——
 /// 那才是唯一没有竞态的时刻。
 ///
 /// # Errors
 ///
 /// 解密失败（对端用了别的密钥 / 压缩设置不一致）、写盘失败、偏移越界。
-/// 对端提前关闭连接**不算错误**（见上）。
+/// 对端提前关闭连接不算错误（见上）。
 pub async fn receive_file(
     conns: Vec<Framed<TcpStream>>,
     sink: Arc<Sink>,

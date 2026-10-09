@@ -1,4 +1,4 @@
-//! 协议载荷：消息体里那些**有结构**的 JSON。
+//! 协议载荷：消息体里那些有结构的 JSON。
 //!
 //! [`Message`](crate::Message) 只承载"类型 + 几段不透明字节"。真正带结构的东西——文件
 //! 清单、分片请求、数据块——都在这里。它们是 Go 侧 `croc.Chunk` / `croc.FileInfo` /
@@ -6,9 +6,9 @@
 //!
 //! # `omitempty` 在这里比在 `Message` 上更要紧
 //!
-//! Go 的这些结构体里，字段**有的带 `omitempty` 有的不带**，而两者都会体现在字节上：
+//! Go 的这些结构体里，字段有的带 `omitempty` 有的不带，而两者都会体现在字节上：
 //!
-//! - `FileInfo.IsCompressed` 的 tag 是 `json:"c"`——**没有** `omitempty`，所以 `"c"`
+//! - `FileInfo.IsCompressed` 的 tag 是 `json:"c"`——没有 `omitempty`，所以 `"c"`
 //!   永远出现，哪怕值是 `false`；
 //! - `SenderInfo.MachineID` 没有 tag，所以空字符串也会编成 `"MachineID":""`；
 //! - 而 `SenderInfo.ExternalIP` 的 tag 是 `json:",omitempty"`，空值整字段消失。
@@ -56,7 +56,7 @@ impl Chunk {
 
 /// 一个待传输文件（或空目录）的元信息。
 ///
-/// `declined` 是接收方的本地状态（用户拒绝覆盖/续传），Go 里是不导出字段，**不上线路**。
+/// `declined` 是接收方的本地状态（用户拒绝覆盖/续传），Go 里是不导出字段，不上线路。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileInfo {
     /// `n`：文件名（不含目录）。
@@ -83,7 +83,7 @@ pub struct FileInfo {
     #[serde(rename = "m", default, with = "crate::json::mod_time", skip_serializing_if = "ModTime::is_zero")]
     pub mod_time: ModTime,
 
-    /// `c`：文件是否被压缩过。**没有 `omitempty`**，所以这个字段永远出现在线上。
+    /// `c`：文件是否被压缩过。没有 `omitempty`，所以这个字段永远出现在线上。
     #[serde(rename = "c", default)]
     pub is_compressed: bool,
 
@@ -113,7 +113,7 @@ pub struct FileInfo {
 
     /// 接收方拒绝了这个文件（用户选了"不覆盖"），所以什么都没写。
     ///
-    /// Go 里的不导出字段 `declined`，**不上线路**——这是接收方自己的账。
+    /// Go 里的不导出字段 `declined`，不上线路——这是接收方自己的账。
     #[serde(skip)]
     pub declined: bool,
 }
@@ -152,7 +152,7 @@ pub const MODE_DIR: u32 = 1 << 31;
 pub struct RemoteFileRequest {
     /// 请求的分片区间，扁平三元组布局：`[chunkSize, start0, count0, …]`。
     ///
-    /// **空列表表示"整个文件"**。详见 `croc-core` 的 `chunk` 模块。
+    /// 空列表表示"整个文件"。详见 `croc-core` 的 `chunk` 模块。
     #[serde(rename = "CurrentFileChunkRanges", default)]
     pub current_file_chunk_ranges: Vec<i64>,
 
@@ -180,8 +180,8 @@ pub struct RemoteFileRequest {
 impl RemoteFileRequest {
     /// 编成 `recipientready` 消息的 `b` 字段内容。
     ///
-    /// Go 是 `json.Marshal(remoteFile)` 之后塞进 `Message.Bytes`，所以这里产出的是**裸
-    /// JSON 字节**，不经过 base64——base64 那一步由 [`Message`](crate::Message) 的
+    /// Go 是 `json.Marshal(remoteFile)` 之后塞进 `Message.Bytes`，所以这里产出的是裸
+    /// JSON 字节，不经过 base64——base64 那一步由 [`Message`](crate::Message) 的
     /// `b` 字段适配器负责。
     ///
     /// # Errors

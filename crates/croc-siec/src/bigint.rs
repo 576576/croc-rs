@@ -1,6 +1,6 @@
 //! Go `math/big` 语义的整数助手。
 //!
-//! 这一层存在的唯一理由是**逐字节兼容**：croc 的 PAKE 线路值直接来自 Go
+//! 这一层存在的唯一理由是逐字节兼容：croc 的 PAKE 线路值直接来自 Go
 //! `math/big`，而 `big.Int` 的取模语义和 Rust 的 `%` 不一样。把这套差异封在三个
 //! 小函数里，上面的曲线代码就能写得像普通数学，而不是满篇 `+ m` 的补丁。
 
@@ -9,7 +9,7 @@ use num_traits::{One, Signed, Zero};
 
 /// Go `(*big.Int).Mod` 的语义：余数恒落在 `[0, |m|)`。
 ///
-/// Rust 的 `%` 余数符号跟随**被除数**（`-7 % 3 == -1`），Go 的 `Mod` 跟随**除数**
+/// Rust 的 `%` 余数符号跟随被除数（`-7 % 3 == -1`），Go 的 `Mod` 跟随除数
 /// （`-7 mod 3 == 2`）。SIEC255 的加法公式会算出负的中间值，这一步必须对齐，
 /// 否则 `λ` 会差一个 `p`，进而 `x₃` 完全错位。
 ///
@@ -54,7 +54,7 @@ pub fn mod_inverse(value: &BigInt, modulus: &BigInt) -> Option<BigInt> {
     Some(emod(&coefficient, &modulus))
 }
 
-/// Go `(*big.Int).Bytes()` 的语义：大端、无前导零、**零值对应空切片**。
+/// Go `(*big.Int).Bytes()` 的语义：大端、无前导零、零值对应空切片。
 ///
 /// `num-bigint` 的 `to_bytes_be()` 对零返回 `vec![0]`，Go 返回 `nil`。这个差异会直接
 /// 体现在 PAKE 会话密钥的转录哈希里（`Xᵤ.Bytes()`），所以必须归一化。

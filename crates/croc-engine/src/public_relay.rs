@@ -1,11 +1,11 @@
 //! 公共中继池：地址表，以及"哪一台能用"的探测。
 //!
-//! Go 版在 `src/publicrelay` 里定义了一个**有序**的池，并把口令码按
+//! Go 版在 `src/publicrelay` 里定义了一个有序的池，并把口令码按
 //! `sha256(码) mod 池长` 确定性地分到其中一台（`src/codephrase` 的 `RelayIndex`）。
 //! 于是码本身就带着"该连哪台"这层信息——对端只要拿到码就能算出同一个索引，不需要
 //! 谁来通知它。
 //!
-//! 不做这一层的后果不是报错，而是**静默挂住**：发送方连默认中继，接收方按码算出另一
+//! 不做这一层的后果不是报错，而是静默挂住：发送方连默认中继，接收方按码算出另一
 //! 个索引于是连上另一台。两台机器各在自己那个（房间名完全正确、也确实空的）房间里等
 //! 一个永远不会来的人，表现出来就是接收端一直停在 "Authenticating code"。
 
@@ -19,7 +19,7 @@ use crate::error::EngineError;
 use crate::proxy::Proxy;
 use crate::relay;
 
-/// 池里的中继，**顺序即索引**。
+/// 池里的中继，顺序即索引。
 ///
 /// 改顺序或增减条目会让所有在途的码指向别的中继，所以对端版本不一致时会互相等不到。
 pub const RELAYS: &[&str] = &["1.getcroc.com:9009", "2.getcroc.com:9009", "3.getcroc.com:9009", "4.getcroc.com:9009"];
@@ -52,7 +52,7 @@ pub async fn probe(address: &str, proxy: &Proxy, dns: Mode) -> Result<Duration, 
     }
 }
 
-/// 同时探测池里每一台，返回**第一个完成** ping/pong 的那台的索引。
+/// 同时探测池里每一台，返回第一个完成 ping/pong 的那台的索引。
 ///
 /// Go 的 `publicrelay.SelectFirst` 是同一套：全部并发起跑，谁先成功用谁，其余立刻
 /// 取消。失败的（连不上 / 超时）跳过——只有全部失败才算错。

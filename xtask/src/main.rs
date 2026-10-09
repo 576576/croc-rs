@@ -1,6 +1,6 @@
 //! `cargo xtask`：本仓库的构建期杂活。
 //!
-//! 用 `xtask` 而不是散落的 shell 脚本，是为了让门禁**跨平台**：CI 跑在
+//! 用 `xtask` 而不是散落的 shell 脚本，是为了让门禁跨平台：CI 跑在
 //! Linux / macOS / Windows 三种 runner 上，`grep -r` 那套在 Windows 上就不是同一件事了。
 //!
 //! ```console
@@ -10,8 +10,8 @@
 //!
 //! 子命令分两类：
 //!
-//! - **架构门禁**（`purity`）—— CI 的 `arch` job 跑它，把架构约束变成硬错误；
-//! - **本地 CI 等价命令**（`ci-*`）—— 因为质量门禁不跟 push / PR，本地必须能一键跑完
+//! - 架构门禁（`purity`）—— CI 的 `arch` job 跑它，把架构约束变成硬错误；
+//! - 本地 CI 等价命令（`ci-*`）—— 因为质量门禁不跟 push / PR，本地必须能一键跑完
 //!   等价检查，否则只能靠推 `main` 才发现红灯。
 
 // 测试代码里 unwrap / expect / panic / 索引都是正常表达方式，在 crate 根部统一豁免

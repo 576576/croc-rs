@@ -1,11 +1,11 @@
 //! 把 Go `encoding/json` 的几处约定搬过来。
 //!
-//! 这些都不是实现细节，而是**线路契约**的一部分：同一个字段在 Go 里编出来是什么样，
+//! 这些都不是实现细节，而是线路契约的一部分：同一个字段在 Go 里编出来是什么样，
 //! 这里就得是什么样，否则对端解不出来。
 //!
 //! | Go 侧 | 线路形态 | 本模块 |
 //! |---|---|---|
-//! | `[]byte` | 标准 base64（**带** padding）；`null` 解成 nil 切片 | [`base64_bytes`] |
+//! | `[]byte` | 标准 base64（带 padding）；`null` 解成 nil 切片 | [`base64_bytes`] |
 //! | `time.Time`（`json:"m,omitzero"`） | RFC3339Nano；零值整字段消失 | [`ModTime`] + [`mod_time`] |
 //! | `os.FileMode` | 裸 `uint32`（`0` 被 `omitempty` 吃掉） | 直接用 `u32` + `skip_serializing_if` |
 
@@ -32,7 +32,7 @@ pub(crate) mod base64_bytes {
 
 /// Go 的 `time.Time`，语义对齐 `json:"m,omitzero"`。
 ///
-/// `None` 表示 Go 的**零值时间**（`0001-01-01T00:00:00Z`），此时整个字段不出现。
+/// `None` 表示 Go 的零值时间（`0001-01-01T00:00:00Z`），此时整个字段不出现。
 ///
 /// # 为什么不能直接存 `OffsetDateTime`
 ///
@@ -42,7 +42,7 @@ pub(crate) mod base64_bytes {
 /// # 时区偏移
 ///
 /// Go 的 `time.Time.MarshalJSON` 会带上时间点所在的时区偏移（`+08:00`），这里同样保留
-/// `OffsetDateTime` 自带的偏移。两边的**时间点**相同，而 Go 的 `time.Equal` 比的是时间点
+/// `OffsetDateTime` 自带的偏移。两边的时间点相同，而 Go 的 `time.Equal` 比的是时间点
 /// 而不是表示形式，所以互通无碍。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct ModTime(Option<OffsetDateTime>);

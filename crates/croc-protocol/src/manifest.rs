@@ -15,7 +15,7 @@
 //!
 //! # 为什么批次是手拼 JSON 而不是 `serde_json::to_vec`
 //!
-//! 批次要**按字节数**装箱，所以必须先知道每个条目编出来多长。Go 的做法是把前缀
+//! 批次要按字节数装箱，所以必须先知道每个条目编出来多长。Go 的做法是把前缀
 //! `{"k":"f","e":[`、逐条编码、再用 `,` 和 `]}` 拼起来。这里照做——顺带保证了产物与
 //! Go 的 `json.Marshal(fileInfoManifestBatch)` 逐字节相同（字段顺序 `k`, `e`）。
 
@@ -385,7 +385,7 @@ fn assemble(prefix: &[u8], suffix: &[u8], entries: &[Vec<u8>]) -> Vec<u8> {
 /// 三条消息按顺序喂进来：`start` 构造它，`batch` 累积，`finish` 消费掉并给出完整的
 /// `SenderInfo`。任何一步对不上都会整体作废（返回 `Err`，调用方丢弃这个累加器）。
 ///
-/// 这里**不检查**角色、能力协商与信道加密状态——那是会话级的事，归调用方。
+/// 这里不检查角色、能力协商与信道加密状态——那是会话级的事，归调用方。
 #[derive(Debug)]
 pub struct IncomingManifest {
     header: ManifestHeader,

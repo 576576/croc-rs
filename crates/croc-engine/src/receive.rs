@@ -33,7 +33,7 @@ pub struct ReceiveRequest {
     pub relay_password: String,
     /// 从口令码解出的房间名与 PAKE 口令。
     pub components: Components,
-    /// 本端选择的曲线。**由接收方决定**，发送方照着用。
+    /// 本端选择的曲线。由接收方决定，发送方照着用。
     pub curve: croc_pake::CurveKind,
     /// 落盘目录。
     pub out_dir: PathBuf,
@@ -41,7 +41,7 @@ pub struct ReceiveRequest {
     pub preferences: Preferences,
     /// `--no-compress`：对端压了也不解（等价 Go 的同名开关）。
     pub no_compress: bool,
-    /// `--local`：只走局域网——先组播找出发送方，用它的地址当中继，**不连公网中继**。
+    /// `--local`：只走局域网——先组播找出发送方，用它的地址当中继，不连公网中继。
     pub local: bool,
     /// 出站代理（`--socks5` / `--connect`）。
     pub proxy: crate::proxy::Proxy,
@@ -57,7 +57,7 @@ pub struct ReceiveRequest {
     pub internal_dns: bool,
     /// `--no-multi`：禁用多端口复用，只用一条数据流。
     ///
-    /// 必须与发送方**一致**：流数不在握手里协商，两端各自按中继 banner 推导，只有一端
+    /// 必须与发送方一致：流数不在握手里协商，两端各自按中继 banner 推导，只有一端
     /// 设了的话两边的数据面对不上。
     pub no_multi: bool,
     /// 本端机器指纹。
@@ -96,7 +96,7 @@ pub struct Summary {
 ///
 /// 把收到的文件按清单顺序打到标准输出。
 ///
-/// Go 是"收完再读出来打"（`croc.go:2339`），文件**照常落盘**——不是"不落盘"。这里也是
+/// Go 是"收完再读出来打"，文件照常落盘——不是"不落盘"。这里也是
 /// 全部收完统一打；多文件时 Go 是逐个打的，但内容与顺序一致。
 ///
 /// # Errors
@@ -124,8 +124,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
     // `--local`：组播找发送方，拿它的地址当中继。找不到就是"局域网里没人在发"，
     // 直接失败——不能悄悄退回公网中继，那正是用户用 `--local` 明确拒绝的事。
     let relay_addresses = if !request.ip.trim().is_empty() {
-        // `--ip`：既然知道对方在哪，就直连它——**跳过局域网发现**（Go 的 `isIPset`，
-        // `croc.go:2031`）。
+        // `--ip`：既然知道对方在哪，就直连它——跳过局域网发现。
         vec![request.ip.clone()]
     } else if request.local {
         emit(&request.events, EngineEvent::Status("looking for the sender on the local network…".to_owned()));
@@ -164,7 +163,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
     let mut randomness = OsRandomness;
 
     let (data_tx, mut data_rx) = mpsc::channel::<InEvent>(4);
-    // **数据连接整个传输只建一次**：数据端口的房间名是 `{room}-{j}`，一个房间只容得下
+    // 数据连接整个传输只建一次：数据端口的房间名是 `{room}-{j}`，一个房间只容得下
     // 两端各一条连接；每条文件重建一次就会撞上自己上一条文件留下的连接，中继回 `room full`。
     let data_plane = Arc::new(DataPlane::new(
         relay_address,
@@ -212,8 +211,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                 Effect::Finish(outcome) => {
                     return match outcome {
                         Outcome::Completed => {
-                            // `--stdout`（以及文本传输，Go 在 `croc.go:2502` 自动开它）：
-                            // 收完把内容打到标准输出。
+                            // `--stdout`（以及文本传输会自动开它）：收完把内容打到标准输出。
                             let wants_stdout =
                                 request.stdout || manifest.as_ref().is_some_and(|info| info.sending_text);
                             if wants_stdout && let Some(info) = manifest.as_ref() {
@@ -298,7 +296,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                     streams
                 )),
             );
-            // **先拿到数据连接再发 recipientready**：对端一收到请求就会立刻开始发数据，
+            // 先拿到数据连接再发 recipientready：对端一收到请求就会立刻开始发数据，
             // 数据端口上还没连上就会白丢几块（中继不会为缺席的端口缓冲）。
             // 连接由 `DataPlane` 管，第一个文件才真正建，之后一直复用。
             let conns = data_plane.acquire().await?;
@@ -306,7 +304,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
             effects =
                 session.handle(InEvent::RequestFile { index, ranges: ranges.as_wire().to_vec() }, &mut randomness)?;
             // 照抄 Go 的 `currentFileUsesCompression`：对端没声明逐文件压缩能力就
-            // **一律当压缩的来解**（老对端只认全局开关）。
+            // 一律当压缩的来解（老对端只认全局开关）。
             let compress =
                 if request.no_compress { false } else { !session.peer_per_file_compression() || entry.is_compressed };
             spawn_receive(
@@ -398,7 +396,7 @@ fn plan_files(request: &ReceiveRequest, info: &SenderInfo) -> Result<(Vec<u64>, 
 /// 区间、密钥、压缩判定）本来就是"一次接收"的组成部分，散成参数只会让调用点变成一长串。
 struct ReceiveJob {
     conns: Vec<croc_net::Framed<tokio::net::TcpStream>>,
-    /// 连接用完还到这里——**不关**，下一个文件接着用。
+    /// 连接用完还到这里——不关，下一个文件接着用。
     plane: Arc<DataPlane>,
     sink: Sink,
     entry: FileInfo,
@@ -428,7 +426,7 @@ fn spawn_receive(
         let result =
             receive_file(conns, Arc::clone(&sink), expected_chunks, expected_bytes, key, compress, cancel).await;
         let event = match result {
-            // 收全判定放在**全部流收工之后**：这是唯一没有竞态的时刻。
+            // 收全判定放在全部流收工之后：这是唯一没有竞态的时刻。
             Ok((conns, progress)) if progress.is_complete(expected_chunks, expected_bytes) => {
                 let _ = sink.finalize(&entry);
                 plane.release(conns);

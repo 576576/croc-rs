@@ -9,7 +9,7 @@
 //!
 //! # `omitempty` 是协议的一部分
 //!
-//! Go 的每个字段都带 `omitempty`，所以**空字段根本不出现在 JSON 里**。这里用
+//! Go 的每个字段都带 `omitempty`，所以空字段根本不出现在 JSON 里。这里用
 //! `skip_serializing_if` 逐个复刻，字段声明顺序也照抄 `t, v, m, b, b2, n, f`——
 //! serde_json 按声明顺序输出，于是同一份 `Message` 在两边编出的 JSON 字节相同
 //! （唯一的例外见下）。顺序不影响解码，但能让 golden 向量做字节级比较。
@@ -17,7 +17,7 @@
 //! # 与 Go 的一处字节差异（不影响互通）
 //!
 //! Go 的 `encoding/json` 默认会把 `<`、`>`、`&` 转义成 `\u003c`、`\u003e`、`\u0026`，
-//! 并把 U+2028/U+2029 转义；serde_json 不转义。**解码端不关心转义形式**，所以两边
+//! 并把 U+2028/U+2029 转义；serde_json 不转义。解码端不关心转义形式，所以两边
 //! 都能读对方的产品。只有拿原始字节做断言的 golden 测试要注意：比较解码后的
 //! `Message`，别比较 JSON 字符串。
 //!
@@ -40,7 +40,7 @@ pub const MAX_JSON_SIZE: usize = MAX_DECOMPRESSED_SIZE;
 
 /// 消息类型。
 ///
-/// Go 里是 `type Type string`——**未知类型必须能原样透传**。新版对端可能发来本端还不
+/// Go 里是 `type Type string`——未知类型必须能原样透传。新版对端可能发来本端还不
 /// 认识的消息，而 Go 的 `switch` 没有 `default` 分支，会安静忽略。这里把这件事显式化：
 /// 认识的走枚举分支，不认识的落进 [`MessageType::Unknown`] 并保留原文，方便日志和
 /// 将来排查"为什么这条消息没被处理"。
@@ -210,7 +210,7 @@ pub struct Message {
     #[serde(rename = "m", default, skip_serializing_if = "String::is_empty")]
     pub message: String,
 
-    /// `b`：二进制载荷，JSON 里是**标准 base64（带 padding）**。
+    /// `b`：二进制载荷，JSON 里是标准 base64（带 padding）。
     #[serde(rename = "b", default, with = "crate::json::base64_bytes", skip_serializing_if = "Vec::is_empty")]
     pub bytes: Vec<u8>,
 

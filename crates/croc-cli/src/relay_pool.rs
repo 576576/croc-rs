@@ -1,7 +1,6 @@
 //! 公共中继池的命令行侧：该不该走池、选哪一台、码落在哪一台。
 //!
-//! 池的地址与探测在 `croc_engine::public_relay`；这里管的是 Go 版里跟命令行开关缠在
-//! 一起的那几个决定（`src/cli/cli.go:402` 起）。
+//! 池的地址与探测在 `croc_engine::public_relay`；这里管的是跟命令行开关缠在一起的那几个决定。
 
 use croc_core::codephrase;
 use croc_engine::dns::Mode;
@@ -15,7 +14,7 @@ const POOL: &[&str] = croc_engine::public_relay::RELAYS;
 
 /// 这次走不走公共中继池。
 ///
-/// Go 的 `usesPublicRelay`（`cli.go:402`）：两个中继参数都没在命令行/环境里给过、不是
+/// Go 的 `usesPublicRelay`：两个中继参数都没在命令行/环境里给过、不是
 /// `--local`、没给 `--ip`，而且合并（含 `--remember`）出来的地址还是默认值。
 ///
 /// 少了这条判断会怎样：用户显式 `--relay` 指向自建中继时，码里的索引会把对端送到
@@ -75,7 +74,7 @@ pub fn select(proxy: &Proxy, internal_dns: bool, quiet: bool) -> Result<usize, S
 
 /// 探测一遍池里每一台，返回最先应答的那台的索引。
 ///
-/// `parse()` 在 tokio 运行时起来**之前**就跑完了，所以这里自己开一个临时的运行时。
+/// `parse()` 在 tokio 运行时起来之前就跑完了，所以这里自己开一个临时的运行时。
 /// 一次探测最多 [`croc_engine::public_relay::PROBE_TIMEOUT`]，开一个单线程运行时比把
 /// 整个参数解析改成异步划算得多。
 ///

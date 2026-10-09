@@ -1,21 +1,21 @@
 //! `--disable-clipboard` / `--extended-clipboard`：把口令码送进系统剪贴板。
 //!
-//! 挑程序的口径照抄 Go 的 `copyToClipboard`（`croc.go:3868`）：Windows 一定有 `clip`；
+//! 挑程序的口径照抄 Go 的 `copyToClipboard`：Windows 一定有 `clip`；
 //! macOS 用 `pbcopy`；Linux 与各 BSD 按 `XDG_SESSION_TYPE` 在 Wayland（`wl-copy` /
 //! `waycopy`）与 X11（`xclip` / `xsel`）里挑，都没有再退到 Termux 的
 //! `termux-clipboard-set`。
 //!
-//! 与 Go 不同的是**不做 `PATH` 预探测**：直接按顺序试着启动，第一个跑通的算数。效果一样
-//! （跑不起来的那个会立刻返回错误），少一份自己实现的 `LookPath`。
+//! 与 Go 不同的是不做 `PATH` 预探测：直接按顺序试着启动，第一个跑通的算数
+//! （跑不起来的那个会立刻返回错误）。
 //!
-//! 挑不到任何程序就返回 `false`——**这不是错误**，只是没这份方便。
+//! 挑不到任何程序就返回 `false`——这不是错误，只是没这份方便。
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 /// 把 `text` 送进剪贴板。
 ///
-/// 返回是否成功。失败**不打日志、不影响退出码**：复制是顺手做的事，它失败了也不该让一次
+/// 返回是否成功。失败不打日志、不影响退出码：复制是附带动作，它失败了也不该让一次
 /// 传输看起来像是出了问题。
 #[must_use]
 pub fn copy(text: &str) -> bool {

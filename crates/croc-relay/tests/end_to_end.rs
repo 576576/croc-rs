@@ -9,7 +9,7 @@
 //! 中继的端到端测试：真 TCP、真握手、真转发。
 //!
 //! 这里跑的是"两台 croc 客户端 + 一台 Rust 中继"的最小场景。客户端侧用的是
-//! `croc_protocol::relay::ClientHandshake`——**和 Go 版逐帧兼容的那个状态机**，
+//! `croc_protocol::relay::ClientHandshake`——和 Go 版逐帧兼容的那个状态机，
 //! 所以这些测试同时在验证"我们实现的中继能被 croc 客户端用"和"我们的客户端状态机
 //! 能跟中继对上"。
 

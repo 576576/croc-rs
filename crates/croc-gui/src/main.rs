@@ -1,6 +1,6 @@
 //! `crocw-rs`：桌面入口。
 //!
-//! 这个文件极简是**刻意的**：所有能测的东西都在 `croc_gui` 库里（见 `commands.rs` /
+//! 这个文件极简是刻意的：所有能测的东西都在 `croc_gui` 库里（见 `commands.rs` /
 //! `state.rs`），`main.rs` 只剩"装日志、起 Tauri、注册命令"。
 //! 移动端不编译这个文件——Android 走 `lib.rs` 里的 JNI 入口。
 

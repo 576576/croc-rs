@@ -9,19 +9,19 @@
 //! `<out>/photos/a/b.jpg`。做法是：
 //!
 //! - `folder_source` = 用户给出的那个路径（读文件时拼绝对路径用）；
-//! - `folder_remote` = **目录名 + 相对子目录 + 尾斜杠**（接收方建目录用），
+//! - `folder_remote` = 目录名 + 相对子目录 + 尾斜杠（接收方建目录用），
 //!   例如 `photos/`、`photos/a/`；单个文件是 `./`；
 //! - `name` = 裸文件名。
 //!
-//! 这与 Go 的 `FileInfo{FolderSource, FolderRemote, Name}` 是同一套约定。**注意
-//! `folder_remote` 里含目录自己的名字**——Go 的算法是
+//! 这与 Go 的 `FileInfo{FolderSource, FolderRemote, Name}` 是同一套约定。注意
+//! `folder_remote` 里含目录自己的名字——Go 的算法是
 //! `TrimPrefix(Dir(pathName), Dir(absPath) + "/") + "/"`，基准取的是目录的*父*目录。
 //! 少这一层的话，接收方会把整个目录的内容平铺到 `<out>/` 下，一个 `photos/` 传过去
 //! 变成"散了一地"。
 //!
 //! # 对端给的路径不可信
 //!
-//! 接收方的 `folder_remote` / `name` 是**对端写在清单里的字符串**。落到本地之前一律
+//! 接收方的 `folder_remote` / `name` 是对端写在清单里的字符串。落到本地之前一律
 //! 过 [`safe_folder`] / [`safe_name`]：拒绝绝对路径与 `..`，因为
 //! `PathBuf::join` 遇到绝对路径会整个替换前缀（`out_dir.join("/etc/")` 就是 `/etc/`）。
 
@@ -52,11 +52,11 @@ pub struct SourceEntry {
 
 /// 收集时的过滤选项，对应 Go `GetFilesInfoWithExactExclusionsContext` 的那几个参数。
 ///
-/// 两个排除项语义**不同**，不能互相替代：
+/// 两个排除项语义不同，不能互相替代：
 ///
-/// - [`Self::exclude`]（`--exclude`）是**子串**匹配、大小写不敏感——`--exclude node_modules`
+/// - [`Self::exclude`]（`--exclude`）是子串匹配、大小写不敏感——`--exclude node_modules`
 ///   会连 `my_node_modules_backup/` 一起排掉（Go 就是这么做的）；
-/// - [`Self::exclude_file`]（`--exclude-file`）是**精确相对路径**相等，用来点掉某个具体文件。
+/// - [`Self::exclude_file`]（`--exclude-file`）是精确相对路径相等，用来点掉某个具体文件。
 #[derive(Debug, Clone, Default)]
 pub struct CollectOptions {
     /// `--exclude`：相对路径里包含任一子串（小写比较）就排除。
@@ -69,7 +69,7 @@ pub struct CollectOptions {
     pub zip: bool,
 }
 
-/// 走一遍待发送路径，得到条目清单与空目录清单，**不算哈希**。
+/// 走一遍待发送路径，得到条目清单与空目录清单，不算哈希。
 ///
 /// 与 [`hash_all`] 分开是为了发送端能把"要发什么"先报给 UI：Go 在进 `Client.Send()`
 /// 之前就已经从 CLI 拿到了完整的文件信息（大小、目录数），所以它能在算哈希的同时就把
@@ -85,7 +85,7 @@ pub fn survey(paths: &[PathBuf], options: &CollectOptions) -> Result<(Vec<Source
     for path in paths {
         let metadata = fs::symlink_metadata(path).map_err(|error| EngineError::file(path, error))?;
         if metadata.is_dir() {
-            // **先补成绝对路径**再往下走。`folder_remote` 的算法要"目录名 + 相对子目录"，
+            // 先补成绝对路径再往下走。`folder_remote` 的算法要"目录名 + 相对子目录"，
             // 而 `.` / `..` 这类路径取不出目录名；Go 同样是先 `filepath.Abs()`。
             let root = std::path::absolute(path).map_err(|error| EngineError::file(path, error))?;
             let gitignore = options.git.then(|| load_gitignore(&root)).flatten();
@@ -96,8 +96,8 @@ pub fn survey(paths: &[PathBuf], options: &CollectOptions) -> Result<(Vec<Source
             }
             collect_directory(&root, &root, &mut files, &mut empty_folders, options, gitignore.as_ref())?;
         } else {
-            // 单个文件：Go 比的是**文件名**本身（`croc.go:1258`），给的 `folder_remote`
-            // 是 `"./"`（`croc.go:1178`）。
+            // 单个文件：Go 比的是文件名本身，给的 `folder_remote`
+            // 是 `"./"`。
             let name = path.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned());
             if excluded_exactly(options, &name) {
                 continue;
@@ -106,8 +106,8 @@ pub fn survey(paths: &[PathBuf], options: &CollectOptions) -> Result<(Vec<Source
         }
     }
 
-    // `--exclude` 是**清单级**过滤：Go 在文件收集完之后按 `folder_remote + name` 再筛一遍
-    // （`src/cli/cli.go:794`）。空目录走同一套规则。
+    // `--exclude` 是清单级过滤：Go 在文件收集完之后按 `folder_remote + name` 再筛一遍
+    // 。空目录走同一套规则。
     if !options.exclude.is_empty() {
         files.retain(|entry| !substring_excluded(&entry.info, &options.exclude));
         empty_folders.retain(|folder| !substring_excluded(folder, &options.exclude));
@@ -116,7 +116,7 @@ pub fn survey(paths: &[PathBuf], options: &CollectOptions) -> Result<(Vec<Source
     Ok((files, empty_folders))
 }
 
-/// 收集待发送条目，并顺手算好哈希。
+/// 收集待发送条目，并同时算好哈希。
 ///
 /// 哈希在这一步就算完（Go 的"急切 xxhash"路径），因为接收方要靠它决定
 /// "本地已有同名文件是不是就是这份"。流式边传边算会让接收方拿不到判定依据。
@@ -170,7 +170,7 @@ fn collect_directory(
     let base = remote_base(root);
     for path in names {
         let metadata = fs::symlink_metadata(&path).map_err(|error| EngineError::file(&path, error))?;
-        // `--exclude-file` 比的是**相对被传路径**的路径（Go 用 `filepath.Rel(absPath, pathName)`）。
+        // `--exclude-file` 比的是相对被传路径的路径（Go 用 `filepath.Rel(absPath, pathName)`）。
         // 命中目录就整棵跳过——等价 Go 的 `filepath.SkipDir`。
         if excluded_exactly(options, &relative_components(root, &path)) {
             continue;
@@ -187,13 +187,13 @@ fn collect_directory(
             let before = files.len() + empty_folders.len();
             collect_directory(root, &path, files, empty_folders, options, gitignore)?;
             if files.len() + empty_folders.len() == before {
-                // 空目录（或只有空目录）也要在对端建出来。`folder_remote` 里**含它自己
-                // 的名字**，接收方直接 `mkdir -p` 就对了（Go 的 `croc.go:1242`）。
+                // 空目录（或只有空目录）也要在对端建出来。`folder_remote` 里含它自己
+                // 的名字，接收方直接 `mkdir -p` 就对了。
                 empty_folders.push(folder_info(&path, &base)?);
             }
             continue;
         }
-        // 文件的 `folder_remote` 取**父目录**相对基准的路径——所以直接子文件拿到的是
+        // 文件的 `folder_remote` 取父目录相对基准的路径——所以直接子文件拿到的是
         // `photos/`，而不是 `photos/a.jpg`。
         let parent = path.parent().unwrap_or(root);
         files.push(entry_for(&path, &remote_folder_of(&base, parent))?);
@@ -201,14 +201,14 @@ fn collect_directory(
     Ok(())
 }
 
-/// `folder_remote` 的基准：**用户给出的那个目录的父目录**。
+/// `folder_remote` 的基准：用户给出的那个目录的父目录。
 ///
 /// 取父目录而不是目录本身，是为了让 `folder_remote` 天然带上目录自己的名字。
 fn remote_base(root: &Path) -> PathBuf {
     root.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf)
 }
 
-/// `target` 相对 `base` 的路径，斜杠分隔，**末尾带一个斜杠**（Go 的约定）。
+/// `target` 相对 `base` 的路径，斜杠分隔，末尾带一个斜杠（Go 的约定）。
 ///
 /// 只保留 `Normal` 段：`strip_prefix` 失手时（例如用户直接把文件系统根 `/` 当路径送）
 /// `relative` 会是绝对路径，照抄过去就是 `/a/`——对端会当"想写到接收目录外面"拒掉。
@@ -218,7 +218,7 @@ fn remote_folder_of(base: &Path, target: &Path) -> String {
     if text.is_empty() { "/".to_owned() } else { format!("{text}/") }
 }
 
-/// `target` 相对 `base` 的路径段，斜杠分隔、**无**尾斜杠。
+/// `target` 相对 `base` 的路径段，斜杠分隔、无尾斜杠。
 fn relative_components(base: &Path, target: &Path) -> String {
     let relative = target.strip_prefix(base).unwrap_or(target);
     relative
@@ -249,7 +249,7 @@ fn normalize_relative(path: &str) -> String {
     parts.join("/")
 }
 
-/// zip 条目的选项：**不压缩**。
+/// zip 条目的选项：不压缩。
 ///
 /// croc 的数据面自己会压一遍，这里再压等于白费 CPU（Go 也注册了
 /// `flate.NoCompression`）。
@@ -259,7 +259,7 @@ fn zip_options() -> zip::write::SimpleFileOptions {
 
 /// `--zip`：把一个目录打成 `<父目录>/<目录名>.zip`，返回它的条目。
 ///
-/// 与 Go 的 `ZipDirectoryWithExactExclusionsContext` 对齐的三点：zip 内以**目录名**为
+/// 与 Go 的 `ZipDirectoryWithExactExclusionsContext` 对齐的三点：zip 内以目录名为
 /// 顶层（`photos/a.jpg`，解压出来还是一棵 `photos/` 树）、条目不压缩、目标文件已存在
 /// 就报错（不悄悄覆盖别人的文件）。
 ///
@@ -340,12 +340,11 @@ fn zip_into<W: std::io::Write + std::io::Seek>(
 
 /// 按 `--git` 读入被传目录下的 `.gitignore`。
 ///
-/// 只读**被传目录根下**那一个文件——Go 的 `gitWalk` 同样只 `CompileIgnoreFile` 一次，
+/// 只读被传目录根下那一个文件——Go 的 `gitWalk` 同样只 `CompileIgnoreFile` 一次，
 /// 子目录里的 `.gitignore` 不参与。
 ///
-/// ⚠️ 与 Go 有一处**有意的差异**：Go 拿 `info.Name()`（只有 basename）去匹配，于是
-/// `src/*.log` 这类带路径的规则在它那边根本不生效；这里按**相对路径**匹配，规则能正常
-/// 起作用。差别只影响"发哪些文件"，不涉及协议与互通。
+/// 按相对路径匹配而不是 basename：`src/*.log` 这类带路径的规则才生效。
+/// 它只影响"发哪些文件"，不涉及协议与互通。
 fn load_gitignore(root: &Path) -> Option<Gitignore> {
     let path = root.join(".gitignore");
     if !path.is_file() {
@@ -360,13 +359,13 @@ fn load_gitignore(root: &Path) -> Option<Gitignore> {
     builder.build().ok()
 }
 
-/// `--exclude-file`：规范化后的相对路径**精确相等**。
+/// `--exclude-file`：规范化后的相对路径精确相等。
 fn excluded_exactly(options: &CollectOptions, candidate: &str) -> bool {
     let candidate = normalize_relative(candidate);
     options.exclude_file.iter().any(|item| normalize_relative(item) == candidate)
 }
 
-/// `--exclude`：`folder_remote + name` 小写后**包含**任一子串。
+/// `--exclude`：`folder_remote + name` 小写后包含任一子串。
 ///
 /// 与 Go 一样按 `path.Join` 拼（`"./"` + `"x"` 给 `"x"`），所以拼完还要归一一次。
 fn substring_excluded(info: &FileInfo, exclude: &[String]) -> bool {
@@ -426,8 +425,8 @@ fn entry_for(path: &Path, folder_remote: &str) -> Result<SourceEntry, EngineErro
 
 /// 空目录的元信息（`size == 0`，带目录位）。
 ///
-/// `folder_remote` 用**目录自己**相对基准的路径，也就是**含它自己的名字**——接收方
-/// 直接 `mkdir -p` 就够了（Go 的 `croc.go:1242`）。
+/// `folder_remote` 用目录自己相对基准的路径，也就是含它自己的名字——接收方
+/// 直接 `mkdir -p` 就够了。
 fn folder_info(path: &Path, base: &Path) -> Result<FileInfo, EngineError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| EngineError::file(path, error))?;
     Ok(FileInfo {
@@ -444,7 +443,7 @@ fn folder_info(path: &Path, base: &Path) -> Result<FileInfo, EngineError> {
 #[must_use]
 /// 构造清单。
 ///
-/// `algorithm` 是 `--hash` 给的算法名，**必须原样告诉对端**：接收方按清单里的名字
+/// `algorithm` 是 `--hash` 给的算法名，必须原样告诉对端：接收方按清单里的名字
 /// 重算哈希来比对。写死成 `xxhash` 的话，用 `--hash md5` 发送时接收方会拿 md5 的
 /// 结果去比 xxhash 的摘要，于是每个文件都判成"内容不同"而整个重传——不报错，只是
 /// 白传一遍。
@@ -456,14 +455,14 @@ pub fn sender_info(
     ask: bool,
 ) -> SenderInfo {
     SenderInfo {
-        // `--ask`：让接收方那边**即便给了 `--yes` 也要问一句**（Go 的 `senderInfo.Ask`）。
+        // `--ask`：让接收方那边即便给了 `--yes` 也要问一句（Go 的 `senderInfo.Ask`）。
         ask,
         total_number_folders: folder_count(files, &empty_folders),
         files_to_transfer: files.iter().map(|entry| entry.info.clone()).collect(),
         empty_folders_to_transfer: empty_folders,
         machine_id: machine_id.to_owned(),
         hash_algorithm: croc_protocol::payload::HashAlgorithm::from(algorithm),
-        // **必须声明这一个能力**（Go 的 `croc.go:3112` 也只放它）。
+        // 必须声明这一个能力。
         // 接收方靠它决定"按文件标志压缩"还是退回"一律压缩"的老对端行为——
         // 不声明的话，Go 的接收方会把每个块都当压缩的来解，而我们的清单里
         // 写的是 `c:false`，于是解压失败、写盘越界。
@@ -474,8 +473,8 @@ pub fn sender_info(
 
 /// 清单里有几个目录。
 ///
-/// 数的是**去重后的目录路径**，而且**包括用户给出的那个根目录**——Go 在 `filepath.Walk`
-/// 里每遇到一个目录就 `totalNumberFolders++`（`croc.go:1236`），根目录也算。
+/// 数的是去重后的目录路径，而且包括用户给出的那个根目录——Go 在 `filepath.Walk`
+/// 里每遇到一个目录就 `totalNumberFolders++`，根目录也算。
 /// `tree/sub/deep/c.txt` 一条记录就隐含 `tree`、`tree/sub`、`tree/sub/deep` 三层。
 ///
 /// 这个数在接收方只用于显示，但 Go 的 `validateSendingTextOffer()` 会拿它做校验
@@ -511,7 +510,7 @@ pub fn folder_count(files: &[SourceEntry], empty_folders: &[FileInfo]) -> i64 {
 ///
 /// # Errors
 ///
-/// 打不开或读不了时返回错误。**注意这与 Go 不同**：Go 的 `MissingChunks` 在失败时
+/// 打不开或读不了时返回错误。注意这与 Go 不同：Go 的 `MissingChunks` 在失败时
 /// 返回空列表（= 整个文件），静默退化成"重传一遍"。这里选择报错，因为一个读不了的文件
 /// 后续写入也会失败，早报比晚报好。
 pub fn scan_missing(path: &Path, size: u64) -> Result<ChunkRanges, EngineError> {
@@ -557,7 +556,7 @@ pub enum Plan {
 /// 决策本身是纯的（[`croc_core::policy::decide`]），这里只负责把文件系统的事实探好
 /// 再喂给它——这正是把策略抽成纯函数换来的东西。
 ///
-/// `algorithm` 是**清单里**的哈希算法（`SenderInfo::hash_algorithm`）：判断"本地这个
+/// `algorithm` 是清单里的哈希算法（`SenderInfo::hash_algorithm`）：判断"本地这个
 /// 同名文件是不是就是要传的那份"必须用发送方算摘要时的同一个算法，否则两边永远对不上。
 ///
 /// # Errors
@@ -609,7 +608,7 @@ pub fn plan(
         }
         // `Declined` 是用户明确说了不要；`Ask` 已经被 `resolve` 消化掉了，走不到；
         // `Action` 又是 `#[non_exhaustive]`，将来新增的动作也落这里。
-        // 三者统一按"不传"处理——**默认保守**，别让一个没考虑过的新动作把文件悄悄覆盖了。
+        // 三者统一按"不传"处理——默认保守，别让一个没考虑过的新动作把文件悄悄覆盖了。
         Action::Declined | Action::Ask { .. } | _ => Plan::Declined,
     })
 }
@@ -631,7 +630,7 @@ pub fn destination_of(info: &FileInfo, out_dir: &Path) -> Result<PathBuf, Engine
 
 /// 空目录的落盘路径。
 ///
-/// **不能**用 [`destination_of`]：那个会把 `name` 再拼一层，而空目录的 `folder_remote`
+/// 不能用 [`destination_of`]：那个会把 `name` 再拼一层，而空目录的 `folder_remote`
 /// 已经包含了它自己（`photos/empty/`），于是会得到 `out/photos/empty/empty`。
 ///
 /// # Errors
@@ -651,17 +650,16 @@ pub fn folder_destination_of(info: &FileInfo, out_dir: &Path) -> Result<PathBuf,
 ///
 /// # 为什么必须归一
 ///
-/// `folder_remote` 是**对端写在清单里的字符串**，对端不受信任。直接
+/// `folder_remote` 是对端写在清单里的字符串，对端不受信任。直接
 /// `out_dir.join(folder)` 有两条逃逸路径：
 ///
-/// 1. **`..` 段**：`../../etc/` 会写到 `out_dir` 外面；
-/// 2. **绝对路径**：`PathBuf::join` 遇到绝对路径会**整个替换**前缀，`/etc/` 直接
+/// 1. `..` 段：`../../etc/` 会写到 `out_dir` 外面；
+/// 2. 绝对路径：`PathBuf::join` 遇到绝对路径会整个替换前缀，`/etc/` 直接
 ///    落到文件系统根（Windows 上 `C:\` 同理）。
 ///
-/// Go 用 `receivefs.Normalize()` 挡这个（`normalizeReceiveFilePath`，`croc.go:881`），
-/// 这里等价地挡：拒绝绝对路径与任何 `..` 段，丢掉 `.` 与空段。
+/// 这里挡的是：拒绝绝对路径与任何 `..` 段，丢掉 `.` 与空段。
 ///
-/// 绝对路径**报错而不是"当成相对路径"**：`"/etc/"` 静默改写成 `"etc/"` 虽然也安全，
+/// 绝对路径报错而不是"当成相对路径"：`"/etc/"` 静默改写成 `"etc/"` 虽然也安全，
 /// 但那是把对端说的话改了意思——清单与落盘结果对不上，出问题时没法从日志里看出来。
 fn safe_folder(folder_remote: &str) -> Result<PathBuf, EngineError> {
     if starts_with_root(folder_remote) {
@@ -694,9 +692,9 @@ fn starts_with_root(value: &str) -> bool {
     )
 }
 
-/// 把对端给的 `name` 归一成**单个文件名**。
+/// 把对端给的 `name` 归一成单个文件名。
 ///
-/// Go 的判据是 `cleanName != path.Base(cleanName)` 就拒绝（`croc.go:887`）——也就是
+/// Go 的判据是 `cleanName != path.Base(cleanName)` 就拒绝——也就是
 /// "名字里不许有目录成分"。这里同样只认单段。
 fn safe_name(name: &str) -> Result<PathBuf, EngineError> {
     if starts_with_root(name) {
@@ -814,7 +812,7 @@ impl Sink {
     ///
     /// # Errors
     ///
-    /// 写失败。**越界写入会被拒绝**——对端可以送任意偏移，写到文件外面去等于让一个
+    /// 写失败。越界写入会被拒绝——对端可以送任意偏移，写到文件外面去等于让一个
     /// 恶意发送方改写接收方磁盘上的任意位置。
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<(), EngineError> {
         let Self::File { file, path, size } = self else {
@@ -836,7 +834,7 @@ impl Sink {
     ///
     /// # Errors
     ///
-    /// 设置权限或时间失败。**失败不算致命**——内容已经写对了，元信息对不上只值得一条
+    /// 设置权限或时间失败。失败不算致命——内容已经写对了，元信息对不上只值得一条
     /// 警告，不该让整次传输算失败。
     pub fn finalize(&self, info: &FileInfo) -> Result<(), EngineError> {
         let Self::File { path, .. } = self else {
@@ -1004,7 +1002,7 @@ mod tests {
         assert!(empty.is_empty());
         let info = &files[0].info;
         assert_eq!(info.name, "payload.bin");
-        // Go 给单个文件的就是 `"./"`（`croc.go:1178`），接收方会把它归一成 `"."`。
+        // Go 给单个文件的就是 `"./"`，接收方会把它归一成 `"."`。
         assert_eq!(info.folder_remote, "./");
         assert_eq!(info.size, 10);
         assert_eq!(info.hash, hash::xxh64_bytes(b"hello croc"));
@@ -1026,7 +1024,7 @@ mod tests {
         let names: Vec<&str> = files.iter().map(|entry| entry.info.name.as_str()).collect();
         assert_eq!(names, vec!["c.txt", "top.txt"], "顺序应稳定（按路径排序）");
 
-        // `folder_remote` **含目录自己的名字**（`tree/`）——这是 Go 的约定，
+        // `folder_remote` 含目录自己的名字（`tree/`）——这是 Go 的约定，
         // 少了这一层接收方会把内容平铺到 `<out>/` 下。
         let folders: Vec<&str> = files.iter().map(|entry| entry.info.folder_remote.as_str()).collect();
         assert_eq!(folders, vec!["tree/a/b/", "tree/"]);
@@ -1159,7 +1157,7 @@ mod tests {
         assert!(files[0].temporary, "zip 是现造的临时文件，传输结束后要删");
         assert!(empty.is_empty(), "打进 zip 之后没有空目录要单独建");
 
-        // zip 内以**目录名**为顶层，解压出来还是一棵 `tree/`。
+        // zip 内以目录名为顶层，解压出来还是一棵 `tree/`。
         let reader = fs::File::open(&files[0].path).expect("读 zip");
         let mut archive = zip::ZipArchive::new(reader).expect("解析 zip");
         let mut names = Vec::new();
@@ -1196,7 +1194,7 @@ mod tests {
                 "{name} 应当被支持"
             );
         }
-        // 不在名单里的名字要**报错**，不能静默退化成 xxhash——那会让对端拿到对不上的摘要。
+        // 不在名单里的名字要报错，不能静默退化成 xxhash——那会让对端拿到对不上的摘要。
         assert!(matches!(collect(&[file], "sha256", &CollectOptions::default()), Err(EngineError::UnsupportedHash(_))));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1376,7 +1374,7 @@ mod tests {
     #[test]
     fn folder_remote_includes_the_directory_itself() {
         // Go 的算法：`TrimPrefix(Dir(pathName), Dir(absPath) + "/") + "/"`。基准取的是
-        // 目录的**父**目录，所以 `folder_remote` 天然带上目录自己的名字——少了这一层，
+        // 目录的父目录，所以 `folder_remote` 天然带上目录自己的名字——少了这一层，
         // 接收方会把整个目录的内容平铺到 `<out>/` 下。
         let base = Path::new("/send");
         assert_eq!(remote_folder_of(base, Path::new("/send/tree")), "tree/");

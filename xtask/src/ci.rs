@@ -1,6 +1,6 @@
 //! `cargo xtask ci-*`：本地跑 CI 的等价检查。
 //!
-//! 因为 `lint.yml` **不跟 push / PR**（门禁只挂在发布链路上，见
+//! 因为 `lint.yml` 不跟 push / PR（门禁只挂在发布链路上，见
 //! `docs/agent/build-and-ci.md` §1.2），本地必须能一键跑完等价检查，
 //! 否则只能靠推 `main` 才发现红灯。
 //!
@@ -10,10 +10,10 @@
 //!|--------|------|
 //! | `ci-lint` | `lint.yml` 的 fmt / clippy / test / arch |
 //! | `ci-build` | `build.yml` 在本机 target 上的编译与打包 |
-//! | `ci-interop` | 与 Go 版的互通矩阵（**不在 CI 里**，见下） |
+//! | `ci-interop` | 与 Go 版的互通矩阵（不在 CI 里，见下） |
 //!
 //! MSRV 需要额外工具链，不在这里跑（见 `release.md` §4）。
-//! 互通矩阵只在本地跑（`ci-interop`），**有意不进 CI** —— 决策与理由见
+//! 互通矩阵只在本地跑（`ci-interop`），有意不进 CI——决策与理由见
 //! `docs/agent/build-and-ci.md` §5.3。
 
 use std::path::Path;
@@ -62,7 +62,7 @@ fn summarize(steps: &[Step]) -> ExitCode {
 
 /// `cargo xtask ci-lint`：跑完 `lint.yml` 里除 MSRV 之外的全部 job。
 ///
-/// **不早退**：本地跑一次就想拿到全部红灯，所以在第一个失败处继续往下跑
+/// 不早退：本地跑一次就想拿到全部红灯，所以在第一个失败处继续往下跑
 /// （对应 CI 里那几个并行的 job）。
 #[must_use]
 pub fn lint() -> ExitCode {
@@ -100,7 +100,7 @@ pub fn build() -> ExitCode {
 
 /// `cargo xtask ci-interop`：跑与 Go 版的互通矩阵。
 ///
-/// **不在 CI 里**，这是有意的决定（`docs/agent/build-and-ci.md` §5.3）。
+/// 不在 CI 里，这是有意的决定（`docs/agent/build-and-ci.md` §5.3）。
 /// 需要两样东西：本机的 Go 版 croc 二进制，以及能跑的 `tests/interop/run.sh`。
 /// 缺哪样就明确报出来，不静默跳过。
 #[must_use]
@@ -152,7 +152,7 @@ pub fn interop() -> ExitCode {
 /// 找到能跑 `run.sh` 的 bash。
 ///
 /// Windows 上不能直接 `Command::new("bash")`：`PATH` 里排在前面的往往是
-/// `C:\Windows\System32\bash.exe`（**WSL 的 bash**），它把 `D:\repo\run.sh` 的反斜杠
+/// `C:\Windows\System32\bash.exe`（WSL 的 bash），它把 `D:\repo\run.sh` 的反斜杠
 /// 当转义符，路径被吃掉，报的是 `No such file or directory`——看着像脚本不存在，
 /// 其实是 bash 选错了。所以这里显式找 Git for Windows 的 bash。
 fn resolve_bash() -> Result<std::path::PathBuf, String> {

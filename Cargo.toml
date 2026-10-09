@@ -19,7 +19,7 @@ members = [
 # `[lints] workspace = true` 继承（Rust 1.74+）。CI 跑 `-D warnings`，所以这里
 # 每一条 `warn` 都是硬门禁。
 #
-# 注意 `todo = "warn"`：**禁止用 `todo!()` 占位**。未实现的路径要返回
+# 注意 `todo = "warn"`：禁止用 `todo!()` 占位。未实现的路径要返回
 # `Err(...Unavailable)` 并走降级逻辑，见 docs/agent/architecture.md §8.3。
 [workspace.lints.rust]
 unsafe_code = "warn"
@@ -75,16 +75,14 @@ authors = ["croc-rs contributors"]
 description = "A Rust rewrite of croc: send files anywhere, simply and securely."
 
 [workspace.dependencies]
-# ---- 纯 Rust 大整数与曲线算术 ----
-# croc 的线路字节直接来自 Go `math/big` 的语义（欧几里得取模、十进制 JSON 数字），
-# 所以这里用任意精度整数而不是定长 `crypto-bigint`。
+# ---- 大整数与曲线算术 ----
+# 线路字节按 Go `math/big` 的语义来：欧几里得取模、十进制 JSON 数字。
 num-bigint = "0.4"
 num-traits = "0.2"
-# Ed25519 适配器（pake v3 的第五条曲线）。纯 Rust，无 C 依赖。
+# pake v3 的第五条曲线：Ed25519。
 curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
 
-# ---- 纯 Rust 加密栈（RustCrypto）----
-# 禁止 OpenSSL / ring：核心 crate 要能交叉编译到 Android。
+# ---- 加密栈 ----
 sha2 = "0.10"
 hmac = "0.12"
 hkdf = "0.12"
@@ -94,8 +92,6 @@ pbkdf2 = "0.12"
 subtle = "2"
 zeroize = { version = "1", features = ["zeroize_derive"] }
 aes-gcm = "0.10"
-# DEFLATE。Go 侧用 `flate.HuffmanOnly`，DEFLATE 是自描述格式，解码端与压缩级别无关，
-# 所以这里用纯 Rust 的 miniz_oxide 后端即可（禁掉 C 后端以保住 Android 交叉编译）。
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 # ---- 序列化 ----
@@ -103,14 +99,9 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # 见 croc-protocol 的 `base64_bytes`。
 serde = { version = "1", features = ["derive"] }
 base64 = "0.22"
-# Go 的 `time.Time` 在 JSON 里是 RFC3339Nano（`"2026-10-06T20:31:00.123456789+08:00"`）。
-# 自己写一个 civil-date 转换是能写，但没必要——`time` 是纯 Rust、no_std 可用、
-# Android 上没问题，且它的 `serde-well-known` 正好提供 RFC3339 编解码。
+# RFC3339 编解码：Go 的 `time.Time` 在 JSON 里是 RFC3339Nano。
 time = { version = "0.3", features = ["serde-well-known"] }
 # ---- `--hash` 的四种算法 ----
-# 全部是纯 Rust：核心 crate 要交叉编译到 Android，见 `xtask/src/deps.rs`。
-# `md-5` 是 RustCrypto 的实现，`highway` 是 Google HighwayHash 的原生 Rust 移植，
-# `imohash` 是 Go 同名库的移植（含 murmur3-128）。版本用兼容范围，具体版本以 Cargo.lock 为准。
 md-5 = "0.10"
 highway = "1"
 imohash = "0.1"
@@ -120,8 +111,8 @@ thiserror = "2"
 tracing = "0.1"
 
 # ---- 异步与 IO ----
-# 只有 `croc-net` / `croc-relay` / `croc-core` / `croc-engine` 这些"副作用边缘"能碰
-# tokio；纯 crate（croc-protocol / croc-pake / croc-siec）被 `cargo xtask purity` 挡住。
+# 纯 crate（croc-protocol / croc-pake / croc-siec）碰 tokio 会被 `cargo xtask purity`
+# 挡下，其余 crate 随意。
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros", "signal", "fs"] }
 # 取消令牌。所有 `select!` 都必须带 `cancelled()` 分支，否则 Ctrl-C 会留下半截文件。
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -135,30 +126,23 @@ zip = "2"
 # image / svg 特性（那俩会拉一整套图形依赖）。
 qrcode = { version = "0.14", default-features = false }
 # ---- stored transfer（`croc store`）的 HTTP 客户端 ----
-# store 的协议是 HTTPS + JSON。用 reqwest 而不是自己拼 HTTP/1.1：分块传输、连接复用、
-# 超时与 TLS 这些细节没必要自己维护一遍。
-#
-# `default-features = false` 是必须的：默认的 `default-tls` 会拉 `native-tls`
-# （Linux 上是 OpenSSL）。TLS 用 rustls 与它自带的 provider，根证书用 Mozilla 的静态
-# 列表——不读系统信任库，后者在精简容器里可能不存在。
-# `socks` 是 `--socks5` 要的。
+# `socks` 是 `--socks5` 要的；根证书用 Mozilla 的静态列表，不读系统信任库
+# （精简容器里可能不存在）。
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "socks"] }
 
 # ---- 清单里的文件名校验 ----
-# 名字要在**所有**支持的平台上都安全，所以不能只看 ASCII：Windows / macOS 的文件系统
+# 名字要在所有支持的平台上都安全，所以不能只看 ASCII：Windows / macOS 的文件系统
 # 大小写不敏感、对归一化也不敏感，`a.txt` 与 `A.txt` 会互相覆盖。这三条是 Go 的
 # `receivefs` 用到的同一套判定。
 unicode-normalization = "0.1"
 caseless = "0.2"
 unicode-general-category = "1"
-# `--socks5`：只做 CONNECT，握手自己写不值得。
+# `--socks5`：只做 CONNECT。
 tokio-socks = "0.5"
-# OS 随机源。选 `getrandom` 而不是 `rand`：Android 上同样可用，且不带任何额外抽象。
 getrandom = "0.3"
 
 # ---- 仅测试用 ----
-# 黄金向量是 JSON，十六进制字段用 `hex` 解。两者都只进 `[dev-dependencies]`，
-# 不会出现在发布产物里。
+# 基准向量是 JSON，十六进制字段用 `hex` 解。
 serde_json = "1"
 hex = "0.4"
 

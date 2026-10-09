@@ -1,16 +1,8 @@
 //! Go `encoding/json` 对 `pake.Pake` 公开字段的编码。
 //!
-//! # 为什么手写而不用 serde
-//!
-//! 参考实现的线路值是 `json.Marshal(p.Public())`，它有三个怪癖：
-//!
-//! 1. **`*big.Int` 序列化成裸十进制数字**（不加引号），`nil` 则是 `null`；
-//! 2. 字段名带 Unicode 下标字符（`U` + U+1D64 / U+1D65，即 `Uᵤ`/`Uᵥ`）；
-//! 3. 字段顺序由结构体**声明顺序**决定：`Role, Uᵤ, Uᵥ, Vᵤ, Vᵥ, Xᵤ, Xᵥ, Yᵤ, Yᵥ`。
-//!
-//! 用 `serde_json` 复现第 1 条需要开 `arbitrary_precision`——那是个会污染整个依赖图
-//! 的全局 feature，对密码学核心 crate 来说不值当。所以这里手写：编码保证逐字节一致，
-//! 解码是一个只认「我们需要的子集」的最小 JSON 读取器。
+//! 线路值是 `json.Marshal(p.Public())` 的逐字节复刻，见 `docs/agent/crypto.md` §6：
+//! `*big.Int` 是裸十进制数字（`nil` 为 `null`），字段名带 Unicode 下标，字段顺序由
+//! Go 结构体决定。手写以保证逐字节一致，解码是只认所需子集的最小 JSON 读取器。
 //!
 //! 字段名一律用 [`FIELD_U_X`] 这样的常量 + `\u{1d64}` 转义给出。直接在源码里敲
 //! `ᵤ` 和 `ᤤ` 长得几乎一样，抄错一个码点就是一次静默的互通失败。
@@ -43,22 +35,22 @@ pub const FIELD_Y_X: &str = "Y\u{1d64}";
 /// `"Y"` + U+1D65。
 pub const FIELD_Y_Y: &str = "Y\u{1d65}";
 
-/// Go 的 `Pake` 里那些**公开编码中恒为 `null`** 的字段。
+/// Go 的 `Pake` 里那些公开编码中恒为 `null` 的字段。
 ///
 /// 这是本项目踩过的最贵的一个坑，所以写清楚：
 ///
 /// Go 的 `Pake.Bytes()` 是 `json.Marshal(p.Public())`，而 `Public()` 返回的是一个
-/// **完整的 `Pake` 结构体**（只填了 Role/U/V/X/Y，其余留零值）。`Pake` 的字段
-/// **没有 `json` tag、也没有 `omitempty`**，所以 `encoding/json` 会把**每一个导出
-/// 字段**都编出来——包括那 12 个 `nil` 的私有量，它们全都变成 `null`。
+/// 完整的 `Pake` 结构体（只填了 Role/U/V/X/Y，其余留零值）。`Pake` 的字段
+/// 没有 `json` tag、也没有 `omitempty`，所以 `encoding/json` 会把每一个导出
+/// 字段都编出来——包括那 12 个 `nil` 的私有量，它们全都变成 `null`。
 ///
-/// 这串字节**直接进 PAKE 转录**（`pakekey.Context.Initiator` / `Responder` 就是它），
+/// 这串字节直接进 PAKE 转录（`pakekey.Context.Initiator` / `Responder` 就是它），
 /// 所以少一个字段、多一个字段、顺序差一点，派生出的密钥就完全不同——表现是
 /// "双方都算完了但谁也解不开对方的话"。
 ///
-/// 顺序必须与 Go 的**结构体声明顺序**一致（`encoding/json` 按声明顺序输出）。
+/// 顺序必须与 Go 的结构体声明顺序一致（`encoding/json` 按声明顺序输出）。
 /// 未导出字段（`curve` / `curveName` / `idA` / `idB` / `withIDs`）不出现。
-/// 注意下标用的是 **U+1D64 / U+1D65（ᵤ / ᵥ）**，不是 α/β：Go 里写的是
+/// 注意下标用的是 U+1D64 / U+1D65（ᵤ / ᵥ），不是 α/β：Go 里写的是
 /// `Vpwᵤ, Vpwᵥ`、`Upwᵤ, Upwᵥ`、`Zᵤ, Zᵥ`；只有 `Aα` 那一族用 U+03B1。
 pub const TRAILING_NULL_FIELDS: [&str; 12] = [
     "P",                 // *big.Int
@@ -110,7 +102,7 @@ impl PublicState {
         push_field(&mut out, FIELD_Y_X, self.y.as_ref().map(AffinePoint::x));
         push_field(&mut out, FIELD_Y_Y, self.y.as_ref().map(AffinePoint::y));
         // Go 的 `Public()` 只填 Role/U/V/X/Y，其余 12 个导出字段是零值——但它们
-        // **照样会被编出来**（没有 `omitempty`），而且这些字节要进转录。见上面
+        // 照样会被编出来（没有 `omitempty`），而且这些字节要进转录。见上面
         // `TRAILING_NULL_FIELDS` 的注释。
         for name in TRAILING_NULL_FIELDS {
             push_field(&mut out, name, None);
@@ -133,7 +125,7 @@ fn push_field(out: &mut String, name: &str, value: Option<&BigInt>) {
 /// 解码一个 `pake.Pake` 公开值。
 ///
 /// 宽容度对齐 Go 的 `json.Unmarshal`：未知字段被忽略，缺失的 `Role` 按 0 处理。
-/// 但**必需坐标缺失**（比如 B 方没带 `X`）会返回错误，而不是像 Go 那样在下游 panic。
+/// 但必需坐标缺失（比如 B 方没带 `X`）会返回错误，而不是像 Go 那样在下游 panic。
 pub fn decode(bytes: &[u8]) -> Result<PublicState, PakeError> {
     let text = core::str::from_utf8(bytes).map_err(|_| PakeError::MalformedWire)?;
     let mut parser = Parser::new(text);
@@ -169,7 +161,7 @@ fn optional_point(object: &Value, x_key: &str, y_key: &str) -> Result<Option<Aff
 
 /// 一个只够用的 JSON 值模型。
 ///
-/// 数字按**原始字面量**保存：croc 的坐标是 150 位十进制整数，而我们只对「能被解析成
+/// 数字按原始字面量保存：croc 的坐标是 150 位十进制整数，而我们只对「能被解析成
 /// 整数」的字段感兴趣，存字符串就不需要在解析阶段区分整数与浮点。
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Value {
@@ -403,7 +395,7 @@ mod tests {
     #[test]
     fn the_trailing_null_fields_are_always_emitted() {
         // Go 的 `Public()` 返回整个 `Pake` 结构体，`json.Marshal` 又没有 `omitempty`，
-        // 于是 21 个导出字段全都会出现。这些字节**进 PAKE 转录**，少一个都不行。
+        // 于是 21 个导出字段全都会出现。这些字节进 PAKE 转录，少一个都不行。
         let state = PublicState {
             role: 0,
             u: AffinePoint::new(BigInt::from(1u32), BigInt::from(2u32)),
@@ -427,7 +419,7 @@ mod tests {
 
     #[test]
     fn encoding_matches_go_field_order_and_names() {
-        // 逐字节钉住：9 个有值的字段在前，然后 12 个恒为 `null` 的尾随字段。
+        // 逐字节固定：9 个有值的字段在前，然后 12 个恒为 `null` 的尾随字段。
         // Go 那边是 `json.Marshal(p.Public())`，`Pake` 没有 `omitempty`。
         let mut expected = format!(
             "{{\"Role\":0,\"{}\":5,\"{}\":12,\"{}\":7,\"{}\":8,\"{}\":1,\"{}\":2,\"{}\":null,\"{}\":null",

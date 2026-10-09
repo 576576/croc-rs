@@ -1,6 +1,6 @@
 //! croc 的线路层：`comm` 帧、消息编解码、压缩与 AEAD。
 //!
-//! 这一层是 **sans-io** 的：没有任何 `TcpStream`、没有 `tokio`、没有 `std::fs`、
+//! 这一层是 sans-io 的：没有任何 `TcpStream`、没有 `tokio`、没有 `std::fs`、
 //! 没有 `Instant::now`。所有函数要么是纯函数（`encode_frame` / `decode_frame` /
 //! `compress` / `decompress`），要么把不确定性显式收进参数（AEAD 的 nonce、压缩后的
 //! 密钥）。读写字节流、管理缓冲区、计时都由 `croc-engine` 负责。
@@ -25,13 +25,13 @@
 //! ```
 //!
 //! 所有字段都带 `omitempty`，所以空字段根本不出现。`b`/`b2` 是 Go 的 `[]byte`，
-//! 在 JSON 里是**标准 base64（带 padding）**——这也是为什么本 crate 手写这两个字段
+//! 在 JSON 里是标准 base64（带 padding）——这也是为什么本 crate 手写这两个字段
 //! 的 serde 适配器，而不是直接给 `Vec<u8>` 派生。
 //!
 //! # 与 Go 版的差异
 //!
 //! 只有一处：压缩级别。Go 用 `flate.HuffmanOnly`（只做霍夫曼编码，不做 LZ77 匹配），
-//! 为的是省 CPU。DEFLATE 是自描述格式，**解码端与压缩级别无关**，所以 Rust 侧用
+//! 为的是省 CPU。DEFLATE 是自描述格式，解码端与压缩级别无关，所以 Rust 侧用
 //! `Compression::fast()` 的产物 Go 一样能解开，反之亦然。差异只体现在线上字节数，
 //! 不影响互通。
 

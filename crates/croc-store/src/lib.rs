@@ -35,7 +35,7 @@ pub const CHUNK_SIZE: i64 = 4 * 1024 * 1024;
 /// 主密钥长度。HKDF 与 AES-256 都用它。
 pub const KEY_SIZE: usize = 32;
 
-/// 传输 ID 的字节数。**公开值，不是密钥**。
+/// 传输 ID 的字节数。公开值，不是密钥。
 pub const TRANSFER_ID_LEN: usize = 16;
 
 /// 一次传输最多包含的文件数。

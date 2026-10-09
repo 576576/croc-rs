@@ -1,16 +1,13 @@
 //! `cargo xtask purity`：守住"纯核心"这条架构线。
 //!
-//! `croc-siec` / `croc-pake` / `croc-protocol` 必须在**没有 IO、没有时钟、没有随机源**
-//! 的前提下编译运行。这不是洁癖：
-//!
-//! - 它们要交叉编译到 Android（`aarch64-linux-android` 等），少一层运行时少一堆坑；
-//! - 状态机要能在单元测试里**确定性重放**（见 `docs/agent/architecture.md` §2）。
-//!   一个 `Instant::now()` 就足以让"同样的输入序列得到同样的输出"不再成立。
+//! `croc-siec` / `croc-pake` / `croc-protocol` 必须在没有 IO、没有时钟、没有随机源的前提下
+//! 编译运行，因为状态机要能在单元测试里确定性重放（见 `docs/agent/architecture.md` §2）：
+//! 一个 `Instant::now()` 就足以让"同样的输入序列得到同样的输出"不再成立。
 //!
 //! 检查两件事：
 //!
 //! 1. 这三个 crate 的 `Cargo.toml` 里不许出现运行时/IO 依赖；
-//! 2. 它们的 `.rs` 源码里（**去掉注释与字符串之后**，见 [`crate::lex`]）不许出现
+//! 2. 它们的 `.rs` 源码里（去掉注释与字符串之后，见 [`crate::lex`]）不许出现
 //!    IO、网络、时钟、OS 随机源。
 //!
 //! 规则本身故意写得保守：宁可漏掉一个新出现的 API，也不要因为文档注释里提了一句
@@ -74,7 +71,7 @@ pub fn check(workspace_root: &Path) -> std::io::Result<Vec<Violation>> {
 /// 检查一个 crate 的 `Cargo.toml`。
 ///
 /// 文件不存在时返回空 —— `check` 已经确认过 crate 目录存在，这里只是防御。
-/// 读失败要**向上报**：读不到清单就没法断言它干净，静默放过等于门禁失效。
+/// 读失败要向上报：读不到清单就没法断言它干净，静默放过等于门禁失效。
 fn check_manifest(crate_root: &Path, workspace_root: &Path) -> std::io::Result<Vec<Violation>> {
     let manifest = crate_root.join("Cargo.toml");
     if !manifest.is_file() {
@@ -109,7 +106,7 @@ fn forbidden_deps_in_line(line: &str) -> Vec<String> {
 /// 递归检查一个 crate 下所有 `.rs` 文件。
 ///
 /// `tests/` 目录被跳过：集成测试要读 golden 向量，本来就得碰文件系统。门禁守的是
-/// **库代码**不许有 IO，不是"连测试都不许读文件"。
+/// 库代码不许有 IO，不是"连测试都不许读文件"。
 fn check_sources(crate_root: &Path, workspace_root: &Path) -> std::io::Result<Vec<Violation>> {
     let mut violations = Vec::new();
     let mut pending = vec![crate_root.to_path_buf()];

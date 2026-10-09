@@ -2,7 +2,7 @@
 //!
 //! # 协议（照 Go 版）
 //!
-//! 发送方起一个**只活在这次传输里**的中继，然后通过 UDP 组播把自己的控制端口喊出去：
+//! 发送方起一个只活在这次传输里的中继，然后通过 UDP 组播把自己的控制端口喊出去：
 //!
 //! | 角色 | 组播载荷 | 说明 |
 //! |---|---|---|
@@ -10,12 +10,12 @@
 //! | 接收方 | `ok` | 只喊 200 ms，只为让对端看见自己 |
 //!
 //! 组播组与端口照 Go 的默认：`239.255.255.250:9999`（IPv4）、`[ff02::c]:9999`（IPv6）。
-//! 载荷是**明文**且没有任何认证——它只能用来"知道去哪个地址连"，真正的机密性由后续
+//! 载荷是明文且没有任何认证——它只能用来"知道去哪个地址连"，真正的机密性由后续
 //! 的 PAKE 提供。所以解析结果一律当不可信输入：只取 `croc` 后面的数字。
 //!
 //! # 为什么中继要监听 `0.0.0.0`
 //!
-//! 发送方自己连的是 `127.0.0.1:<控制端口>`，但对端连的是**发送方的局域网 IP** + 同一个
+//! 发送方自己连的是 `127.0.0.1:<控制端口>`，但对端连的是发送方的局域网 IP + 同一个
 //! 端口。绑到回环上，对端就永远连不进来。
 
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
@@ -29,7 +29,7 @@ use tracing::warn;
 
 use crate::error::EngineError;
 
-/// 组播组的默认值，对应 Go `--multicast` 的默认（`src/cli/cli.go:209`）。
+/// 组播组的默认值，对应 Go `--multicast` 的默认。
 ///
 /// 可以用 `--multicast` 改掉，所以它只是默认值而不是唯一可选值。
 pub const MULTICAST_GROUP_V4: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
@@ -44,22 +44,22 @@ pub const LOCAL_DATA_PORTS: usize = croc_relay::DEFAULT_DATA_PORTS.len();
 
 /// `--port` 给了之后往后扫多少个端口位找空位。
 ///
-/// 与 Go 的 `FindOpenPorts` 同值（`src/utils/utils.go:642`，那里也是扫 200 个位置）。
+/// 扫 200 个位置就停。
 const PORT_SEARCH_LIMIT: usize = 200;
 
 /// 发送方广播的前缀。对端靠它认出"这是 croc 在喊，后面跟着端口"。
 const BEACON_PREFIX: &str = "croc";
 
-/// 接收方广播的载荷——Go 的 `discoverReceivePeers()` 发的是裸 `ok`（`croc.go:1973`）。
+/// 接收方广播的载荷——Go 的 `discoverReceivePeers()` 发的是裸 `ok`。
 const PROBE_PAYLOAD: &str = "ok";
 
-/// 广播间隔。Go 用 20 ms（`croc.go:1447`）。
+/// 广播间隔。Go 用 20 ms。
 const BEACON_INTERVAL: Duration = Duration::from_millis(20);
 
-/// 不带 `--local` 时广播多久就停（Go 的 `croc.go:1440`）。
+/// 不带 `--local` 时广播多久就停。
 const BEACON_LIMIT: Duration = Duration::from_secs(30);
 
-/// 接收方等多久的广播（Go 的 `receivePeerDiscoveryTimeout`，`croc.go:1935`）。
+/// 接收方等多久的广播。
 pub const DISCOVERY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// 组播发现到的一个对端。
@@ -130,7 +130,7 @@ impl Drop for LocalRelay {
 
 /// 绑一个端口：`advance` 为真时从 `*candidate` 起往后找，否则交给内核分配。
 ///
-/// 找端口时**上限是 [`PORT_SEARCH_LIMIT`] 个**：一段端口全被占满时不该在这里转一整天，
+/// 找端口时上限是 [`PORT_SEARCH_LIMIT`] 个：一段端口全被占满时不该在这里转一整天，
 /// 报个错让用户换个 `--port` 更好。
 async fn bind_next(candidate: &mut u16, advance: bool) -> Result<(TcpListener, u16), EngineError> {
     if !advance {
@@ -158,8 +158,8 @@ async fn bind_next(candidate: &mut u16, advance: bool) -> Result<(TcpListener, u
 /// `base_port` 为 `None` 时端口由内核分配（`0.0.0.0:0`），不会跟机器上别的服务抢——
 /// 代价是每次传输的端口都不同，这也正是要靠组播把端口喊出去的原因。
 ///
-/// 给了 `base_port`（`--port`）就从它开始往后找：Go 的 `--port` 是"基准端口"而不是
-/// 硬要求（`utils.FindOpenPorts`，`croc.go:1404`），被占了就顺延。硬绑一个被占的端口
+/// 给了 `base_port`（`--port`）就从它开始往后找：`--port` 是"基准端口"而不是
+/// 硬要求，被占了就顺延。硬绑一个被占的端口
 /// 而报错，会让"--port 9009"在跑过一次之后就再也用不了。
 ///
 /// # Errors
@@ -171,7 +171,7 @@ pub async fn start_local_relay(
     base_port: Option<u16>,
 ) -> Result<LocalRelay, EngineError> {
     // 控制端口 + `streams` 个数据端口。`streams` 就是 `--transfers`，Go 那边端口数组
-    // 的长度同样是 `transfers + 1`（`src/cli/cli.go:642`）。
+    // 的长度同样是 `transfers + 1`。
     let count = streams + 1;
     let mut listeners = Vec::with_capacity(count);
     let mut ports = Vec::with_capacity(count);
@@ -289,9 +289,9 @@ pub async fn discover(timeout: Duration, group: Ipv4Addr) -> Result<Vec<Discover
     }
 }
 
-/// 建一个**只发不收**的组播套接字。
+/// 建一个只发不收的组播套接字。
 ///
-/// 绑的是临时端口而不是 [`MULTICAST_PORT`]：组播包按**目的**端口投递，所以发信方
+/// 绑的是临时端口而不是 [`MULTICAST_PORT`]：组播包按目的端口投递，所以发信方
 /// 不需要占着 9999；而同一台机器上 sender 与 receiver 常常是同时跑的，两边都去绑
 /// 9999 会直接 `EADDRINUSE`（Windows 上没有 `SO_REUSEPORT`）。
 fn beacon_socket() -> Result<UdpSocket, EngineError> {
@@ -300,13 +300,13 @@ fn beacon_socket() -> Result<UdpSocket, EngineError> {
     Ok(socket)
 }
 
-/// 建一个**收组播**的套接字。
+/// 建一个收组播的套接字。
 ///
 /// 必须绑到 [`MULTICAST_PORT`]：组播只投递到加入了该组、且监听着该端口的套接字。
 fn listen_socket(group: Ipv4Addr) -> Result<UdpSocket, EngineError> {
     let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))
         .map_err(|error| EngineError::Relay(format!("cannot open a multicast socket: {error}")))?;
-    // `SO_REUSEADDR`：Go 的 peerdiscovery 在**发送方**也占着 9999，同一台机器上跑互通
+    // `SO_REUSEADDR`：Go 的 peerdiscovery 在发送方也占着 9999，同一台机器上跑互通
     // 测试时两边都要收这个端口。不复用就会 `EADDRINUSE`——而失败的一方恰好是接收方，
     // 症状是"找不到对端"，很容易被误判成组播不通。
     socket.set_reuse_address(true).map_err(|error| EngineError::Relay(error.to_string()))?;
@@ -320,7 +320,7 @@ fn listen_socket(group: Ipv4Addr) -> Result<UdpSocket, EngineError> {
     Ok(socket.into())
 }
 
-/// 从组播载荷里取出端口。**载荷不可信**：只认 `croc` 前缀加纯数字。
+/// 从组播载荷里取出端口。载荷不可信：只认 `croc` 前缀加纯数字。
 fn parse_beacon(payload: &[u8]) -> Option<u16> {
     let text = std::str::from_utf8(payload).ok()?;
     let digits = text.strip_prefix(BEACON_PREFIX)?;

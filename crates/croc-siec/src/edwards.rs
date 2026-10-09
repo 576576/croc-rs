@@ -1,10 +1,10 @@
 //! Ed25519 适配器：`schollz/pake` 里 `Edwards25519Curve` 的移植。
 //!
-//! Go 版把**整个 32 字节压缩点塞进 `x` 坐标**，`y` 恒为 0（见
+//! Go 版把整个 32 字节压缩点塞进 `x` 坐标，`y` 恒为 0（见
 //! `ed25519PointToBigInts`）。这个约定很怪，但它是线路契约的一部分，所以这里照抄：
 //! [`AffinePoint::x`] 是压缩点的大端整数，[`AffinePoint::y`] 永远是 0。
 //!
-//! 另一处必须照抄的是**标量钳位**：Go 的 `SetBytesWithClamping` 先做
+//! 另一处必须照抄的是标量钳位：Go 的 `SetBytesWithClamping` 先做
 //! `s[0] &= 248; s[31] &= 127; s[31] |= 64`，再用 64 字节宽约简模 `L`。
 //! 这里用 `clamp → Scalar::from_bytes_mod_order`，等价于 Go 的
 //! `SetUniformBytes(clamp(x) ‖ 0³²)`。
@@ -49,7 +49,7 @@ fn compress(point: &EdwardsPoint) -> AffinePoint {
 
 /// Go `normalizeScalar` + `SetBytesWithClamping` 的合并语义。
 ///
-/// 注意 `normalizeScalar` 的不对称：输入够长就取**前 32 字节**，不够长就**右对齐**
+/// 注意 `normalizeScalar` 的不对称：输入够长就取前 32 字节，不够长就右对齐
 /// 左补零。两处都和直觉相反，照抄。
 fn clamped_scalar(scalar: &[u8]) -> Scalar {
     let mut key = [0u8; COMPRESSED_LEN];
@@ -80,7 +80,7 @@ pub fn is_on_curve(point: &AffinePoint) -> bool {
 
 /// 点加。任一侧解压失败时返回 `(0, 0)`，与 Go 版一致。
 ///
-/// **刻意不做无穷远点短路**：Go 的 `Edwards25519Curve.Add` 直接解压两个点相加，
+/// 刻意不做无穷远点短路：Go 的 `Edwards25519Curve.Add` 直接解压两个点相加，
 /// 没有 `(0, 0)` 特判。加上短路反而会偏离参考实现。
 pub fn add(first: &AffinePoint, second: &AffinePoint) -> AffinePoint {
     match (decompress(first.x()), decompress(second.x())) {

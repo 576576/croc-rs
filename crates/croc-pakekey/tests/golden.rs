@@ -6,12 +6,12 @@
     reason = "测试代码，断言失败就该 panic"
 )]
 
-//! 与 Go 参考实现（croc 的 `src/pakekey`）的黄金向量比对。
+//! 与 Go 参考实现（croc 的 `src/pakekey`）的基准向量比对。
 //!
 //! 向量由 `croc-playground/tools/gen-golden` 生成到 `tests/golden/pakekey.json`，
 //! 覆盖五条曲线 × 三种用途。参与者身份不在文件里——它由 `purpose`/`room` 推出，
 //! 正好顺带验证 [`croc_pakekey::identities`] 的编码与 Go 一致。
-//! **文件不存在时跳过**，见 `tests/golden/README.md`。
+//! 文件不存在时跳过，见 `tests/golden/README.md`。
 
 use std::path::PathBuf;
 
@@ -22,7 +22,7 @@ use serde_json::Value;
 fn load(name: &str) -> Option<Value> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden").join(name);
     let text = std::fs::read_to_string(path).ok()?;
-    Some(serde_json::from_str(&text).expect("黄金向量应是合法 JSON"))
+    Some(serde_json::from_str(&text).expect("基准向量应是合法 JSON"))
 }
 
 fn bytes(case: &Value, key: &str) -> Vec<u8> {
@@ -42,13 +42,13 @@ fn key_schedule_matches_the_go_reference() {
         return;
     };
     let cases = golden["cases"].as_array().expect("cases 应为数组");
-    assert!(!cases.is_empty(), "黄金向量不应为空");
+    assert!(!cases.is_empty(), "基准向量不应为空");
 
     for case in cases {
         let purpose = case["purpose"].as_str().expect("purpose 应为字符串");
         let room = case["room"].as_str().expect("room 应为字符串");
         let name = case["curve"].as_str().expect("curve 应为字符串");
-        let curve = CurveKind::from_name(name).expect("黄金向量里出现了未知曲线");
+        let curve = CurveKind::from_name(name).expect("基准向量里出现了未知曲线");
         let password = bytes(case, "password_hex");
         let label = format!("{name}/{purpose}");
 

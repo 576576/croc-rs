@@ -1,10 +1,10 @@
 //! Tauri 命令：前端能调的全部入口。
 //!
 //! 每个命令都是"解析参数 → 组装 `croc-engine` 请求 → 跑 → 把结果折成可序列化的错误"。
-//! **这里没有一行协议代码**，所以 GUI 与 CLI 的行为不可能漂移。
+//! 这里没有一行协议代码，所以 GUI 与 CLI 的行为不可能漂移。
 
 // `#[tauri::command]` 展开出的胶水代码里有一个 `unreachable!()`，而 clippy 把它的 span
-// 算到**我们写的函数签名**上——逐函数的 `#[allow]` 不管用（属性宏会重新生成整个条目）。
+// 算到我们写的函数签名上——逐函数的 `#[allow]` 不管用（属性宏会重新生成整个条目）。
 // 所以在这里整模块豁免一次：本文件里没有任何我们自己写的 `unreachable!()`。
 #![allow(clippy::unreachable, reason = "tauri 宏展开产物的 span 落在我们的签名上")]
 
@@ -134,8 +134,8 @@ pub fn generate_code(requested: Option<String>) -> Result<String, String> {
 ///
 /// # Errors
 ///
-/// 路径为空、曲线名不认识、口令码不合法时返回错误。**传输本身的失败走
-/// [`event::FINISHED`] 事件**，不从命令返回——命令返回时传输才刚开始。
+/// 路径为空、曲线名不认识、口令码不合法时返回错误。传输本身的失败走
+/// [`event::FINISHED`] 事件，不从命令返回——命令返回时传输才刚开始。
 #[tauri::command]
 pub async fn send(
     app: AppHandle,

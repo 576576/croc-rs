@@ -1,18 +1,18 @@
-//! 对端会话状态机：从"中继已配对"到"传输完成"的**纯状态转移**。
+//! 对端会话状态机：从"中继已配对"到"传输完成"的纯状态转移。
 //!
 //! 对应 Go `src/croc/croc.go` 里的 `Send` / `Receive` / `processMessage` / `updateState`
 //! 那一大坨。Go 版把状态藏在 `for { data, err := conn.Receive(); … }` 的读循环里，一次
 //! 迭代里混着解密、业务判断、进度上报与文件 IO —— 于是"为什么对端说密码错误"这种问题
 //! 只能靠加日志猜。
 //!
-//! 这里把同一套流程写成 [`Session::handle`]：输入一个**已经发生的事实**，输出一串
-//! **希望外部执行的效果**。不碰 socket、不碰文件、不看时钟，随机数由调用方注入。
+//! 这里把同一套流程写成 [`Session::handle`]：输入一个已经发生的事实，输出一串
+//! 希望外部执行的效果。不碰 socket、不碰文件、不看时钟，随机数由调用方注入。
 //! 于是整条握手与清单交换可以在单元测试里用事件序列确定性重放（见本文件末尾的
 //! `a_full_relay_session_runs_to_completion`）。
 //!
 //! # 覆盖范围
 //!
-//! 覆盖 **relay 传输路径**的完整消息序列：
+//! 覆盖 relay 传输路径的完整消息序列：
 //!
 //! ```text
 //! 接收方(A)                                    发送方(B)
@@ -43,11 +43,11 @@
 //! | 中继控制端口握手 | [`croc_protocol::relay`] | 它已经是独立状态机 |
 //! | 数据面上的分块搬运 | `croc-engine` | 需要文件 IO 与并发 |
 //! | 本地中继 / 局域网发现 | `croc-engine` | 需要 socket 与组播 |
-//! | tailcat（`--transport derp`） | ⏸ pending | `docs/agent/plan/tailscale.md` |
+//! | tailcat（`--transport derp`） | pending | `docs/agent/plan/tailscale.md` |
 //! | 断线重连、ssh | 后续增量 | — |
 //!
-//! `externalip` 只在**对端不支持** `inline-peer-metadata-v1` 时才会出现（Go 的
-//! `finishDataTransportActivation`）。本状态机宣告该能力，但**能收也能回**，这样与
+//! `externalip` 只在对端不支持 `inline-peer-metadata-v1` 时才会出现（Go 的
+//! `finishDataTransportActivation`）。本状态机宣告该能力，但能收也能回，这样与
 //! 老版本对端互通时不会卡住。
 
 use croc_pake::{CurveKind, EPHEMERAL_LEN, Initiator, PakeError};
@@ -62,7 +62,7 @@ use crate::policy::Answer;
 
 /// 本端在这次会话里扮演的角色。
 ///
-/// **接收方永远是 PAKE 的发起方 A，发送方永远是响应方 B** —— 这是 croc 的协议约定，
+/// 接收方永远是 PAKE 的发起方 A，发送方永远是响应方 B —— 这是 croc 的协议约定，
 /// 不是可以挑的（见 `croc-pakekey::identities`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -98,21 +98,21 @@ pub enum Stage {
     Done,
 }
 
-/// 接收方在 PAKE 之前先发的那个**裸帧**。
+/// 接收方在 PAKE 之前先发的那个裸帧。
 ///
 /// 它不是 [`Message`]——帧体就是这 9 个字节，不走 JSON、不走 DEFLATE、也不加密。
 /// Go 侧是 `croc.go` 的 `handshakeRequest = []byte("handshake")`：
 ///
-/// - 接收方连上中继、注册完房间之后，**第一件事**就是把它发出去；
+/// - 接收方连上中继、注册完房间之后，第一件事就是把它发出去；
 /// - 发送方的 `senderWaitForHandshake` 循环读帧，看到它就跳出等待、开始处理 `pake`；
-/// - 发送方**不回任何东西**。
+/// - 发送方不回任何东西。
 ///
 /// 这一步的用途是"我到了，你可以开始了"。少了它，Go 的发送方会一直卡在
 /// `senderWaitForHandshake` 里，而 Rust 的发送方会把 `"handshake"` 当成一条
 /// JSON 消息去解压，报 `corrupt deflate stream`——两个方向都通不了。
 pub const HANDSHAKE: &[u8] = b"handshake";
 
-/// 进入状态机的事件——**全部是已经发生的事实**，不是待办。
+/// 进入状态机的事件——全部是已经发生的事实，不是待办。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InEvent {
     /// 中继握手完成，房间已注册。发送方只是等；接收方在这里发出第一条 `pake`。
@@ -123,8 +123,8 @@ pub enum InEvent {
     Decision(Answer),
     /// 接收方挑好了下一个要传的文件。
     ///
-    /// `ranges` 是[线路形态](croc_core::chunk::ChunkRanges)的分片区间；**空列表表示
-    /// "整个文件"**。文件挑选与"缺哪些块"的扫描由调用方做完——状态机不碰文件系统。
+    /// `ranges` 是[线路形态](croc_core::chunk::ChunkRanges)的分片区间；空列表表示
+    /// "整个文件"。文件挑选与"缺哪些块"的扫描由调用方做完——状态机不碰文件系统。
     RequestFile {
         /// `SenderInfo::files_to_transfer` 的下标。
         index: u64,
@@ -141,7 +141,7 @@ pub enum InEvent {
 
 /// 状态机希望外部执行的效果。
 ///
-/// **`apply` 里不许做协议判断** —— 见 `docs/agent/architecture.md` §2。
+/// `apply` 里不许做协议判断 —— 见 `docs/agent/architecture.md` §2。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// 把这一帧发到控制连接上。
@@ -159,13 +159,13 @@ pub enum Effect {
         streams: u8,
         /// 对端是否声明了 `per-file-compression-v1`。
         ///
-        /// `false` 时**必须无视文件的 `IsCompressed` 一律压缩**——那是对老对端的
+        /// `false` 时必须无视文件的 `IsCompressed` 一律压缩——那是对老对端的
         /// 兼容路径，Go 的 `currentFileUsesCompression` 就是这么写的。
         peer_per_file_compression: bool,
     },
     /// 上报一个进展事件。
     Emit(Event),
-    /// 结束，带上最终结论。**这是最后一个效果**，之后状态机进入 [`Stage::Done`]。
+    /// 结束，带上最终结论。这是最后一个效果，之后状态机进入 [`Stage::Done`]。
     Finish(Outcome),
 }
 
@@ -275,7 +275,7 @@ pub struct SessionConfig<'a> {
     pub room: &'a str,
     /// PAKE 口令（从 codephrase 解出的部分）。
     pub passphrase: &'a [u8],
-    /// 本端选择的曲线。接收方把它告诉发送方，所以**由接收方决定**。
+    /// 本端选择的曲线。接收方把它告诉发送方，所以由接收方决定。
     pub curve: CurveKind,
     /// 本端宣告的能力列表，见 [`croc_protocol::declare`]。
     pub features: Vec<String>,
@@ -370,9 +370,9 @@ pub struct Session {
     /// 局域网探测的应答状态；`None` 表示还没开始或已经答完。
     /// 对端是否声明了 `per-file-compression-v1`。
     ///
-    /// 两端的来源不同（**照抄 Go**）：接收方从清单的 `SenderInfo.Features` 读
-    /// （`croc.go:2460`），发送方从 `recipientready` 的 `Features` 读
-    /// （`croc.go:3009`）。它决定压缩开关是按文件走还是"一律压缩"。
+    /// 两端的来源不同（照抄 Go）：接收方从清单的 `SenderInfo.Features` 读
+    /// ，发送方从 `recipientready` 的 `Features` 读
+    /// 。它决定压缩开关是按文件走还是"一律压缩"。
     peer_per_file_compression: bool,
     limits: ManifestLimits,
 }
@@ -403,10 +403,9 @@ impl Drop for SessionConfigOwned {
     }
 }
 
-/// 握手载荷里要声明的那**唯一**一个能力。
+/// 握手载荷里要声明的那唯一一个能力。
 ///
-/// Go 的发送方在 `SenderInfo.Features`、接收方在 `recipientready` 的 `Features`
-/// 里都只放这一个（`croc.go:3112` 与 `:3233`）——**不是** PAKE 那五个。
+/// `SenderInfo.Features` 与 `recipientready` 的 `Features` 里都只放这一个——不是 PAKE 那五个。
 ///
 /// 它的含义是"我懂逐文件压缩开关"：对端看到它，才会按每个文件的 `IsCompressed`
 /// 决定压不压；看不到就退回"一律压缩"的老对端行为（见
@@ -440,7 +439,7 @@ impl Session {
     /// 构造一个发送方会话。
     ///
     /// 清单在这里就被拆成载荷（[`encode_manifest`] 是纯函数），所以"清单太大"这类问题
-    /// 在**连中继之前**就会暴露，而不是传到一半才失败。
+    /// 在连中继之前就会暴露，而不是传到一半才失败。
     ///
     /// # Errors
     ///
@@ -544,8 +543,8 @@ impl Session {
 
     /// 数据面用的流量密钥。
     ///
-    /// 数据端口上跑的**不是**消息层，而是裸的 `nonce ‖ AEAD(偏移 ‖ 数据)`，所以
-    /// `croc-engine` 必须能拿到这把密钥。密钥从 PAKE 派生，与消息层共用同一把。
+    /// 数据端口上跑的不是消息层，而是裸的 `nonce ‖ AEAD(偏移 ‖ 数据)`，所以
+    /// `croc-engine` 必须能拿到该密钥。密钥从 PAKE 派生，与消息层共用同一个。
     ///
     /// 握手完成前返回 `None`——调用方拿不到密钥就不可能误在明文上发数据。
     #[must_use]
@@ -561,7 +560,7 @@ impl Session {
     /// # Errors
     ///
     /// 协议违规（消息顺序不对、版本不符、确认标签验不过）时返回 [`SessionError`]。
-    /// **对端拒绝接收不是错误**——那是 [`Outcome::Refused`]。
+    /// 对端拒绝接收不是错误——那是 [`Outcome::Refused`]。
     pub fn handle(&mut self, event: InEvent, randomness: &mut impl Randomness) -> Result<Vec<Effect>, SessionError> {
         if matches!(self.state, State::Done) {
             return Err(SessionError::AlreadyFinished);
@@ -614,7 +613,7 @@ impl Session {
     }
 
     fn on_frame(&mut self, payload: &[u8], randomness: &mut impl Randomness) -> Result<Vec<Effect>, SessionError> {
-        // 正式 PAKE 之前还有一段**不属于消息层**的东西：局域网探测（`pake1`/`pake2`/
+        // 正式 PAKE 之前还有一段不属于消息层的东西：局域网探测（`pake1`/`pake2`/
         // `ips?`）与裸帧 `handshake`。它们不 DEFLATE、可能是裸 JSON、也可能用探测密钥
         // 加密——全都不该拿去 `self.session.open()`。
         if let Some(effects) = self.try_local_probe(payload) {
@@ -642,38 +641,35 @@ impl Session {
         }
     }
 
-    /// 处理正式 PAKE 之前的那几帧。**只有发送方需要**。
+    /// 处理正式 PAKE 之前的那几帧。只有发送方需要。
     ///
     /// 这段不是消息层：Go 的接收方连上中继之后默认先做一次局域网探测（除非
-    /// `--no-local` 或给了 `--ip`），发的是**裸 JSON**（`SimpleMessage`），既没有
+    /// `--no-local` 或给了 `--ip`），发的是裸 JSON（`SimpleMessage`），既没有
     /// DEFLATE 也没有消息层加密。不认出来就会被当成 `Message` 去解，报
     /// `corrupt deflate stream`。
     ///
-    /// # 我们**只吃掉、不回**
+    /// # 我们只吃掉、不回
     ///
-    /// 探测走的是**控制中继**那条连接，所以要能回答，前提是这条连接上存在对端。而：
+    /// 探测走的是控制中继那条连接，所以要能回答，前提是这条连接上存在对端。而：
     ///
     /// - `--local` 时两端根本不连公网中继，探测没有通道可走；
     /// - 非 `--local` 时我们不开内嵌中继，能给的答案是"空地址列表"——那正是
     ///   `--no-local` 的意思，回与不回对端行为一样。
     ///
-    /// 更关键的是**回一个过期的答案是致命的**：对端只等 500 ms
-    /// （`localProbeResponseTimeout`，Go `croc.go:374`），超时后它就往下走、发
+    /// 更关键的是回一个过期的答案是致命的：对端只等 500 ms，超时后它就往下走、发
     /// `handshake` 与 `pake`；我们此时才把 `pake2` 发过去，对端会拿它当 `pake` 的
     /// 应答去解压，握手当场报废。
     ///
     /// 什么时候会过期：清单要带哈希，几万个文件的哈希在 Windows 上要十几秒，对端那
-    /// 500 ms 早过完了。发送方现在把算哈希与连中继**并行**了（`send()`），但仍在进入
+    /// 500 ms 早过完了。发送方现在把算哈希与连中继并行了（`send()`），但仍在进入
     /// 读循环之前等哈希算完，所以过期的风险没消失。
     ///
-    /// 沉默则永远安全：Go 的接收方把探测的失败**丢掉**（`croc.go:2166` 那次
-    /// `Send(handshakeRequest)` 会把 `err` 覆盖掉），照常走中继路径。代价是对端多等
+    /// 沉默则永远安全：对端把探测的失败丢掉，照常走中继路径。代价是对端多等
     /// 500 ms——这正是 Go 自己加 `--no-local` 时的表现。
     ///
     /// `--local` 的发现走的是另一条路（UDP 组播，见 `croc_engine::local`），与这里的
-    /// 探测无关。真要让这条探测也答得上话，得让发送方在哈希算完**之前**就进读循环
-    /// （Go 是把算哈希丢进后台 goroutine，`croc.go:1792`），并且同时开着内嵌中继——
-    /// 目前没有这个需要。
+    /// 探测无关。真要让这条探测也答得上话，得让发送方在哈希算完之前就进读循环，
+    /// 并且同时开着内嵌中继——目前没有这个需要。
     ///
     /// 返回 `None` 表示"这不是探测帧"，调用方继续走正常的消息路径；
     /// `Some(空效果)` 表示"这是探测流量，已经吃掉"。
@@ -687,7 +683,7 @@ impl Session {
         if self.config.role != Role::Sender || !matches!(self.state, State::Idle) {
             return None;
         }
-        // `pake1`：探测的发起方是接收方，我们是应答方——**认出它、吃掉它、不回**。
+        // `pake1`：探测的发起方是接收方，我们是应答方——认出它、吃掉它、不回。
         // 上面的说明讲了为什么不能回。
         if !ProbeMessage::looks_like_probe(payload) {
             return None;
@@ -784,7 +780,7 @@ impl Session {
         }
     }
 
-    /// `pake-confirm`：双方各自校验**对方角色**的标签，然后切换到加密通道。
+    /// `pake-confirm`：双方各自校验对方角色的标签，然后切换到加密通道。
     fn on_pake_confirm(
         &mut self,
         message: &Message,
@@ -869,7 +865,7 @@ impl Session {
                     return Err(SessionError::UnexpectedMessage { kind: kind.to_string(), state: "collecting" });
                 };
                 let info = incoming.finish(message.num, &message.bytes)?;
-                // 对端在清单里声明它懂逐文件压缩（`croc.go:2460`）。
+                // 对端在清单里声明它懂逐文件压缩。
                 self.peer_per_file_compression = croc_protocol::supports(&info.features, Feature::PerFileCompression);
                 self.state = State::AwaitingDecision;
                 Ok(vec![Effect::Emit(Event::Manifest(Box::new(info)))])
@@ -924,7 +920,7 @@ impl Session {
             machine_id: self.config.machine_id.clone(),
             external_ip: self.config.external_ip.clone(),
             reconnect_version: 0,
-            // **只声明这一个**，不是 PAKE 那五个——照抄 Go 的 `croc.go:3233`。
+            // 只声明这一个，不是 PAKE 那五个。
             features: compression_feature(),
         };
         let message = Message::new(MessageType::RecipientReady).with_bytes(request.to_bytes()?);
@@ -966,7 +962,7 @@ impl Session {
         let request = RemoteFileRequest::from_bytes(&message.bytes)?;
         let index = u64::try_from(request.files_to_transfer_current_num).unwrap_or(0);
         self.current_file = index;
-        // 对端在 `recipientready` 里声明它懂逐文件压缩（`croc.go:3009`）。
+        // 对端在 `recipientready` 里声明它懂逐文件压缩。
         self.peer_per_file_compression = croc_protocol::supports(&request.features, Feature::PerFileCompression);
 
         let mut effects = Vec::new();
@@ -1080,7 +1076,7 @@ mod tests {
     const PASSPHRASE: &[u8] = b"acid-acorn-acre";
     const MACHINE: &str = "0123456789abcdef0123456789abcdef";
 
-    /// 确定性随机源：从 `start` 起逐字节递增。**仅测试用。**
+    /// 确定性随机源：从 `start` 起逐字节递增。仅测试用。
     struct Counting(u8);
 
     impl Counting {
@@ -1355,8 +1351,8 @@ mod tests {
 
     #[test]
     fn both_sides_declare_the_per_file_compression_feature() {
-        // Go 的发送方在 `SenderInfo.Features`、接收方在 `recipientready` 的 `Features`
-        // 里都**只放这一个**（`croc.go:3112` / `:3233`）。对端看到它才按文件的
+        // `SenderInfo.Features` 与 `recipientready` 的 `Features` 里都只放这一个。
+        // 对端看到它才按文件的
         // `IsCompressed` 走；看不到就退回"一律压缩"的老对端行为——漏了它，Go 会把
         // 每个块都压上，而我们按清单里的 `c:false` 不去解压，解出来是一堆 DEFLATE
         // 字节，前 8 字节被当成偏移，写盘必然越界。
@@ -1364,7 +1360,7 @@ mod tests {
         assert_eq!(declared, vec![croc_protocol::Feature::PerFileCompression.as_str().to_owned()]);
         assert_eq!(declared, vec!["per-file-compression-v1".to_owned()], "线路上的名字是硬契约");
 
-        // **它不是 PAKE 能力列表**——这两个载荷用的是各自的列表，别搞混。
+        // 它不是 PAKE 能力列表——这两个载荷用的是各自的列表，别搞混。
         let pake = croc_protocol::declare(croc_protocol::TailcatDeclaration::Unsupported);
         assert!(!pake.contains(&"per-file-compression-v1".to_owned()));
     }
@@ -1438,11 +1434,11 @@ mod tests {
 
     #[test]
     fn the_sender_swallows_a_local_probe_without_answering_it() {
-        // 对端的局域网探测是**裸 JSON**（`SimpleMessage`），不是消息层的东西；不认出来
+        // 对端的局域网探测是裸 JSON（`SimpleMessage`），不是消息层的东西；不认出来
         // 就会被当 `Message` 去解，报 `corrupt deflate stream`。
         //
-        // 但我们**只吃、不回**：回一个过期的 `pake2` 会让对端拿它当 `pake` 的应答去解，
-        // 握手当场报废（见 `try_local_probe` 的说明）。这里把"不回"钉住。
+        // 但我们只吃、不回：回一个过期的 `pake2` 会让对端拿它当 `pake` 的应答去解，
+        // 握手当场报废（见 `try_local_probe` 的说明）。这里断言不回。
         let mut sender = Session::new_sender(&config(Role::Sender, PASSPHRASE), manifest()).expect("构造");
         let mut rng = Counting::new(0);
         let probe = croc_protocol::ProbeMessage {
@@ -1453,7 +1449,7 @@ mod tests {
             ..croc_protocol::ProbeMessage::default()
         };
         let frame = probe.to_bytes().expect("编码");
-        assert_eq!(sender.handle(InEvent::Frame(frame), &mut rng), Ok(Vec::new()), "探测帧要被吃掉，且**不许回**");
+        assert_eq!(sender.handle(InEvent::Frame(frame), &mut rng), Ok(Vec::new()), "探测帧要被吃掉，且不得回");
         assert_eq!(sender.stage(), Stage::Idle, "吃完探测之后仍在等 pake");
 
         // 紧接着的 pake 必须还能正常处理——这正是"不回"要保住的东西。
@@ -1509,7 +1505,7 @@ mod tests {
         let key = [0x5a; croc_protocol::ENCRYPTION_KEY_LEN];
         let nonce = croc_protocol::random::nonce(&mut rng);
 
-        // 一、明文阶段收到非 PAKE 消息：在**解包那一步**就被拒（Go 的
+        // 一、明文阶段收到非 PAKE 消息：在解包那一步就被拒（Go 的
         // `"unencrypted communication rejected"`）。
         let ready = Message::new(MessageType::RecipientReady).with_bytes(Vec::new());
         let ciphertext = SessionKey::Aead(key).seal(&ready, &nonce).expect("应能封包");

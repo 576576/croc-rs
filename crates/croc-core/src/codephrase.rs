@@ -6,16 +6,16 @@
 //! |------|-----------|-----------|------|
 //! | `three-word` | 第 1 个词 | 后 2 个词 | 当前格式，[`generate`] 的产物 |
 //! | `four-word` | 前 2 个词 | 后 2 个词 | 历史格式，只为认得出旧码而保留 |
-//! | `legacy` | 前 4 个**字节** | 第 6 个**字节**起 | 手输码（`abcd-efgh`） |
+//! | `legacy` | 前 4 个字节 | 第 6 个字节起 | 手输码（`abcd-efgh`） |
 //!
 //! 房间名不是码本身，而是 `hex(sha256(选择子 + "croc"))`。这样同一个码在任何机器上
 //! 都落到同一个房间，而房间名又不直接暴露码。
 //!
 //! # 那个连字符
 //!
-//! 词表里有一个词**自身含 `-`**：`yo-yo`（第 1286 行）。于是 `"yo-yo-acorn-acid"` 按
-//! 连字符拆是 **4 段**（`["yo", "yo", "acorn", "acid"]`），却要还原成 **3 个词**
-//! （`["yo-yo", "acorn", "acid"]`）。Go 用**词表回溯匹配**消解这种歧义——先试第一个词
+//! 词表里有一个词自身含 `-`：`yo-yo`（第 1286 行）。于是 `"yo-yo-acorn-acid"` 按
+//! 连字符拆是 4 段（`["yo", "yo", "acorn", "acid"]`），却要还原成 3 个词
+//! （`["yo-yo", "acorn", "acid"]`）。Go 用词表回溯匹配消解这种歧义——先试第一个词
 //! 能有多长，不行就退回来试短的。这里照做，见 [`eff_word_sequence`]。
 //!
 //! # 与 Go 版的差异
@@ -58,7 +58,7 @@ const CODE_WORD_COUNT: usize = 3;
 /// 找一个落在指定中继上的码时，最多试这么多次。
 ///
 /// 命中概率是 `1 / relay_count`，所以只要中继池不是天文数字，这个上限都远远够用；
-/// 它的真正作用是**不让一个坏掉的随机源把这里变成死循环**。
+/// 它的真正作用是不让一个坏掉的随机源把这里变成死循环。
 const RELAY_SEARCH_LIMIT: u32 = 1 << 16;
 
 /// 编译期已规范化并校验过的词表。
@@ -210,7 +210,7 @@ pub fn generate_for_relay(
 
 /// 把一个码确定性地分配到有序中继池中的某一项。
 ///
-/// 用**完整** SHA-256 摘要当大端无符号整数再取模，所以同一份中继列表在任何机器上
+/// 用完整 SHA-256 摘要当大端无符号整数再取模，所以同一份中继列表在任何机器上
 /// 都会给出同一个分配。
 ///
 /// # Errors
@@ -270,7 +270,7 @@ pub fn parse_ssh(secret: &str) -> Result<SshComponents, CodeError> {
 /// 按格式把码切成 `(房间选择子, PAKE 口令, 格式)`，全部是原始字节。
 ///
 /// 判定顺序与 Go 完全一致：三词 EFF → 三词小写 → 四词小写 → 旧格式。
-/// 注意**没有**"四词 EFF"这一步——`eff_word_sequence` 只对 3 个词尝试。
+/// 注意没有"四词 EFF"这一步——`eff_word_sequence` 只对 3 个词尝试。
 fn classify(secret: &str) -> (Vec<u8>, Vec<u8>, Format) {
     let three = eff_word_sequence(secret, CODE_WORD_COUNT).or_else(|| lowercase_words(secret, CODE_WORD_COUNT));
     if let Some((selector, passphrase)) = three.as_deref().and_then(|words| split_words(words, 1)) {
@@ -440,7 +440,7 @@ mod tests {
     fn the_word_list_is_the_eff_short_list() {
         assert_eq!(words().len(), EFF_WORD_COUNT);
         assert_eq!(word_set().len(), EFF_WORD_COUNT, "词表不该有重复词");
-        // 这个连字符词是回溯解析存在的唯一理由，钉住它。
+        // 这个连字符词是回溯解析存在的唯一理由，断言它。
         assert!(word_set().contains("yo-yo"));
         assert_eq!(words().get(1285).copied(), Some("yo-yo"), "yo-yo 应在第 1286 行");
     }
@@ -577,7 +577,7 @@ mod tests {
     #[test]
     fn relay_index_uses_the_whole_digest() {
         // 用 `num-bigint` 独立算一遍：只取前几个字节的取模会得到不同的结果，
-        // 这里把"用完整 32 字节摘要"这件事钉住。
+        // 这里断言用的是完整 32 字节摘要。
         use num_bigint::BigInt;
         use num_traits::ToPrimitive as _;
 

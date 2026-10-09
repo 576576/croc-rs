@@ -1,10 +1,10 @@
-# tests/golden —— Go 参考实现的黄金向量
+# tests/golden —— Go 参考实现的基准向量
 
 这个目录存放已知答案向量，供 `crates/*/tests/golden.rs` 逐字节比对。向量由
 `croc-playground/tools/gen-golden`（Go 程序，与本仓库**平级的独立仓库**）导出 ——
 本仓库是纯 Rust 仓库，不收 Go 源码。
 
-**文件缺失是正常状态**：Rust 侧的黄金向量测试在文件缺失时会跳过并打印提示，
+**文件缺失是正常状态**：Rust 侧的基准向量测试在文件缺失时会跳过并打印提示，
 所以没有 Go 工具链的机器也能正常跑 `cargo test`。
 
 生成方式（在 `croc-playground/` 下）：

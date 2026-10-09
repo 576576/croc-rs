@@ -1,14 +1,14 @@
 //! 通用短 Weierstrass 曲线算术：`y² = x³ + A·x + B (mod p)`。
 //!
-//! 用一条实现覆盖 SIEC255 与 NIST P-256/384/521，理由是**参考实现的输出只取决于
-//! 仿射坐标**：Go 的 `crypto/elliptic` 在 P 曲线上走 `nistec`（Jacobian，恒定时间），
+//! 用一条实现覆盖 SIEC255 与 NIST P-256/384/521，理由是参考实现的输出只取决于
+//! 仿射坐标：Go 的 `crypto/elliptic` 在 P 曲线上走 `nistec`（Jacobian，恒定时间），
 //! `tscholl2/siec` 走朴素仿射公式，但两者吐出来的 `(x, y)` 是同一个数。
 //!
 //! 这里选「仿射坐标 + 扩展欧几里得」：一次点加一次求逆，对 PAKE 那几百次点运算来说
 //! 完全够用，而且公式能和 Go 源码逐行对上，便于核对。
 //!
-//! **标量约简的不对称性是契约的一部分**：Go 的 `nistCurve.normalizeScalar` 只对
-//! *过长* 的标量取模，*过短* 的只左补零；而 `siec.ScalarMult` **完全不做约简**。
+//! 标量约简的不对称性是契约的一部分：Go 的 `nistCurve.normalizeScalar` 只对
+//! *过长* 的标量取模，*过短* 的只左补零；而 `siec.ScalarMult` 完全不做约简。
 //! 两条路径都用 [`WeierstrassCurve::normalize_scalars`] 开关区分，见
 //! `docs/agent/crypto.md` §2.2。
 
@@ -168,7 +168,7 @@ impl WeierstrassCurve {
 
     /// 点倍，对应 Go `Double(x1, y1)`。
     ///
-    /// 切线斜率 `λ = (3x² + A) / (2y)`——注意分子是 `3x² + A`，**不是** `3x² + A·x`：
+    /// 切线斜率 `λ = (3x² + A) / (2y)`——注意分子是 `3x² + A`，不是 `3x² + A·x`：
     /// 那是 `x³ + A·x + B` 的导数。SIEC255 的 `A = 0` 会让这个笔误完全隐身，只有
     /// NIST 系列（`A = -3`）才暴露出来，所以测试里必须有一条非零 `A` 的用例。
     /// `y == 0` 时切线与曲线交于无穷远点。
@@ -191,7 +191,7 @@ impl WeierstrassCurve {
 
     /// 标量乘，MSB-first double-and-add。
     ///
-    /// **不做任何约简**——这是 `tscholl2/siec` 的行为，而 `siec` 是 croc 测试里
+    /// 不做任何约简——这是 `tscholl2/siec` 的行为，而 `siec` 是 croc 测试里
     /// 用得最多的曲线。NIST 曲线的约简由 [`Self::normalize_scalar`] 在调用前完成。
     pub fn scalar_mult(&self, point: &AffinePoint, scalar: &[u8]) -> AffinePoint {
         let mut accumulator = AffinePoint::identity();

@@ -7,11 +7,11 @@
 //! | 控制端口（`banner` 里的第一个端口） | `{room}` | 消息层（PAKE、清单、收尾） |
 //! | 数据端口（第 j 个） | `{room}-{j}` | 只搬文件字节，中继不解析 |
 //!
-//! 控制端口的 banner 里带着**数据端口列表**（逗号分隔）——这是 Go 的约定：
+//! 控制端口的 banner 里带着数据端口列表（逗号分隔）——这是 Go 的约定：
 //! 中继 `WithBanner(tcpPorts)`，客户端 `strings.Split(route.banner, ",")`。
 //!
 //! 握手完成后连接就变成裸转发，中继会周期性插入 keepalive（帧体是单字节 `0x01`）。
-//! **读循环必须跳过它**，否则会被当成一条空消息喂给状态机。
+//! 读循环必须跳过它，否则会被当成一条空消息喂给状态机。
 
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
@@ -33,7 +33,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// 默认中继端口。Go 的 `models.DEFAULT_PORT`——中继地址少了端口时补它。
 pub const DEFAULT_RELAY_PORT: u16 = 9009;
 
-/// 多地址拨号时每个地址之间错开多久。Go 的 `relayHappyEyeballsDelay`（`relay_dial.go:19`）。
+/// 多地址拨号时每个地址之间错开多久。Go 的 `relayHappyEyeballsDelay`。
 const HAPPY_EYEBALLS_STAGGER: Duration = Duration::from_millis(50);
 
 /// 一次握手最多收几帧。正常只要 2 帧（B 与 banner）+ 1 帧准入，给足余量防死循环。
@@ -43,7 +43,7 @@ const MAX_HANDSHAKE_FRAMES: usize = 32;
 pub struct RelayLink {
     /// 帧读写端。握手之后它就是一条普通的加密隧道。
     pub framed: Framed<TcpStream>,
-    /// 中继 banner。控制连接上它是**逗号分隔的数据端口列表**。
+    /// 中继 banner。控制连接上它是逗号分隔的数据端口列表。
     pub banner: String,
     /// 中继看到的本端地址（`host:port`）。
     pub external_ip: String,
@@ -124,7 +124,7 @@ pub async fn connect(
 
 /// 实际要试的中继地址。
 ///
-/// `--ip` 给了就**只用它**——Go 在 `--ip` 下会把默认中继清空（`croc.go:2023`），那是
+/// `--ip` 给了就只用它——Go 在 `--ip` 下会把默认中继清空，那是
 /// "我已经知道对方在哪"的意思。否则先 IPv6 后 IPv4。
 #[must_use]
 pub fn candidate_addresses(ip: &str, relay: &str, relay6: &str) -> Vec<String> {
@@ -137,15 +137,15 @@ pub fn candidate_addresses(ip: &str, relay: &str, relay6: &str) -> Vec<String> {
 
 /// 并发连中继：地址按顺序、每个错开 [`HAPPY_EYEBALLS_STAGGER`] 起，谁先握手通用谁。
 ///
-/// Go 的 `raceRelayTCP`（`src/croc/relay_dial.go:43`）是同一套：每个地址 5 秒超时、
+/// Go 的 `raceRelayTCP`是同一套：每个地址 5 秒超时、
 /// 错开 50 毫秒。IPv6 可用时不必白等 IPv4，IPv6 不可用时也只多等 50 毫秒。
 ///
-/// 返回**实际连上的地址**：数据面必须用同一个，否则会去连另一个地址上的中继——那边的
+/// 返回实际连上的地址：数据面必须用同一个，否则会去连另一个地址上的中继——那边的
 /// 房间是另一套，等于连了个不相干的服务器。
 ///
 /// # Errors
 ///
-/// 所有地址都连不上时返回**最后一个**错误。
+/// 所有地址都连不上时返回最后一个错误。
 pub async fn connect_any(
     addresses: &[String],
     password: &str,
@@ -194,7 +194,7 @@ pub async fn connect_any(
     Err(last_error.unwrap_or_else(|| EngineError::Relay("no relay address answered".to_owned())))
 }
 
-/// 去掉空串、补默认端口、去重（保持顺序）。Go 的 `normalizeRelayAddress`（`croc.go:606`）。
+/// 去掉空串、补默认端口、去重（保持顺序）。Go 的 `normalizeRelayAddress`。
 fn normalize_addresses(addresses: &[String]) -> Vec<String> {
     let mut unique: Vec<String> = Vec::new();
     for address in addresses {
@@ -236,8 +236,8 @@ pub async fn connect_data(
 
 /// 连一条 TCP：直连，或者按 [`Proxy`] 走代理。
 ///
-/// 目标是**局域网地址**时不走代理——Go 的 `comm.Dial` 也是
-/// `Proxy != "" && !utils.IsLocalIP(address)` 才用代理（`src/comm/comm.go:67`）。
+/// 目标是局域网地址时不走代理——Go 的 `comm.Dial` 也是
+/// `Proxy != "" && !utils.IsLocalIP(address)` 才用代理。
 ///
 /// # Errors
 ///
@@ -249,7 +249,7 @@ pub async fn dial(host: &str, port: u16, proxy: &Proxy, dns: dns::Mode) -> Resul
     if is_local(host) {
         return connect_direct(host, port, dns).await;
     }
-    // **不在这里做 DNS**：把 `host:port` 原样交给代理，域名由它去解析。Tor 场景下这正是
+    // 不在这里做 DNS：把 `host:port` 原样交给代理，域名由它去解析。Tor 场景下这正是
     // 关键——本地解析会把 DNS 请求漏到网外，等于白挂代理。
     let target = format!("{host}:{port}");
     match proxy {
@@ -261,12 +261,12 @@ pub async fn dial(host: &str, port: u16, proxy: &Proxy, dns: dns::Mode) -> Resul
 
 /// 直连。
 ///
-/// 地址交给 [`dns::resolve`]，那里对数字 IP 有快路径：**数字 IP 直接构造成
-/// `SocketAddr`**，不走 `getaddrinfo`。Windows 上 `getaddrinfo("127.0.0.1")` 会绕一圈
+/// 地址交给 [`dns::resolve`]，那里对数字 IP 有快路径：数字 IP 直接构造成
+/// `SocketAddr`，不走 `getaddrinfo`。Windows 上 `getaddrinfo("127.0.0.1")` 会绕一圈
 /// DNS 客户端，实测每次 ~370ms——数据面要连 5 条连接，那就是 1.8 秒的纯等待，足以
 /// 让对端先超时。
 ///
-/// 一个主机名解析出多个地址时**逐个试**（`localhost` 在本机就是 `::1` + `127.0.0.1`）：
+/// 一个主机名解析出多个地址时逐个试（`localhost` 在本机就是 `::1` + `127.0.0.1`）：
 /// 只试第一个的话，中继只绑了 IPv4 就会报"连接被拒绝"，而 Go 的 `net.Dial` 是会回退的。
 /// 用与 [`connect_any`] 相同的错开拨号，免得"第一个地址不可达"变成整个连接的超时。
 async fn connect_direct(host: &str, port: u16, dns: dns::Mode) -> Result<TcpStream, EngineError> {
@@ -339,12 +339,12 @@ async fn dial_socks5(proxy_address: &str, target: &str) -> Result<TcpStream, Eng
 
 /// 经 HTTP CONNECT 隧道拨号。
 ///
-/// 响应头是**逐字节**读到 `\r\n\r\n` 为止的：一次多读几字节就会把隧道里对端随后发来的
+/// 响应头是逐字节读到 `\r\n\r\n` 为止的：一次多读几字节就会把隧道里对端随后发来的
 /// 数据吞掉，握手当场错位。
 async fn dial_http_connect(proxy_address: &str, target: &str, dns: dns::Mode) -> Result<TcpStream, EngineError> {
     let refusal = |reason: String| EngineError::RelayUnreachable { address: target.to_owned(), reason };
     let (proxy_host, proxy_port) = split_host_port(proxy_address)?;
-    // 这一跳连的是**代理本身**，不是中继。用同一个解析模式：用户开 `--internal-dns`
+    // 这一跳连的是代理本身，不是中继。用同一个解析模式：用户开 `--internal-dns`
     // 是为了让解析不依赖本机 DNS 配置，没有理由让代理主机名例外。
     let mut stream = connect_direct(&proxy_host, proxy_port, dns).await?;
 

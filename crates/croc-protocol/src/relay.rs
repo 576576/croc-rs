@@ -6,13 +6,13 @@
 //! # 为什么值得单独抽出来
 //!
 //! 这是 croc 里唯一"两端都跑我们自己的代码"的协议——中继服务端也是本项目实现的。
-//! 把两端都做成纯状态机之后，**一次完整握手可以在单元测试里跑完**：把一方的 `send`
+//! 把两端都做成纯状态机之后，一次完整握手可以在单元测试里跑完：把一方的 `send`
 //! 原样喂给另一方，不碰 socket、不碰时钟。Go 版做不到这一点（IO 与状态转移缠在同一个
 //! goroutine 里），这正是它 `tcp_test.go` 有近千行的原因。
 //!
 //! # 线格式
 //!
-//! 所有帧都是 [`crate::frame`] 的 comm 帧，**帧体是裸字节**，不是 `message.Message`
+//! 所有帧都是 [`crate::frame`] 的 comm 帧，帧体是裸字节，不是 `message.Message`
 //! 的 JSON。只有第一帧会被中继"偷看"一次，用来识别 SSH 共享会话（Go 的
 //! `observedRoomProtocol`）。
 //!
@@ -41,12 +41,12 @@
 //!
 //! # 与 Go 版的差异
 //!
-//! - **随机数注入**：`α`、`β`、盐、AEAD nonce 全部经 [`Randomness`] 由调用方提供，
+//! - 随机数注入：`α`、`β`、盐、AEAD nonce 全部经 [`Randomness`] 由调用方提供，
 //!   状态机本身是确定的。
-//! - **不实现"快速准入"**：Go 的升级版中继会签发一个绑定源地址的 HMAC 令牌，让客户端
+//! - 不实现"快速准入"：Go 的升级版中继会签发一个绑定源地址的 HMAC 令牌，让客户端
 //!   在数据端口跳过 PAKE。这是纯优化，不影响线格式——本实现不签发，也不会主动请求。
 //!   万一收到对端签发的 `capability`，会原样带在 [`ClientSession`] 里以便日后接上。
-//! - **不做 banner 前的 5 ms "抢读"**：那是为了在 banner 之前拿到流水线过来的房间名。
+//! - 不做 banner 前的 5 ms "抢读"：那是为了在 banner 之前拿到流水线过来的房间名。
 //!   房间帧本来就已经在缓冲区里，按正常顺序读它不会多花一次往返。
 
 use croc_pake::{CurveKind, EPHEMERAL_LEN, Identities, Initiator, PakeError, Responder};
@@ -61,7 +61,7 @@ use crate::random::{self, Randomness};
 ///
 /// 它不是用来保护内容的——两端都硬编码 `[1,2,3]`，任何人都能算出这把 SPAKE2 密钥。
 /// 它只负责把 `strongKey` 藏起来，让旁路观察者无法伪造 `Enc(password)`。真正的鉴权是
-/// 后面那条中继密码。**不要"顺手"把它改强**：改了就不兼容，而且没有意义。
+/// 后面那条中继密码。不要"顺手"把它改强：改了就不兼容，而且没有意义。
 pub const WEAK_KEY: [u8; 3] = [1, 2, 3];
 
 /// 中继握手固定使用的曲线（Go 里写死 `"siec"`）。
@@ -275,13 +275,13 @@ pub struct ClientHandshake {
     salt: [u8; SALT_LEN],
     password: Vec<u8>,
     room: Vec<u8>,
-    /// banner 阶段解析出来、等准入阶段才凑齐的会话信息。
+    /// banner 阶段解析出来、到准入阶段才收集完整的会话信息。
     pending: Option<ClientSession>,
     state: ClientState,
 }
 
 impl ClientHandshake {
-    /// 构造。`password` 是**中继密码**（`--relay-password`），不是房间口令。
+    /// 构造。`password` 是中继密码（`--relay-password`），不是房间口令。
     ///
     /// 这里会立刻用掉 32 + 8 字节随机数（SPAKE2 的 `α` 与中继盐）。
     ///
@@ -466,7 +466,7 @@ pub enum ServerOutcome {
     Accepted(ServerSession),
     /// 对方只是探活：发完 `pong` 就可以断开。
     Ping,
-    /// 拒绝。**注意 [`ServerStep::send`] 里的帧要照发**——口令错误时中继会回一条加密的
+    /// 拒绝。注意 [`ServerStep::send`] 里的帧要照发——口令错误时中继会回一条加密的
     /// `"bad password"`，让客户端能区分"口令错"和"网络坏"。
     Rejected(RelayError),
 }
@@ -510,8 +510,8 @@ impl ServerHandshake {
     ///
     /// # Errors
     ///
-    /// 只有在状态机自身不可用时才返回 `Err`；**对端的错误（口令错、帧损坏）走
-    /// [`ServerOutcome::Rejected`]**，因为那需要先把拒绝帧发出去。
+    /// 只有在状态机自身不可用时才返回 `Err`；对端的错误（口令错、帧损坏）走
+    /// [`ServerOutcome::Rejected`]，因为那需要先把拒绝帧发出去。
     pub fn step(&mut self, frame: &[u8], randomness: &mut impl Randomness) -> Result<ServerStep, RelayError> {
         match core::mem::replace(&mut self.state, ServerState::Done) {
             ServerState::AwaitingInitiator => self.accept_initiator(frame, randomness),
@@ -629,7 +629,7 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
 
-    /// 确定性随机源：从 `start` 起逐字节递增。**仅测试用。**
+    /// 确定性随机源：从 `start` 起逐字节递增。仅测试用。
     struct Counting(u8);
 
     impl Counting {

@@ -1,9 +1,9 @@
 //! 局域网探测（local probe）：正式 PAKE 之前的那一次"你在不在本地"的交换。
 //!
-//! 这一步是 Go 版 `croc.go` 的 `SimpleMessage` 协议。**它不是 `Message`**：
+//! 这一步是 Go 版 `croc.go` 的 `SimpleMessage` 协议。它不是 `Message`：
 //!
-//! - 帧体是**裸 JSON**（不 DEFLATE、不进消息层）；
-//! - 前两帧（`pake1` / `pake2`）**不加密**；
+//! - 帧体是裸 JSON（不 DEFLATE、不进消息层）；
+//! - 前两帧（`pake1` / `pake2`）不加密；
 //! - 之后两帧（`ips?` 与 IP 列表）用探测自己派生出的密钥加密。
 //!
 //! ```text
@@ -13,7 +13,7 @@
 //!                            B = pakekey(pass, 1, PurposeLocalProbe, room)
 //!                            B.Update(A)；salt ←$ 32B
 //! ◀──{"Bytes":B,"Bytes2":salt,"Kind":"pake2",…}──
-//! 双方 Derive ⇒ kLocal（**用途是 local-ip-probe，不是 peer-transfer**）
+//! 双方 Derive ⇒ kLocal（用途是 local-ip-probe，不是 peer-transfer）
 //! ──Enc("ips?")──▶
 //! ◀──Enc(json([端口, ip, ip, …]))──
 //! ──"handshake"──▶                              （裸帧，回到正常流程）
@@ -21,13 +21,13 @@
 //!
 //! # 为什么这一层必须实现
 //!
-//! Go 的接收方在连上中继之后**默认先做这一步**（除非 `--no-local` 或给了 `--ip`）。
+//! Go 的接收方在连上中继之后默认先做这一步（除非 `--no-local` 或给了 `--ip`）。
 //! 不实现它，Go 的接收方会卡在这里等 `pake2`，而 Rust 的发送方会把这段 JSON 当成
 //! `Message` 去 DEFLATE 解压，报 `corrupt deflate stream` —— 两个方向都断在第一帧上。
 //!
 //! # 本实现只做应答方
 //!
-//! 我们是发送方时**必须应答**（否则 Go 的接收方连不上）；我们是接收方时**主动跳过**
+//! 我们是发送方时必须应答（否则 Go 的接收方连不上）；我们是接收方时主动跳过
 //! （等价于 Go 的 `--no-local`）——本项目还没有本地中继，探到了也没得连。
 //! 跳过是协议允许的：`--no-local` 的 Go 客户端就是这么做的。
 
@@ -47,7 +47,7 @@ pub const KIND_PAKE2: &str = "pake2";
 
 /// Go 的 `croc.SimpleMessage`。
 ///
-/// **字段名是 Go 的结构体字段名**（没有 json tag），而且 Go 的 `json.Marshal` 没有
+/// 字段名是 Go 的结构体字段名（没有 json tag），而且 Go 的 `json.Marshal` 没有
 /// `omitempty`——五个键永远都出现（空切片编成 `null`）。这里不去复刻 `null`：
 /// 对方用 `json.Unmarshal` 读，缺键与 `null` 都得到零值，互通无碍。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,7 +106,7 @@ impl ProbeMessage {
 
     /// 这段字节像不像一条探测消息。
     ///
-    /// 用来把探测帧与 `Message` 帧分开：`Message` 是 **DEFLATE 过的**，第一个字节几乎
+    /// 用来把探测帧与 `Message` 帧分开：`Message` 是 DEFLATE 过的，第一个字节几乎
     /// 不可能是 `{`；而探测帧是裸 JSON，必然以 `{` 开头。这个判断只需要"够准"，
     /// 因为解析失败时调用方会落回正常路径。
     #[must_use]

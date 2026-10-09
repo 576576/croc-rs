@@ -7,8 +7,8 @@ use crate::error::EngineError;
 
 /// 出站代理。
 ///
-/// 两个 flag 都给时 **socks5 优先**——Go 的 `comm.Dial` 就是 if / else if
-/// （`src/comm/comm.go:67`）。
+/// 两个 flag 都给时 socks5 优先——Go 的 `comm.Dial` 就是 if / else if
+/// 。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Proxy {
     /// 直连。
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn socks5_wins_when_both_are_given() {
-        // Go 的 `comm.Dial` 先查 Socks5Proxy（`src/comm/comm.go:67`）。
+        // Go 的 `comm.Dial` 先查 Socks5Proxy。
         assert_eq!(
             Proxy::from_flags(Some("127.0.0.1:9050"), Some("127.0.0.1:8080")),
             Proxy::Socks5("127.0.0.1:9050".to_owned())

@@ -127,7 +127,7 @@ impl DataPlane for TailscalePlane {
 | T2 | 抬高 MSRV | 无（已挂起） | 不引入依赖 |
 | T3 | NAT 直连 WIP，吞吐可能差 | 中（解除后） | 解除后：`auto` 模式并行探测 relay 与 tailscale，先就绪者胜（Go 的 `staged-transport-v1` 同思路） |
 | T4 | 上游平台面窄（无 Android/iOS） | 中（解除后） | 与 Go 版 build tag 行为一致，UI 明确提示 |
-| T5 | 误以为"用了 tailscale 就能和 Go 版 tailcat 互通" | **高** | 本文即为澄清；互通用例钉死的是"降级到 relay 后成功"，不是 tailcat 直通 |
+| T5 | 误以为"用了 tailscale 就能和 Go 版 tailcat 互通" | **高** | 本文即为澄清；互通用例覆盖的是"降级到 relay 后成功"，不是 tailcat 直通 |
 | T6 | 授权交互（auth key 从哪来） | 中（解除后） | GUI 设置页 authkey 输入 + 授权 URL；CLI `--ts-authkey` / `CROC_TS_AUTHKEY` |
 | T7 | 有人误开 `TailscalePlane` | 低 | CLI 层就把 `derp` 翻译成 `Relay`；即使构造也只返回 `Unavailable` 并走 `fallback()` |
 

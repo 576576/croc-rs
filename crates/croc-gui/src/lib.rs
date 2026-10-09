@@ -2,14 +2,14 @@
 //!
 //! # 这一层有多薄
 //!
-//! 它**不实现任何协议**：所有传输都走 `croc-engine`，与 CLI 完全同源。这里只做三件事：
+//! 它不实现任何协议：所有传输都走 `croc-engine`，与 CLI 完全同源。这里只做三件事：
 //!
 //! 1. 把 `croc-engine` 的 [`EngineEvent`] 转成 Tauri event 推给前端；
-//! 2. 维护 `HashMap<TransferId, CancellationToken>` —— **UI 状态归前端**，Rust 侧只记
+//! 2. 维护 `HashMap<TransferId, CancellationToken>` —— UI 状态归前端，Rust 侧只记
 //!    "哪些传输可以被取消"，别的一概不存；
 //! 3. 把 `Result<T, EngineError>` 折成 `Result<T, String>`（Tauri 命令的错误必须可序列化）。
 //!
-//! 这样做的直接好处：GUI 与 CLI 的**行为不可能漂移**。FlCroc 那套（Flutter + Go CGO）
+//! 这样做的直接好处：GUI 与 CLI 的行为不可能漂移。FlCroc 那套（Flutter + Go CGO）
 //! 之所以难维护，正是因为同一个协议在两端各有一份状态机。
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing))]
@@ -31,7 +31,7 @@ pub mod event {
     pub const FINISHED: &str = "croc://finished";
 }
 
-/// 装 tracing。Tauri 应用里**不装 subscriber**，由 `main.rs` 决定——库 crate 装
+/// 装 tracing。Tauri 应用里不装 subscriber，由 `main.rs` 决定——库 crate 装
 /// subscriber 会让嵌入它的宿主失去控制权。
 pub fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()

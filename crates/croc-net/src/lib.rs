@@ -1,4 +1,4 @@
-//! croc 的异步 IO 原语：**副作用边缘**的第一层。
+//! croc 的异步 IO 原语：副作用边缘的第一层。
 //!
 //! 这里只放"谁都需要、但谁都不该自己写一遍"的东西：
 //!
@@ -22,7 +22,7 @@ pub use random::OsRandomness;
 
 /// IO 层的失败模式。
 ///
-/// 这里**不**把 `std::io::Error` 包进来做统一错误类型——调用方几乎总是想把它原样往
+/// 这里不把 `std::io::Error` 包进来做统一错误类型——调用方几乎总是想把它原样往
 /// 上传（或者按 `ErrorKind` 分流），包一层只会让人再拆一层。所以 `Framed` 的错误是
 /// 这个枚举，而底层 IO 错误通过 [`CrocIoError::Io`] 原样透传。
 #[derive(Debug, thiserror::Error)]
@@ -33,7 +33,7 @@ pub enum CrocIoError {
     /// `Ok(None)`，而这个说明对方在发到一半时断了（或有人在主动截断流量）。
     #[error("peer closed the connection in the middle of a frame: {buffered} bytes buffered")]
     TruncatedFrame {
-        /// 断线时已经缓冲、但凑不齐一条帧的字节数。
+        /// 断线时已经缓冲、但不足以组成一条帧的字节数。
         buffered: usize,
     },
 

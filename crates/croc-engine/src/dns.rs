@@ -1,17 +1,16 @@
 //! `--internal-dns`：自带的 DNS stub resolver。
 //!
-//! 默认走操作系统的解析器。打开 `--internal-dns` 后改成**直接问公共 DNS 服务器**
-//! （Go 的 `models.INTERNAL_DNS`，`constants.go:89`），绕过 hosts 文件、`systemd-resolved`
-//! 这类本机配置——本机 DNS 被改坏或压根没配的场景下，只有这条路还通。
+//! 默认走操作系统的解析器。打开 `--internal-dns` 后改成直接问公共 DNS 服务器，
+//! 绕过 hosts 文件、`systemd-resolved` 这类本机配置——本机 DNS 被改坏或压根没配的场景下，
+//! 只有这条路还通。
 //!
 //! # 范围
 //!
 //! 只做 A / AAAA（外加 CNAME 链），也就是"把一个中继主机名变成 IP"所需的那点东西。
 //! 这不是通用解析器：没有 EDNS0、没有 DNSSEC、没有 SRV/MX，也不做 0x20 随机化。
-//! 每次查询用一个**新的**已连接 UDP socket，所以响应里的 ID 只用于防串话，不承担安全性。
+//! 每次查询用一个新的已连接 UDP socket，所以响应里的 ID 只用于防串话，不承担安全性。
 //!
-//! 走代理连接时**不使用**这里的解析（Go 的 `ResolveRelayAddress` 只在直连分支里被调用，
-//! `comm.go:111`）：把域名交给代理去解析才是对的，本地解析会把 DNS 请求漏到网外。
+//! 走代理连接时不使用这里的解析：把域名交给代理去解析才是对的，本地解析会把 DNS 请求漏到网外。
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
@@ -23,7 +22,7 @@ use tokio::task::JoinSet;
 
 use crate::error::EngineError;
 
-/// Go 的 `models.publicDNS`（`constants.go:29`），顺序与文本都照抄——包括 IPv6 的方括号。
+/// Go 的 `models.publicDNS`，顺序与文本都照抄——包括 IPv6 的方括号。
 pub const PUBLIC_DNS: [&str; 18] = [
     "1.0.0.1",                // Cloudflare
     "1.1.1.1",                // Cloudflare
@@ -45,7 +44,7 @@ pub const PUBLIC_DNS: [&str; 18] = [
     "[2620:119:53::53]",      // Cisco OpenDNS
 ];
 
-/// 单个查询的超时。Go 的 `500 * time.Millisecond`（`constants.go:169`）。
+/// 单个查询的超时。Go 的 `500 * time.Millisecond`。
 const QUERY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// 报文头长度：ID + flags + 四个计数字段。
@@ -77,7 +76,7 @@ pub enum Mode {
     Internal,
 }
 
-/// 把一个主机名解析成**全部**候选地址。
+/// 把一个主机名解析成全部候选地址。
 ///
 /// 返回列表而不是单个地址：第一条连不上时还有下一条可试，这与 Go 的
 /// `net.Dialer.DialContext` 依次尝试每个地址是同一种行为。
@@ -109,9 +108,9 @@ pub async fn resolve(host: &str, port: u16, mode: Mode) -> Result<Vec<SocketAddr
     Ok(addresses)
 }
 
-/// 并发问所有公共 DNS 服务器，取**第一个给出非空答案**的。
+/// 并发问所有公共 DNS 服务器，取第一个给出非空答案的。
 ///
-/// 与 Go 的 `lookup`（`constants.go:110`）同一个形状：所有服务器同时发，谁先答上来用谁，
+/// 与 Go 的 `lookup`同一个形状：所有服务器同时发，谁先答上来用谁，
 /// 不等其余的——多等只会让"最快的那个慢服务器"拖住整次连接。
 async fn internal_lookup(host: &str) -> Vec<IpAddr> {
     let mut servers = JoinSet::new();
@@ -264,7 +263,7 @@ fn build_query(id: u16, host: &str, record: Record) -> Option<Vec<u8>> {
 
 /// 读一个域名，返回 `(名字, 名字之后的下一个字节位置)`。
 ///
-/// 压缩指针（高两位 `11`）要跟着跳，但**返回的位置是第一次遇到指针之前**的那个位置
+/// 压缩指针（高两位 `11`）要跟着跳，但返回的位置是第一次遇到指针之前的那个位置
 /// ——记录里跟在名字后面的是 TYPE/CLASS，它们在报文里的实际偏移，不是指针指向的地方。
 fn read_name(message: &[u8], start: usize) -> Option<(String, usize)> {
     let mut labels: Vec<&str> = Vec::new();
@@ -377,7 +376,7 @@ fn is_truncated(response: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    /// 断言用的不变量：这条列表的**文本**是 Go 那份的照抄，改一个字符都得是有意的。
+    /// 断言用的不变量：这条列表的文本是 Go 那份的照抄，改一个字符都得是有意的。
     #[test]
     fn the_server_list_matches_go() {
         assert_eq!(PUBLIC_DNS.len(), 18);

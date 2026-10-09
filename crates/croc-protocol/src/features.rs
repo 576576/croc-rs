@@ -4,7 +4,7 @@
 //! `const ... = "..."` 字符串，以及 `supportsFeature`。Go 用裸字符串，写错一个字母只会
 //! 在运行时静默退化成"对端不支持"——最难查的一类 bug。这里换成枚举，拼错就是编译错误。
 //!
-//! 但对端发来的列表仍然是**任意字符串**：新版对端可能宣告本端还不认识的能力，而我们
+//! 但对端发来的列表仍然是任意字符串：新版对端可能宣告本端还不认识的能力，而我们
 //! 必须原样接受、原样忽略。所以协商函数收 `&[String]`，不收 `&[Feature]`。
 //!
 //! # 宣告顺序是协议的一部分
@@ -38,7 +38,7 @@ pub enum Feature {
 }
 
 impl Feature {
-    /// 全部已知能力。**顺序与 Go 的声明顺序无关**，只用于 [`Feature::parse`] 查找。
+    /// 全部已知能力。顺序与 Go 的声明顺序无关，只用于 [`Feature::parse`] 查找。
     pub const ALL: [Self; 9] = [
         Self::PerFileCompression,
         Self::InlinePeerMetadata,
@@ -89,7 +89,7 @@ pub fn supports(features: &[String], wanted: Feature) -> bool {
     features.iter().any(|feature| feature == name)
 }
 
-/// 把对端列表里**本端认识**的部分挑出来。
+/// 把对端列表里本端认识的部分挑出来。
 ///
 /// 用于日志和诊断：不认识的条目会被安静丢弃，而不是让上层去处理 `&[String]`。
 pub fn known(features: &[String]) -> impl Iterator<Item = Feature> + '_ {

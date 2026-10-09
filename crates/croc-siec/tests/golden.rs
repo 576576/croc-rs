@@ -6,10 +6,10 @@
     reason = "测试代码，断言失败就该 panic"
 )]
 
-//! 与 Go 参考实现的黄金向量比对。
+//! 与 Go 参考实现的基准向量比对。
 //!
 //! 向量由 `croc-playground/tools/gen-golden`（Go 程序，直接用 `tscholl2/siec` 与 `crypto/elliptic`）
-//! 生成到 `tests/golden/curves.json`。**文件不存在时本测试会跳过**并打印提示——
+//! 生成到 `tests/golden/curves.json`。文件不存在时本测试会跳过并打印提示——
 //! 这样没有 Go 工具链的机器也能跑 `cargo test`，而一旦生成过向量，比对就是硬断言。
 //!
 //! 生成方式见 `tests/golden/README.md`。
@@ -24,7 +24,7 @@ use serde_json::Value;
 fn load(name: &str) -> Option<Value> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden").join(name);
     let text = std::fs::read_to_string(path).ok()?;
-    Some(serde_json::from_str(&text).expect("黄金向量应是合法 JSON"))
+    Some(serde_json::from_str(&text).expect("基准向量应是合法 JSON"))
 }
 
 fn decimal(case: &Value, key: &str) -> BigInt {
@@ -45,11 +45,11 @@ fn curve_arithmetic_matches_the_go_reference() {
         return;
     };
     let cases = golden["cases"].as_array().expect("cases 应为数组");
-    assert!(!cases.is_empty(), "黄金向量不应为空");
+    assert!(!cases.is_empty(), "基准向量不应为空");
 
     for case in cases {
         let name = case["curve"].as_str().expect("curve 应为字符串");
-        let curve = weierstrass_by_name(name).expect("黄金向量里出现了未知曲线");
+        let curve = weierstrass_by_name(name).expect("基准向量里出现了未知曲线");
 
         let base = AffinePoint::new(decimal(case, "base_x"), decimal(case, "base_y"));
         assert_eq!(base, curve.base_point(), "{name} 的基点与 Go 不一致");

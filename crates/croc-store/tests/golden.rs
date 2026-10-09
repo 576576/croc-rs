@@ -6,10 +6,10 @@
     reason = "测试代码，断言失败就该 panic"
 )]
 
-//! 与 Go 参考实现（`schollz/croc` v11 的 `src/storecrypto`）的黄金向量比对。
+//! 与 Go 参考实现（`schollz/croc` v11 的 `src/storecrypto`）的基准向量比对。
 //!
 //! 向量由 `croc-playground/tools/gen-golden` 生成到 `tests/golden/store.json`。
-//! **文件不存在时跳过**，见 `tests/golden/README.md`。
+//! 文件不存在时跳过，见 `tests/golden/README.md`。
 //!
 //! 这一层是服务端与客户端共用的加密格式，只要有一处偏差，两边就完全对不上：密钥派生
 //! 会得到不同的密钥、AAD 会不同、清单里的时间格式会不同。所以这里逐项比对。
@@ -26,7 +26,7 @@ use serde_json::Value;
 fn load() -> Option<Value> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/store.json");
     let text = std::fs::read_to_string(path).ok()?;
-    Some(serde_json::from_str(&text).expect("黄金向量应是合法 JSON"))
+    Some(serde_json::from_str(&text).expect("基准向量应是合法 JSON"))
 }
 
 fn hex_bytes(value: &Value, key: &str) -> Vec<u8> {
