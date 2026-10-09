@@ -107,13 +107,12 @@ GUI，出的是 APK，本来就是单独一个文件。
 
 ### 3.1 产物形态开关（dispatch 输入）
 
-| 开关 | 默认 | 含义 |
+| 开关 | 默认 | 取值 |
 |------|------|------|
-| `pack_cli` | ☑ | 出 `croc-rs` |
-| `pack_gui` | ☑ | 出 `crocw-rs`（含 Android APK） |
+| `pack` | `all` | `cli` 出 `croc-rs`；`gui` 出 `crocw-rs`（含 Android APK）；`all` 两者都出 |
 
-两者正交；**都关则没有可发布的包**，`prep` 里预先拦一道（别让每个 target 白跑一遍编译）。
-同理，勾了 Android 目标却关掉 `pack_gui` 也会被 `prep` 拦下——APK 由 GUI 产出。
+三选一，不存在"都不出"的组合。它只管 Android 之外的构建：勾了 Android 就照出 APK，
+不受这个开关影响。
 
 ## 4. 构建目标与 runner（原生同架构，不用 cross）
 
@@ -221,8 +220,8 @@ cargo xtask ci-interop   # = 互通矩阵（只在本地跑）
 
 | 项 | Suwayomi-next | croc-rs | 原因 |
 |----|---------------|---------|------|
-| 产物形态开关 | `pack_core` / `pack_jre` / `pack_msi` / `pack_exe` / `pack_oci` | `pack_cli` / `pack_gui` | 没有 JRE / 安装包 / 镜像需求 |
-| Windows 工具链 | `msvc` / `gnullvm` / `all` | 仅 msvc | 无需 llvm-mingw |
+| 产物形态开关 | `pack_core` / `pack_jre` / `pack_msi` / `pack_exe` / `pack_oci` | `pack`（`cli` / `gui` / `all`） | 没有 JRE / 安装包 / 镜像需求 |
+| Windows 工具链 | `msvc` / `gnullvm` / `all` | 同左（`windows_toolchain`） | — |
 | 外部资产 | WebUI zip、ext-runtime.jar、JRE | 无 | — |
 | Miri | 无 | 无 | 本仓库 0 处 `unsafe`、0 处 FFI，安全 Rust 产不出 UB——见 [architecture.md](architecture.md) §7.2 |
 | 架构门禁 | 无 | `xtask purity` | 本项目的纯 crate 必须保持 sans-io |

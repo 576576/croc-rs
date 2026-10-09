@@ -78,13 +78,12 @@ Windows runner 上 `tar` 与 `zip` 的行为差异最容易出坑，各用各的
 
 ### 3.1 形态开关
 
-| 开关 | 默认 | 含义 |
+| 开关 | 默认 | 取值 |
 |------|------|------|
-| `pack_cli` | ☑ | 出 `croc-rs` |
-| `pack_gui` | ☑ | 出 `crocw-rs`（含 Android APK） |
+| `pack` | `all` | `cli` 出 `croc-rs`；`gui` 出 `crocw-rs`（含 Android APK）；`all` 两者都出 |
 
-两者正交。**都关则没有可发布的包** —— `prep` 里预先拦一道，免得每个 target 白跑一遍编译
-才报错。同理，勾了 Android 目标却关掉 `pack_gui` 也会被 `prep` 拦下（APK 由 GUI 产出）。
+三选一，不存在"都不出"的组合。它只管 Android 之外的构建：勾了 Android 就照出 APK，
+不受这个开关影响。
 
 ### 3.2 构建目标
 

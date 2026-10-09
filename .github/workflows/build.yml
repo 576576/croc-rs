@@ -41,12 +41,12 @@ on:
         required: true
         type: string
       pack_cli:
-        description: 是否产出 croc-rs（CLI）；与 pack_gui 正交，两者都关就没有可发布的包
+        description: 是否产出 croc-rs；桌面矩阵用，Android 不看这两个
         required: false
         type: boolean
         default: true
       pack_gui:
-        description: 是否产出 crocw-rs（Tauri GUI，含 Android APK）
+        description: 是否产出 crocw-rs；桌面矩阵用，Android 不看这两个
         required: false
         type: boolean
         default: true
@@ -75,6 +75,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: ${{ matrix.target }}
+      - name: 安装 llvm-mingw
+        if: contains(matrix.rust_target, 'gnullvm')
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="20260922"
+          DIR="llvm-mingw-${V}-ucrt-x86_64"
+          curl -fsSL --retry 3 -o llvm-mingw.zip \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/${V}/${DIR}.zip"
+          python3 -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall('.')" llvm-mingw.zip
+          rm -f llvm-mingw.zip
+          test -x "$DIR/bin/x86_64-w64-mingw32-clang.exe" || { echo "::error::llvm-mingw 解压异常（缺 $DIR/bin）"; exit 1; }
+          echo "$(pwd -W)/$DIR/bin" >> "$GITHUB_PATH"
       - name: 安装 Linux 系统依赖
         # WebKitGTK 4.1 是 Tauri 2 的运行时依赖（4.0 只够 Tauri 1）。
         # libappindicator / librsvg 供托盘与图标，patchelf 供 AppImage。
@@ -190,7 +203,7 @@ jobs:
   android:
     name: Android ${{ matrix.target }}
     # 与桌面矩阵同一套写法：include 由调用方按勾选拼好，空数组时整个 job 跳过。
-    if: inputs.pack_gui && inputs.android_targets != '[]'
+    if: inputs.android_targets != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

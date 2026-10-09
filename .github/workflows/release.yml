@@ -22,6 +22,16 @@ on:
         type: choice
         options: [alpha, beta, release]
         default: alpha
+      pack:
+        description: 产出
+        type: choice
+        options: [cli, gui, all]
+        default: all
+      windows_toolchain:
+        description: Windows 工具链
+        type: choice
+        options: [msvc, gnullvm, all]
+        default: msvc
       # 平台开关：先 Windows/Linux/macOS，再 Android；同族内一律 x64 在前、arm64 在后。
       # 默认只勾 Windows x64 + Linux x64（与自动 alpha 逐项一致，所以两条路径出的包一样）。
       build_windows_x64:
@@ -56,15 +66,6 @@ on:
         description: Android x64
         type: boolean
         default: false
-      # 形态开关：两者正交，都关则没有可发布的包（prep 里先拦一道）。
-      pack_cli:
-        description: 产出 croc-rs（CLI）
-        type: boolean
-        default: true
-      pack_gui:
-        description: 产出 crocw-rs（Tauri GUI，含 Android APK）
-        type: boolean
-        default: true
       release_notes:
         description: 发行说明
         type: string
@@ -106,10 +107,10 @@ jobs:
           if [ "$EVENT" = "workflow_dispatch" ]; then
             FLOW="manual"
             CHANNEL="${{ github.event.inputs.channel }}"
-            PACK_CLI="${{ github.event.inputs.pack_cli }}"
-            PACK_GUI="${{ github.event.inputs.pack_gui }}"
+            PACK="${{ github.event.inputs.pack }}"
             ANDROID_ARM64="${{ github.event.inputs.build_android_arm64 }}"
             ANDROID_X64="${{ github.event.inputs.build_android_x64 }}"
+            WIN_TC="${{ github.event.inputs.windows_toolchain }}"
 
             SEL=""
             [ "${{ github.event.inputs.build_windows_x64 }}" = "true" ] && SEL="$SEL windows-x64"
@@ -120,8 +121,7 @@ jobs:
             [ "${{ github.event.inputs.build_macos_arm64 }}" = "true" ] && SEL="$SEL macos-arm64"
 
             # input 缺失时渲染成空串（不是 "false"），统一兜成默认值。
-            PACK_CLI="${PACK_CLI:-true}"
-            PACK_GUI="${PACK_GUI:-true}"
+            PACK="${PACK:-all}"
             ANDROID_ARM64="${ANDROID_ARM64:-false}"
             ANDROID_X64="${ANDROID_X64:-false}"
           else
@@ -129,12 +129,25 @@ jobs:
             # 形态与手动 dispatch 的默认值保持一致 —— 所以两条路径出的包一样，不必分叉。
             FLOW="auto"
             CHANNEL="alpha"
-            PACK_CLI="true"
-            PACK_GUI="true"
+            PACK="all"
             ANDROID_ARM64="false"
             ANDROID_X64="false"
+            WIN_TC="msvc"
             SEL="windows-x64 linux-x64"
           fi
+
+          WIN_TC="${WIN_TC:-msvc}"
+          case "$WIN_TC" in
+            msvc|gnullvm|all) ;;
+            *) echo "::error::未知 Windows 工具链 $WIN_TC"; exit 1 ;;
+          esac
+
+          case "$PACK" in
+            cli) PACK_CLI="true";  PACK_GUI="false" ;;
+            gui) PACK_CLI="false"; PACK_GUI="true"  ;;
+            all) PACK_CLI="true";  PACK_GUI="true"  ;;
+            *)   echo "::error::未知产出 $PACK"; exit 1 ;;
+          esac
 
           # 通道段只有 beta 非空：beta 与 release 共用 1.y.z 版本名，不区分就会重名。
           if [ "$CHANNEL" = "beta" ]; then CH_SUFFIX="-beta"; else CH_SUFFIX=""; fi
@@ -164,19 +177,35 @@ jobs:
 
           # 桌面/服务端矩阵。**每个 target 都是原生同架构编译**，不引入交叉工具链
           # （核心依赖是纯 Rust 加密栈，原生编译最省事）。macos-13 已下线，x64 用 macos-15-intel。
-          INCLUDE="$(python3 - "$SEL" <<'PY'
+          INCLUDE="$(python3 - "$SEL" "$WIN_TC" <<'PY'
           import json, sys
 
-          mapping = {
-              "windows-x64":   ("windows-latest", "x86_64-pc-windows-msvc"),
-              "windows-arm64": ("windows-11-arm", "aarch64-pc-windows-msvc"),
-              "linux-x64":     ("ubuntu-latest",  "x86_64-unknown-linux-gnu"),
-              "linux-arm64":   ("ubuntu-24.04-arm", "aarch64-unknown-linux-gnu"),
-              "macos-x64":     ("macos-15-intel", "x86_64-apple-darwin"),
-              "macos-arm64":   ("macos-15",       "aarch64-apple-darwin"),
+          sel = sys.argv[1].split()
+          tc = sys.argv[2]
+
+          desktop = {
+              "windows-x64":   ("windows-latest",   "x86_64-pc-windows-msvc",   "x86_64-pc-windows-gnullvm"),
+              "windows-arm64": ("windows-11-arm",   "aarch64-pc-windows-msvc",  "aarch64-pc-windows-gnullvm"),
+              "linux-x64":     ("ubuntu-latest",    "x86_64-unknown-linux-gnu", None),
+              "linux-arm64":   ("ubuntu-24.04-arm", "aarch64-unknown-linux-gnu", None),
+              "macos-x64":     ("macos-15-intel",   "x86_64-apple-darwin",      None),
+              "macos-arm64":   ("macos-15",         "aarch64-apple-darwin",     None),
           }
-          inc = [{"target": t, "os": mapping[t][0], "rust_target": mapping[t][1]}
-                 for t in sys.argv[1].split() if t in mapping]
+
+          inc = []
+          for name in sel:
+              if name not in desktop:
+                  continue
+              os_name, msvc_target, gnullvm_target = desktop[name]
+              if gnullvm_target is None:
+                  inc.append({"target": name, "os": os_name, "rust_target": msvc_target})
+                  continue
+              if tc in ("msvc", "all"):
+                  inc.append({"target": name if tc == "msvc" else name + "-msvc",
+                              "os": os_name, "rust_target": msvc_target})
+              if tc in ("gnullvm", "all"):
+                  inc.append({"target": name if tc == "gnullvm" else name + "-gnullvm",
+                              "os": os_name, "rust_target": gnullvm_target})
           print(json.dumps(inc))
           PY
           )"
@@ -198,16 +227,6 @@ jobs:
           # 兜底一：一个目标都没勾。让每个 target 白跑一遍编译才报错太浪费，这里先拦。
           if [ -z "$SEL" ] && [ "$ANDROID_INCLUDE" = "[]" ]; then
             echo "::error::未选择任何构建目标"
-            exit 1
-          fi
-          # 兜底二：两种形态都关，没有可发布的包。
-          if [ "$PACK_CLI" != "true" ] && [ "$PACK_GUI" != "true" ]; then
-            echo "::error::pack_cli 与 pack_gui 都是关的，没有可发布的包"
-            exit 1
-          fi
-          # Android 只由 GUI 产出，只勾 Android 却关了 pack_gui 等于白跑。
-          if [ "$ANDROID_INCLUDE" != "[]" ] && [ "$PACK_GUI" != "true" ]; then
-            echo "::error::勾了 Android 目标但 pack_gui 是关的（APK 由 GUI 产出）"
             exit 1
           fi
 
