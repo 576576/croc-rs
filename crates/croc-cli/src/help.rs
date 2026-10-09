@@ -104,6 +104,14 @@ struct Doc {
     table: &'static [Flag],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Request {
+    pub topic: Topic,
+    /// 来自 `help` / `h` 命令，而不是 `-h` / `--help` 开关：子命令页在两种调用下
+    /// 列出的开关不同，见 [`appended_flags`]。
+    pub from_command: bool,
+}
+
 /// 从 argv（不含程序名）里认出这次要不要打帮助、打哪一页。
 ///
 /// 规则照 Go 版（urfave/cli）：
@@ -113,7 +121,7 @@ struct Doc {
 /// * 裸 `--` 之后全是位置参数，不再是开关（否则 `send -- -h` 会把一个叫 `-h` 的文件
 ///   当成帮助请求）。
 #[must_use]
-pub fn request(args: &[String]) -> Option<Topic> {
+pub fn request(args: &[String]) -> Option<Request> {
     let flags_end = args.iter().position(|arg| arg == "--").unwrap_or(args.len());
     let head = args.get(..flags_end).unwrap_or(args);
     let wants_help = head.iter().any(|arg| arg == "-h" || arg == "--help");
@@ -127,12 +135,12 @@ pub fn request(args: &[String]) -> Option<Topic> {
     } else {
         first.and_then(Topic::from_command)
     };
-    Some(named.unwrap_or(Topic::App))
+    Some(Request { topic: named.unwrap_or(Topic::App), from_command: help_command })
 }
 
 /// 打一页帮助到 stdout。
-pub fn print(topic: Topic, locale: Locale) {
-    print!("{}", render(topic, locale, Shell::host()));
+pub fn print(request: Request, locale: Locale) {
+    print!("{}", render(request, locale, Shell::host()));
 }
 
 impl Topic {
@@ -152,12 +160,17 @@ impl Topic {
         }
     }
 
-    /// 这一页上列出的开关主名。
+    /// 这一页上列出的开关主名。按 `-h` 那条路径算。
     ///
     /// 只有测试用。
     #[cfg(test)]
     pub(crate) fn listed_flags(self) -> Vec<&'static str> {
-        self.doc().table.iter().filter_map(|flag| flag.names.first().copied()).collect()
+        self.doc()
+            .table
+            .iter()
+            .chain(appended_flags(self, false))
+            .filter_map(|flag| flag.names.first().copied())
+            .collect()
     }
 
     /// 命令名 → 主题。不是命令名就返回 `None`。
@@ -214,12 +227,15 @@ fn section(locale: Locale, name: &str) -> String {
 }
 
 /// 渲染一页帮助。
-fn render(topic: Topic, locale: Locale, shell: Shell) -> String {
+fn render(request: Request, locale: Locale, shell: Shell) -> String {
+    let topic = request.topic;
     let doc = topic.doc();
     let mut out = String::new();
     line(&mut out, &format!("{}:", section(locale, "name")));
     line(&mut out, &format!("   {} - {}", doc.help_name, page_text(locale, doc.page, "usage")));
     line(&mut out, &format!("\n{}:", section(locale, "usage")));
+    let mut listed = flag_rows(doc.table, doc.flags, shell, locale);
+    listed.extend(flag_rows(appended_flags(topic, request.from_command), doc.flags, shell, locale));
     if topic == Topic::App {
         line(&mut out, &format!("   {}", page_text(locale, doc.page, "usage_text")));
         line(&mut out, &format!("\n{}:\n   {VERSION}", section(locale, "version")));
@@ -234,22 +250,24 @@ fn render(topic: Topic, locale: Locale, shell: Shell) -> String {
         }
         line(&mut out, &format!("\n{}:", section(locale, "global_options")));
     } else {
-        line(
-            &mut out,
-            &format!(
-                "   {} {} {}",
-                doc.help_name,
-                section(locale, "command_options"),
-                page_text(locale, doc.page, "args_usage")
-            ),
-        );
+        // 一个开关都不剩时 Go 连 `[command options]` 与 `OPTIONS:` 都不写——
+        // `croc help generate-fish-completion` 就是这种页。
+        let usage = page_text(locale, doc.page, "args_usage");
+        let usage_line = if listed.is_empty() {
+            format!("   {} {usage}", doc.help_name)
+        } else {
+            format!("   {} {} {usage}", doc.help_name, section(locale, "command_options"))
+        };
+        line(&mut out, &usage_line);
         let description = page_text(locale, doc.page, "description");
         if !description.is_empty() {
             line(&mut out, &format!("\n{}:\n   {}", section(locale, "description"), description));
         }
-        line(&mut out, &format!("\n{}:", section(locale, "options")));
+        if !listed.is_empty() {
+            line(&mut out, &format!("\n{}:", section(locale, "options")));
+        }
     }
-    rows(&mut out, "   ", &flag_rows(&doc, shell, locale));
+    rows(&mut out, "   ", &listed);
     out
 }
 
@@ -276,9 +294,9 @@ fn rows(out: &mut String, prefix: &str, rows: &[(String, String)]) {
     }
 }
 
-/// 开关列表 → 两列内容。
-fn flag_rows(doc: &Doc, shell: Shell, locale: Locale) -> Vec<(String, String)> {
-    doc.table
+/// 开关列表 → 两列内容。`page` 是说明文案所在的页（子命令的 `help.<page>.flag.*`）。
+fn flag_rows(flags: &[Flag], page: &str, shell: Shell, locale: Locale) -> Vec<(String, String)> {
+    flags
         .iter()
         .map(|flag| {
             let placeholder = if flag.takes_value { " value" } else { "" };
@@ -288,7 +306,7 @@ fn flag_rows(doc: &Doc, shell: Shell, locale: Locale) -> Vec<(String, String)> {
                 .map(|name| format!("{}{name}{placeholder}", prefix_of(name)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let mut right = text(locale, &format!("help.{}.flag.{}", doc.flags, flag.key));
+            let mut right = text(locale, &format!("help.{page}.flag.{}", flag.key));
             if let Some(default) = flag.default {
                 right.push_str(&format!(" ({}: {default})", text(locale, "help.default")));
             }
@@ -326,6 +344,16 @@ const COMMANDS: &[(&str, &str)] = &[
 const HELP: Flag = boolean!(&["help", "h"], "help");
 const VERSION_FLAG: Flag = boolean!(&["version", "v"], "version");
 
+/// urfave/cli 只把 help / version 追加到 `-h` 那条路径：`croc send -h` 列出 `--help`，
+/// `croc help send` 不列（列宽也跟着变窄）。顶层例外——`croc help` 与 `croc -h` 完全相同。
+const fn appended_flags(topic: Topic, from_command: bool) -> &'static [Flag] {
+    match topic {
+        Topic::App => &[HELP, VERSION_FLAG],
+        _ if from_command => &[],
+        _ => &[HELP],
+    }
+}
+
 const GLOBAL: &[Flag] = &[
     boolean!(&["internal-dns"], "internal-dns"),
     boolean!(&["classic"], "classic"),
@@ -354,8 +382,6 @@ const GLOBAL: &[Flag] = &[
     valued!(&["socks5"], "socks5", env = "SOCKS5_PROXY"),
     valued!(&["connect"], "connect", env = "HTTP_PROXY"),
     valued!(&["throttleUpload"], "throttleUpload"),
-    HELP,
-    VERSION_FLAG,
 ];
 
 const SEND: Doc = Doc {
@@ -382,7 +408,6 @@ const SEND: Doc = Doc {
         valued!(&["store-downloads"], "store-downloads", default = "1"),
         valued!(&["store-expiration"], "store-expiration", default = "\"1d\""),
         valued!(&["store-url"], "store-url", default = "\"https://getcroc.com\"", env = "CROC_STORE_URL"),
-        HELP,
     ],
 };
 
@@ -397,7 +422,6 @@ const STORE: Doc = Doc {
         valued!(&["socks5"], "socks5", env = "SOCKS5_PROXY"),
         valued!(&["connect"], "connect", env = "HTTP_PROXY"),
         boolean!(&["qrcode", "qr"], "qrcode"),
-        HELP,
     ],
 };
 
@@ -412,7 +436,6 @@ const SSH: Doc = Doc {
         boolean!(&["no-reconnect"], "no-reconnect"),
         valued!(&["transport"], "transport", default = "\"auto\""),
         valued!(&["dir"], "dir", default = "\".\""),
-        HELP,
     ],
 };
 
@@ -420,7 +443,7 @@ const UPDATE: Doc = Doc {
     help_name: "croc-rs update",
     page: "update",
     flags: "update",
-    table: &[boolean!(&["check"], "check"), boolean!(&["yes"], "yes"), HELP],
+    table: &[boolean!(&["check"], "check"), boolean!(&["yes"], "yes")],
 };
 
 const RELAY: Doc = Doc {
@@ -443,11 +466,10 @@ const RELAY: Doc = Doc {
         valued!(&["source-join-limit"], "source-join-limit", default = "30", env = "CROC_SOURCE_JOIN_LIMIT"),
         valued!(&["room-join-limit"], "room-join-limit", default = "30", env = "CROC_ROOM_JOIN_LIMIT"),
         valued!(&["join-limit-window"], "join-limit-window", default = "1m0s", env = "CROC_JOIN_LIMIT_WINDOW"),
-        HELP,
     ],
 };
 
-const FISH: Doc = Doc { help_name: "croc-rs generate-fish-completion", page: "fish", flags: "fish", table: &[HELP] };
+const FISH: Doc = Doc { help_name: "croc-rs generate-fish-completion", page: "fish", flags: "fish", table: &[] };
 
 const APP: Doc = Doc { help_name: "croc-rs", page: "app", flags: "global", table: GLOBAL };
 
@@ -468,6 +490,11 @@ mod tests {
         (Topic::FishCompletion, "generate-fish-completion"),
     ];
 
+    /// 按 `-h` 那条路径渲染一页：基准文件就是这么取的。
+    fn dash_h(topic: Topic, locale: Locale) -> String {
+        render(Request { topic, from_command: false }, locale, Shell::Windows)
+    }
+
     /// 英文帮助与 Go 版逐字对照。
     ///
     /// 基准文件是 `croc -h` 的实际输出，只做了两处替换：程序名 → `croc-rs`，
@@ -484,7 +511,7 @@ mod tests {
             let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
             // 仓库里存的是 LF，Windows 上检出可能是 CRLF。
             let expected = expected.replace("\r\n", "\n").replace("<VERSION>", VERSION);
-            assert_eq!(render(*topic, Locale::En, Shell::Windows), expected, "{page}");
+            assert_eq!(dash_h(*topic, Locale::En), expected, "{page}");
         }
     }
 
@@ -495,8 +522,8 @@ mod tests {
     #[test]
     fn the_chinese_pages_have_the_same_shape_as_the_english_ones() {
         for (topic, page) in PAGES {
-            let english = render(*topic, Locale::En, Shell::Windows);
-            let chinese = render(*topic, Locale::Zh, Shell::Windows);
+            let english = dash_h(*topic, Locale::En);
+            let chinese = dash_h(*topic, Locale::Zh);
             assert_eq!(english.lines().count(), chinese.lines().count(), "{page}: 行数不同");
             let columns = |text: &str| {
                 text.lines().filter_map(|line| flag_column(line).map(ToOwned::to_owned)).collect::<Vec<_>>()
@@ -551,18 +578,28 @@ mod tests {
     #[test]
     fn help_is_recognised_anywhere_on_the_line() {
         let argv = |words: &[&str]| words.iter().map(|word| (*word).to_owned()).collect::<Vec<_>>();
-        assert_eq!(request(&argv(&["-h"])), Some(Topic::App));
-        assert_eq!(request(&argv(&["send", "-h"])), Some(Topic::Send));
-        assert_eq!(request(&argv(&["send", "file.txt", "--help"])), Some(Topic::Send));
-        assert_eq!(request(&argv(&["help", "send"])), Some(Topic::Send));
-        assert_eq!(request(&argv(&["h"])), Some(Topic::App));
+        let topic = |words: &[&str]| request(&argv(words)).map(|request| request.topic);
+        assert_eq!(topic(&["-h"]), Some(Topic::App));
+        assert_eq!(topic(&["send", "-h"]), Some(Topic::Send));
+        assert_eq!(topic(&["send", "file.txt", "--help"]), Some(Topic::Send));
+        assert_eq!(topic(&["help", "send"]), Some(Topic::Send));
+        assert_eq!(topic(&["h"]), Some(Topic::App));
         // 与 Go 版一致：子命令只看第一个词，所以这一句打的是顶层帮助。
-        assert_eq!(request(&argv(&["--help", "send"])), Some(Topic::App));
-        assert_eq!(request(&argv(&["send", "file.txt"])), None);
-        assert_eq!(request(&argv(&["secret-code"])), None);
+        assert_eq!(topic(&["--help", "send"]), Some(Topic::App));
+        assert_eq!(topic(&["send", "file.txt"]), None);
+        assert_eq!(topic(&["secret-code"]), None);
         // 裸 `--` 之后是位置参数：`send -- -h` 发的就是一个叫 `-h` 的文件。
-        assert_eq!(request(&argv(&["send", "--", "-h"])), None);
-        assert_eq!(request(&argv(&["send", "--help", "--", "-h"])), Some(Topic::Send));
+        assert_eq!(topic(&["send", "--", "-h"]), None);
+        assert_eq!(topic(&["send", "--help", "--", "-h"]), Some(Topic::Send));
+    }
+
+    /// 请求要记住自己是怎么触发的：子命令页在两种调用下列出的开关不同。
+    #[test]
+    fn requests_remember_how_they_were_triggered() {
+        let argv = |words: &[&str]| words.iter().map(|word| (*word).to_owned()).collect::<Vec<_>>();
+        assert!(!request(&argv(&["send", "-h"])).expect("有请求").from_command);
+        assert!(request(&argv(&["help", "send"])).expect("有请求").from_command);
+        assert!(request(&argv(&["h", "send"])).expect("有请求").from_command);
     }
 
     #[test]
@@ -574,9 +611,38 @@ mod tests {
 
     #[test]
     fn the_env_marker_follows_the_platform() {
-        let out = render(Topic::Relay, Locale::En, Shell::Windows);
+        let out = dash_h(Topic::Relay, Locale::En);
         assert!(out.contains("[%CROC_PORTS%]"), "{out}");
-        let out = render(Topic::Relay, Locale::En, Shell::Posix);
+        let out = render(Request { topic: Topic::Relay, from_command: false }, Locale::En, Shell::Posix);
         assert!(out.contains("[$CROC_PORTS]"), "{out}");
+    }
+
+    #[test]
+    fn the_help_command_omits_the_help_flag() {
+        for topic in [Topic::Send, Topic::Store, Topic::Ssh, Topic::Update, Topic::Relay, Topic::FishCompletion] {
+            let via_flag = dash_h(topic, Locale::En);
+            let via_command = render(Request { topic, from_command: true }, Locale::En, Shell::Windows);
+            assert!(
+                via_flag.lines().any(|line| line.trim_start().starts_with("--help, -h")),
+                "{topic:?}：-h 要列 --help"
+            );
+            assert!(
+                !via_command.lines().any(|line| line.trim_start().starts_with("--help")),
+                "{topic:?}：help 命令列了 --help\n{via_command}"
+            );
+        }
+        assert_eq!(
+            dash_h(Topic::App, Locale::En),
+            render(Request { topic: Topic::App, from_command: true }, Locale::En, Shell::Windows)
+        );
+    }
+
+    /// 一个开关都不剩的页连 `[command options]` 与 `OPTIONS:` 都不写。
+    #[test]
+    fn an_empty_flag_list_drops_the_options_section() {
+        let out = render(Request { topic: Topic::FishCompletion, from_command: true }, Locale::En, Shell::Windows);
+        assert!(out.contains("[arguments...]"), "{out}");
+        assert!(!out.contains("[command options]"), "{out}");
+        assert!(!out.contains("OPTIONS:"), "{out}");
     }
 }

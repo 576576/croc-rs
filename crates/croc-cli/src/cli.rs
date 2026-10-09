@@ -577,8 +577,8 @@ pub fn parse() -> Result<Parsed, ExitCode> {
     // `-h` / `--help` 先自己接住：它要的版式与 clap 的渲染器不是一回事，见 [`crate::help`]。
     // 放在 clap 之前是因为那样连"参数不合法"都不必先过一遍——`croc-rs send -h --typo`
     // 在 Go 版里同样打帮助。
-    if let Some(topic) = help::request(&argv()) {
-        help::print(topic, Locale::detect());
+    if let Some(request) = help::request(&argv()) {
+        help::print(request, Locale::detect());
         return Err(ExitCode::SUCCESS);
     }
     let matches = Cli::command().get_matches();
