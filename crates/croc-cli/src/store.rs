@@ -53,39 +53,9 @@ pub struct StoreReceiveRequest {
     pub proxy: Option<croc_store::proxy::Proxy>,
 }
 
-/// 解析 `90m` / `12h` / `3d` / `2w`。
-///
-/// 与 Go 的 `storeapi.ParseExpiration` 同一套语法：必须是正整数加单位，最短一分钟。
-///
-/// # Errors
-///
-/// 写法不合法时给出人能读的原因。
-pub fn parse_expiration(value: &str) -> Result<time::Duration, String> {
-    let value = value.trim();
-    let (digits, unit) = value.split_at(value.len().saturating_sub(1));
-    if value.len() < 2 {
-        return Err("duration must be a positive whole number followed by m, h, d, or w".to_owned());
-    }
-    let multiplier = match unit {
-        "m" => time::Duration::MINUTE,
-        "h" => time::Duration::HOUR,
-        "d" => time::Duration::days(1),
-        "w" => time::Duration::weeks(1),
-        _ => return Err("duration unit must be m, h, d, or w".to_owned()),
-    };
-    let amount = digits.parse::<u64>().map_err(|_| "duration must be a positive whole number".to_owned())?;
-    if amount == 0 {
-        return Err("duration must be a positive whole number".to_owned());
-    }
-    let seconds = i64::try_from(amount).map_err(|_| format!("duration {value:?} is too large"))?;
-    let duration = multiplier
-        .checked_mul(seconds.try_into().unwrap_or(i32::MAX))
-        .ok_or_else(|| format!("duration {value:?} is too large"))?;
-    if duration < time::Duration::MINUTE {
-        return Err("duration must be at least 1m".to_owned());
-    }
-    Ok(duration)
-}
+// `90m` / `12h` / `3d` / `2w` 的解析属于存储服务协议，实现放在 `croc-store` 里，
+// CLI 与 GUI 共用一份（各写一份迟早会漂）。
+pub use croc_store::parse_expiration;
 
 /// `--downloads` 的校验。
 ///

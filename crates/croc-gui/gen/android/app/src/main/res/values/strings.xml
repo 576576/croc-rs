@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">"crocw-rs"</string>
+    <string name="main_activity_title">"crocw-rs"</string>
+    <string name="transfer_channel_name">"Transfers"</string>
+    <string name="transfer_channel_description">"Progress of running transfers"</string>
+    <string name="transfer_notification_title">"Transferring"</string>
+    <string name="transfer_notification_text">"croc is transferring files in the background."</string>
+</resources>

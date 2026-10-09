@@ -1,0 +1,33 @@
+{
+  "name": "crocw-rs-ui",
+  "private": true,
+  "packageManager": "pnpm@12.10.1",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Frontend for crocw-rs. Visual baseline: getcroc.com (croc web).",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-clipboard-manager": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "lucide-react": "^1",
+    "qrcode.react": "^4",
+    "react": "^19.3",
+    "react-dom": "^19.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3",
+    "@types/react-dom": "^19.3",
+    "@vitejs/plugin-react": "^6",
+    "typescript": "^5",
+    "vite": "^8"
+  }
+}

@@ -25,7 +25,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -38,12 +38,12 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
       - name: 安装 Linux 系统依赖
         # `croc-gui` 依赖 tauri，而 tauri 在 Linux 上要链接 GTK / WebKitGTK / glib。
         # 不装的话 `cargo clippy --workspace` 会在 `glib-sys` 的 build script 上直接失败——
@@ -61,10 +61,10 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
       - name: 安装 Linux 系统依赖
         # `croc-gui` 依赖 tauri，而 tauri 在 Linux 上要链接 GTK / WebKitGTK / glib。
         # 不装的话 `cargo clippy --workspace` 会在 `glib-sys` 的 build script 上直接失败——
@@ -81,10 +81,10 @@ jobs:
     name: 架构门禁
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
       - name: 纯 crate 不得引入 IO
         # croc-siec / croc-pake / croc-protocol 必须保持 sans-io：不得出现 tokio /
         # std::fs / std::net / std::process / std::thread / Instant::now / 随机源。
@@ -95,13 +95,13 @@ jobs:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           # 与根 Cargo.toml 的 rust-version 一致。浮动到最新 stable 会让 MSRV 失去意义。
           toolchain: '1.98'
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
       - name: 安装 Linux 系统依赖
         # `croc-gui` 依赖 tauri，而 tauri 在 Linux 上要链接 GTK / WebKitGTK / glib。
         # 不装的话 `cargo clippy --workspace` 会在 `glib-sys` 的 build script 上直接失败——

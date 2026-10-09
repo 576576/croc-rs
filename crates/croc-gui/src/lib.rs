@@ -13,11 +13,23 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing))]
 
-pub mod commands;
-pub mod state;
+// 命令返回的错误与结束摘要走同一套 locale 文件（`locales/*.yml`），键名与前端的
+// `ui/src/locales.ts` 对齐。语言由前端用 `set_locale` 切换。
+rust_i18n::i18n!("locales", fallback = "en");
 
-pub use commands::{ReceiveArgs, SendArgs, cancel_transfer, generate_code, list_transfers, receive, send};
+pub mod android;
+pub mod commands;
+pub mod offers;
+pub mod state;
+pub mod store;
+
+pub use commands::{
+    FinishedEvent, OfferEvent, OfferFile, ProgressEvent, ReceiveArgs, SendArgs, cancel_transfer, export_file,
+    generate_code, list_transfers, receive, respond_to_offer, send, set_locale, share_file,
+};
+pub use offers::OfferRegistry;
 pub use state::{TransferId, TransferRegistry, TransferStatus};
+pub use store::{StoreArgs, StoredResult, store_upload};
 
 /// 前端事件名。
 ///
@@ -28,10 +40,48 @@ pub mod event {
     pub const PROGRESS: &str = "croc://progress";
     /// 传输结束（成功或失败）。
     pub const FINISHED: &str = "croc://finished";
+    /// 收到清单，等用户决定收不收。
+    pub const OFFER: &str = "croc://offer";
 }
 
-/// 装 tracing。Tauri 应用里不装 subscriber，由 `main.rs` 决定——库 crate 装
-/// subscriber 会让嵌入它的宿主失去控制权。
+/// 组装 Tauri 应用。桌面入口（`main.rs`）与移动端入口（[`run`]）共用这一个 Builder，
+/// 免得两条入口各自进化出一份命令表。
+pub fn app() -> tauri::Builder<tauri::Wry> {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(std::sync::Arc::new(TransferRegistry::new()))
+        .manage(std::sync::Arc::new(OfferRegistry::new()))
+        .invoke_handler(tauri::generate_handler![
+            generate_code,
+            send,
+            receive,
+            cancel_transfer,
+            list_transfers,
+            respond_to_offer,
+            set_locale,
+            store_upload,
+            export_file,
+            share_file,
+        ])
+}
+
+/// 移动端入口。名字与所在 crate 决定了 JNI 的符号名，由 Tauri 的 `android_entry_point`
+/// 体系按下 [Android 工程的包名](https://v2.tauri.app/develop/gradle-setup/) 反查，
+/// 所以不要改它的可见性与签名。
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+// 移动端入口没有返回错误的出口（宿主是 Activity），出错时只能 panic 给系统。
+#[allow(clippy::panic, reason = "移动端入口没有返回错误的出口")]
+pub fn run() {
+    init_tracing();
+    if let Err(error) = app().run(tauri::generate_context!()) {
+        panic!("crocw-rs: {error}");
+    }
+}
+
+/// 装 tracing。由入口决定要不要装：库 crate 里装了 subscriber，嵌入它的宿主就失去
+/// 控制权了。
 pub fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));

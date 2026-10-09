@@ -67,12 +67,12 @@ jobs:
       CROC_VERSION_NAME: ${{ inputs.version_name }}
       CROC_VERSION_COUNT: ${{ inputs.count }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: ${{ matrix.target }}
       - name: 安装 Linux 系统依赖
@@ -86,14 +86,39 @@ jobs:
       - name: 构建 CLI
         if: inputs.pack_cli
         run: cargo build --release -p croc-cli --target ${{ matrix.rust_target }}
+      - name: 安装 pnpm
+        if: inputs.pack_gui
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - name: 安装 Node
+        if: inputs.pack_gui
+        uses: actions/setup-node@v7.1.0
+        with:
+          # 不钉具体大版本：22 已经走过 EOL，钉住的版本只会等着自己过期。
+          node-version: 'lts/*'
+          cache: pnpm
+          cache-dependency-path: crates/croc-gui/ui/pnpm-lock.yaml
+      - name: 构建前端
+        if: inputs.pack_gui
+        # `tauri.conf.json` 的 `frontendDist` 指向 `ui/dist`，而 `cargo build` 不会跑
+        # `beforeBuildCommand`——少了这一步，产物是一个嵌着不存在目录的二进制：**勉强
+        # 能启动，界面全白**，而且这条差异只在运行时才看得出来。
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd crates/croc-gui/ui
+          pnpm install --frozen-lockfile
+          pnpm run build
+          test -n "$(ls -A dist)" || { echo "ui/dist 是空的"; exit 1; }
       - name: 构建 GUI
         if: inputs.pack_gui
         shell: bash
         # **故意不用 `cargo tauri build`。** 那个命令要先 `cargo install tauri-cli`
         # ——从源码编一整套 clap + cargo-mobile2，实测每个 target 多花 12–15 分钟，
-        # 而它替我们做的只有两件：跑前端构建（我们没有，`ui/` 是静态页）和打安装器
-        # （我们传 `--no-bundle`）。配置校验与资源内嵌由 `tauri-build`（`build.rs`）
-        # 在编译期做完了，所以直接 `cargo build` 的产物一模一样。
+        # 而它替我们做的只有两件：跑前端构建（上一步已经做了，与它跑的是同一个
+        # 命令）和打安装器（我们传 `--no-bundle`）。配置校验与资源内嵌由 `tauri-build`
+        # （`build.rs`）在编译期做完了，所以直接 `cargo build` 的产物一模一样。
         #
         # Android 绕不开 CLI（要生成 Gradle 工程），见下面的 android job。
         run: cargo build --release -p croc-gui --target ${{ matrix.rust_target }}
@@ -157,7 +182,7 @@ jobs:
             echo "artifact_name=$BASE"
           } >> "$GITHUB_OUTPUT"
       - name: 上传构建产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ steps.pack.outputs.artifact_name }}
           path: ${{ steps.pack.outputs.artifacts }}
@@ -177,22 +202,22 @@ jobs:
       CROC_VERSION_NAME: ${{ inputs.version_name }}
       CROC_VERSION_COUNT: ${{ inputs.count }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: android-${{ matrix.target }}
       - name: 安装 JDK
         # Tauri 2 的 Android 模板用 AGP 8.x，需要 JDK 17+。
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6.0.1
         with:
           distribution: temurin
           java-version: '21'
       - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4.0.4
         with:
           # NDK 必须显式装：预装列表里没有，而 Tauri 的 gradle 模板会引用它。
           # 逗号分隔的**单个**字符串。写成三个并列的引号会直接让 YAML 解析失败——
@@ -242,7 +267,7 @@ jobs:
             echo "artifact_name=$NAME"
           } >> "$GITHUB_OUTPUT"
       - name: 上传构建产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ steps.pack.outputs.artifact_name }}
           path: ${{ steps.pack.outputs.artifacts }}

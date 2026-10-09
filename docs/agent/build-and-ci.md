@@ -73,6 +73,12 @@
 
 > **crate 名不带 `-rs` 后缀**（`croc-cli` / `croc-gui`），`-rs` 只出现在**二进制名**上。
 
+> **编 `crocw-rs` 之前必须先编前端**：`tauri.conf.json` 的 `frontendDist` 指向
+> `crates/croc-gui/ui/dist`，而 `cargo build` 不会替你跑 `beforeBuildCommand`。本地是
+> `cd crates/croc-gui/ui && pnpm install && pnpm run build`（pnpm 12，由 `packageManager`
+> 字段钉住版本）；CI 里是 GUI job 的「构建前端」这一步（`build.yml`），用
+> `pnpm install --frozen-lockfile`。少了这一步产物也能启动，只是界面全白。
+
 ```
 croc-rs-{VER}{通道段}-{TGT}.{ext}      ← 桌面：包里同时装 croc-rs 与 crocw-rs
 crocw-rs-{VER}{通道段}-{TGT}.apk       ← Android：只有 GUI，本来就是单独一个文件

@@ -1,0 +1,19 @@
+# 界面文案（简体中文）。
+
+gui:
+  error:
+    no_paths: "至少选一个文件。"
+    transfer_finished: "%{id} 已经结束了。"
+    bad_curve: "%{name} 不是可用的曲线。"
+    bad_code: "%{code} 不是合法的口令码。"
+    relay_pool: "这个口令码落不到公共中继池上。"
+    no_offer: "这次传输没有在等待决定。"
+    mobile_only: "仅 Android 可用。"
+  summary:
+    send: "已发送 %{files} 个文件（%{bytes} 字节）。"
+    receive: "新收 %{received} 个（%{bytes} 字节），跳过 %{skipped} 个。"
+  status:
+    transferring: "正在传 %{name}。"
+    file_done: "完成 %{name}。"
+  offer:
+    title: "收到传输请求"

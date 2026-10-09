@@ -15,15 +15,17 @@ use croc_core::codephrase;
 use croc_core::policy::Preferences;
 use croc_engine::{EngineError, EngineEvent, ReceiveRequest, SendRequest};
 use croc_pake::CurveKind;
+use croc_protocol::SenderInfo;
+use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use crate::event;
+use crate::offers::OfferRegistry;
 use crate::state::{TransferId, TransferRegistry};
 
-/// 默认中继地址。
-const DEFAULT_RELAY: &str = "croc.schollz.com:9009";
+/// `--relay6` 的默认值：与 CLI 同一个 IPv6 中继，和 `--relay` 一起做 Happy Eyeballs。
 const DEFAULT_RELAY6: &str = "croc6.schollz.com:9009";
 /// 默认中继密码。
 const DEFAULT_PASSPHRASE: &str = "pass123";
@@ -83,6 +85,9 @@ pub struct SendArgs {
     /// 关掉压缩。
     #[serde(default)]
     pub no_compress: bool,
+    /// 直接发一段文本（`croc send --text` 的等价物）。给了它，`paths` 可以不填。
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 /// 接收参数。
@@ -109,6 +114,60 @@ pub struct ReceiveArgs {
     /// 同名时自动改名。
     #[serde(default)]
     pub rename: bool,
+}
+
+impl ProgressEvent {
+    /// 只有一句状态、没有字节数的进展（存储模式的状态播报用这个）。
+    pub fn plain(id: &str, direction: &str, status: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            direction: direction.to_owned(),
+            status: status.to_owned(),
+            file: None,
+            transferred: 0,
+            total: 0,
+        }
+    }
+}
+
+/// 推给前端的清单确认请求。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferEvent {
+    /// 哪次传输。
+    pub id: TransferId,
+    /// 清单里的文件。
+    pub files: Vec<OfferFile>,
+    /// 还要建的空目录数。
+    pub folders: i64,
+    /// 总量（字节）。
+    pub total: u64,
+}
+
+/// 清单里的一个文件，界面只需要名字与大小。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferFile {
+    /// 文件名（不含目录）。
+    pub name: String,
+    /// 字节数。
+    pub size: u64,
+}
+
+impl OfferEvent {
+    /// 把发送方的清单折成界面要的形状。
+    pub fn from_manifest(id: &str, info: &SenderInfo) -> Self {
+        Self {
+            id: id.to_owned(),
+            files: info
+                .files_to_transfer
+                .iter()
+                .map(|entry| OfferFile { name: entry.name.clone(), size: u64::try_from(entry.size).unwrap_or(0) })
+                .collect(),
+            folders: info.total_number_folders,
+            total: info.files_to_transfer.iter().filter_map(|entry| u64::try_from(entry.size).ok()).sum(),
+        }
+    }
 }
 
 /// 生成（或校验）一个口令码。
@@ -142,21 +201,30 @@ pub async fn send(
     registry: State<'_, Arc<TransferRegistry>>,
     args: SendArgs,
 ) -> Result<TransferId, String> {
-    if args.paths.is_empty() {
-        return Err("至少选一个文件".to_owned());
+    let text = args.text.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let mut paths = args.paths;
+    if let Some(text) = text {
+        // `--text` 的等价物：文本先落成 `croc-stdin-*` 临时文件，再走正常发送——
+        // 接收方靠这个名字前缀认出"这次是文本"（croc_engine::text）。
+        let artifact = croc_engine::text::write_text_artifact(text)?;
+        paths.push(artifact.to_string_lossy().into_owned());
+    }
+    if paths.is_empty() {
+        return Err(t!("gui.error.no_paths").to_string());
     }
     let curve = parse_curve(args.curve.as_deref())?;
     let (code, components) = resolve_code(args.code.as_deref())?;
+    let relay = pick_relay(&code, args.relay)?;
     let id = new_id("send");
 
     let events = bridge(&app, &id, "send");
     let request = SendRequest {
-        relay: args.relay.unwrap_or_else(|| DEFAULT_RELAY.to_owned()),
+        relay,
         relay_password: args.pass.unwrap_or_else(|| DEFAULT_PASSPHRASE.to_owned()),
         components,
         code,
         curve,
-        paths: args.paths.into_iter().map(PathBuf::from).collect(),
+        paths: paths.into_iter().map(PathBuf::from).collect(),
         // GUI 还没有排除项与 .gitignore 的输入口，先给空。
         exclude: Vec::new(),
         exclude_file: Vec::new(),
@@ -168,8 +236,7 @@ pub async fn send(
         relay6: DEFAULT_RELAY6.to_owned(),
         ip: String::new(),
         ask: false,
-        // GUI 没有"发一段文本"的输入口。
-        sending_text: false,
+        sending_text: text.is_some(),
         // GUI 还没有 DNS 与限速的输入口。
         internal_dns: false,
         throttle_upload: None,
@@ -189,7 +256,7 @@ pub async fn send(
     spawn(app, registry.inner().clone(), id.clone(), "send", cancel, move |token| async move {
         croc_engine::send(request, token)
             .await
-            .map(|summary| format!("已发送 {} 个文件（{} 字节）", summary.files, summary.bytes))
+            .map(|summary| t!("gui.summary.send", files = summary.files, bytes = summary.bytes).to_string())
     });
     Ok(id)
 }
@@ -203,15 +270,35 @@ pub async fn send(
 pub async fn receive(
     app: AppHandle,
     registry: State<'_, Arc<TransferRegistry>>,
+    offers: State<'_, Arc<OfferRegistry>>,
     args: ReceiveArgs,
 ) -> Result<TransferId, String> {
     let code = args.code.clone();
     let components = codephrase::parse(&code).map_err(|error| error.to_string())?;
+    let relay = pick_relay(&code, args.relay)?;
     let id = new_id("recv");
+
+    // GUI 里"收不收"由清单确认卡决定：清单推给前端，答案由 `respond_to_offer` 投递。
+    // 一次接收只会走到清单确认这一步一次，所以 `wait` 的那一端放在 `Option` 里等着被
+    // 取走就够了——真被调用第二次时，取不到它就按"拒绝"处理。
+    let answer = Arc::new(std::sync::Mutex::new(Some(offers.wait(&id))));
+    let offer_app = app.clone();
+    let offer_id = id.clone();
+    let confirm_async = Some(Arc::new(move |info: &SenderInfo| {
+        let _ = offer_app.emit(event::OFFER, OfferEvent::from_manifest(&offer_id, info));
+        let mut slot = answer.lock().ok();
+        let pending = slot.as_mut().and_then(|slot| slot.take());
+        Box::pin(async move {
+            match pending {
+                Some(answer) => answer.await.unwrap_or(false),
+                None => false,
+            }
+        }) as croc_engine::ConfirmFuture
+    }) as croc_engine::AsyncConfirmSink);
 
     let events = bridge(&app, &id, "receive");
     let request = ReceiveRequest {
-        relay: args.relay.unwrap_or_else(|| DEFAULT_RELAY.to_owned()),
+        relay,
         relay_password: args.pass.unwrap_or_else(|| DEFAULT_PASSPHRASE.to_owned()),
         components,
         curve: parse_curve(args.curve.as_deref())?,
@@ -228,19 +315,62 @@ pub async fn receive(
         internal_dns: false,
         no_multi: false,
         machine_id: machine_id(),
-        // GUI 里"收不收"由前端的确认弹窗决定，这里给一个恒真的回调；
-        // 真正的交互在清单到达之前就完成了（用户是主动点"接收"的）。
         confirm: None,
+        confirm_async,
         events,
     };
 
     let cancel = registry.register(id.clone(), "receive");
+    let offers_to_clear = offers.inner().clone();
+    let id_to_clear = id.clone();
     spawn(app, registry.inner().clone(), id.clone(), "receive", cancel, move |token| async move {
-        croc_engine::receive(request, token)
-            .await
-            .map(|summary| format!("新收 {} 个（{} 字节），跳过 {}", summary.received, summary.bytes, summary.skipped))
+        let result = croc_engine::receive(request, token).await;
+        // 无论成败都要把等待中的决策端收掉，否则取消后的一次多余的"接受"会留在表里。
+        offers_to_clear.abandon(&id_to_clear);
+        result.map(|summary| {
+            t!("gui.summary.receive", received = summary.received, bytes = summary.bytes, skipped = summary.skipped)
+                .to_string()
+        })
     });
     Ok(id)
+}
+
+/// 回答一次清单确认。
+///
+/// # Errors
+///
+/// 这次传输没有在等决策时返回错误——前端据此提示用户，而不是静默什么都不做。
+#[tauri::command]
+pub fn respond_to_offer(offers: State<'_, Arc<OfferRegistry>>, id: String, accept: bool) -> Result<(), String> {
+    if offers.respond(&id, accept) { Ok(()) } else { Err(t!("gui.error.no_offer").to_string()) }
+}
+
+/// 让用户挑一个位置另存（Android 的 SAF）。
+///
+/// # Errors
+///
+/// 非 Android 平台返回错误：桌面端有系统文件管理器，不需要这一层。
+#[tauri::command]
+pub fn export_file(path: String) -> Result<(), String> {
+    crate::android::export_file(&path);
+    if cfg!(target_os = "android") { Ok(()) } else { Err(t!("gui.error.mobile_only").to_string()) }
+}
+
+/// 把文件交给别的应用（系统分享）。
+///
+/// # Errors
+///
+/// 非 Android 平台返回错误。
+#[tauri::command]
+pub fn share_file(path: String) -> Result<(), String> {
+    crate::android::share_file(&path);
+    if cfg!(target_os = "android") { Ok(()) } else { Err(t!("gui.error.mobile_only").to_string()) }
+}
+
+/// 切换界面语言。前端每次切语言都调一次，好让后端的错误与摘要跟着变。
+#[tauri::command]
+pub fn set_locale(locale: String) {
+    rust_i18n::set_locale(&locale);
 }
 
 /// 取消一次传输。
@@ -249,8 +379,14 @@ pub async fn receive(
 ///
 /// 传输已经结束时返回错误——前端据此提示用户，而不是静默什么都不做。
 #[tauri::command]
-pub fn cancel_transfer(registry: State<'_, Arc<TransferRegistry>>, id: String) -> Result<(), String> {
-    if registry.cancel(&id) { Ok(()) } else { Err(format!("{id} 已经结束了")) }
+pub fn cancel_transfer(
+    registry: State<'_, Arc<TransferRegistry>>,
+    offers: State<'_, Arc<OfferRegistry>>,
+    id: String,
+) -> Result<(), String> {
+    // 取消要连清单确认一起放开：还挂在"等用户按按钮"上的传输收不到取消令牌。
+    offers.abandon(&id);
+    if registry.cancel(&id) { Ok(()) } else { Err(t!("gui.error.transfer_finished", id = id).to_string()) }
 }
 
 /// 列出还在跑的传输。
@@ -297,18 +433,23 @@ fn bridge(app: &AppHandle, id: &str, direction: &str) -> croc_engine::EventSink 
                     *guard = Some(name.clone());
                 }
                 total.fetch_add(size, Ordering::Relaxed);
-                snapshot(format!("正在传 {name}"), Some(name))
+                snapshot(t!("gui.status.transferring", name = name).to_string(), Some(name))
             }
             EngineEvent::Progress { transferred: now, total: sum } => {
                 transferred.store(now, Ordering::Relaxed);
                 total.store(sum, Ordering::Relaxed);
                 snapshot(String::new(), file.lock().ok().and_then(|guard| guard.clone()))
             }
-            EngineEvent::FileDone { name } => snapshot(format!("完成 {name}"), Some(name)),
+            EngineEvent::FileDone { name } => snapshot(t!("gui.status.file_done", name = name).to_string(), Some(name)),
             // `EngineEvent` 是 `#[non_exhaustive]`：将来新增的事件默认不上报，
             // 免得一个没设计过的事件把前端弄懵。
             _ => return,
         };
+        if !payload.status.is_empty() {
+            // Android 上进度还要写进前台服务的通知：界面退到后台就看不见了，通知是那时
+            // 唯一的窗口。桌面端这几个函数是空的。
+            crate::android::notify_progress("crocw-rs", &payload.status);
+        }
         let _ = app.emit(event::PROGRESS, payload);
     })
 }
@@ -326,8 +467,14 @@ fn spawn<F, Fut>(
     Fut: std::future::Future<Output = Result<String, EngineError>> + Send + 'static,
 {
     tauri::async_runtime::spawn(async move {
+        // Android 上要挂前台服务：界面退到后台之后，没有它系统会直接把传输掐掉。
+        crate::android::start_service();
         let result = run(cancel).await;
         registry.unregister(&id);
+        // 队列空了才收：并发传输时不能因为其中一个结束就把服务关掉。
+        if registry.list().is_empty() {
+            crate::android::stop_service();
+        }
         let payload = match result {
             Ok(summary) => {
                 FinishedEvent { id, direction: direction.to_owned(), ok: true, error: None, summary: Some(summary) }
@@ -345,6 +492,29 @@ fn spawn<F, Fut>(
     });
 }
 
+/// 挑一台中继。
+///
+/// 用户在设置里给了就用给的；没给则按码落到公共中继池的某一台上——与 CLI 的
+/// `relay_pool::index_of` 是同一条判据（`sha256(码) mod 池长`）。少了这一步，GUI 发出的
+/// 码会让默认配置的 CLI 去另一台机器上等，两边各守一个确实存在、但也是真的空的房间，
+/// 症状是接收端一直卡在认证而不是报错。
+///
+/// # Errors
+///
+/// 码落不到池上时返回错误（池为空或索引窄化失败）。
+fn pick_relay(code: &str, requested: Option<String>) -> Result<String, String> {
+    if let Some(relay) = requested.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(relay.to_owned());
+    }
+    let pool = croc_engine::public_relay::RELAYS;
+    let Ok(count) = u32::try_from(pool.len()) else {
+        return Err(t!("gui.error.relay_pool").to_string());
+    };
+    let index = codephrase::relay_index(code, count).map_err(|_| t!("gui.error.relay_pool").to_string())?;
+    let Ok(index) = usize::try_from(index) else { return Err(t!("gui.error.relay_pool").to_string()) };
+    pool.get(index).copied().map(str::to_owned).ok_or_else(|| t!("gui.error.relay_pool").to_string())
+}
+
 fn parse_curve(name: Option<&str>) -> Result<CurveKind, String> {
     CurveKind::from_name(name.unwrap_or("p256")).map_err(|error| error.to_string())
 }
@@ -355,7 +525,7 @@ fn resolve_code(requested: Option<&str>) -> Result<(String, codephrase::Componen
     Ok((code, components))
 }
 
-fn new_id(prefix: &str) -> TransferId {
+pub(crate) fn new_id(prefix: &str) -> TransferId {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())

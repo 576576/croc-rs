@@ -25,6 +25,15 @@ use crate::{EngineEvent, EventSink, emit};
 /// 在命令行参数解析阶段问是问不出来的。
 pub type ConfirmSink = Arc<dyn Fn(&SenderInfo) -> bool + Send + Sync>;
 
+/// [`AsyncConfirmSink`] 的返回值。
+pub type ConfirmFuture = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
+
+/// 需要等用户点按钮的调用方（GUI）用的确认回调。
+///
+/// CLI 那边的终端交互是同步的，配 [`ConfirmSink`] 就够；GUI 要等界面上的按钮，而在一个
+/// tokio worker 上同步阻塞会让整个 runtime 停摆，所以给一条 async 路径。
+pub type AsyncConfirmSink = Arc<dyn Fn(&SenderInfo) -> ConfirmFuture + Send + Sync>;
+
 /// 一次接收所需的全部参数。
 pub struct ReceiveRequest {
     /// 中继地址（`host:port`）。
@@ -64,6 +73,10 @@ pub struct ReceiveRequest {
     pub machine_id: String,
     /// 收到清单后问一句；`None` 表示直接接受。
     pub confirm: Option<ConfirmSink>,
+    /// 收到清单后异步地问一句；`None` 表示直接接受。
+    ///
+    /// 与 [`confirm`](Self::confirm) 二选一：两者都给了时以 [`confirm`](Self::confirm) 为准。
+    pub confirm_async: Option<AsyncConfirmSink>,
     /// 事件出口。
     pub events: EventSink,
 }
@@ -228,7 +241,13 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
         // 拿到清单 ⇒ 问用户 ⇒ 规划每个文件。
         if session.stage() == croc_core::Stage::AwaitingDecision {
             let info = manifest.clone().ok_or_else(|| EngineError::Config("no manifest to decide on".to_owned()))?;
-            let accept = request.confirm.as_ref().is_none_or(|confirm| confirm(&info));
+            let accept = match &request.confirm {
+                Some(confirm) => confirm(&info),
+                None => match &request.confirm_async {
+                    Some(ask) => ask(&info).await,
+                    None => true,
+                },
+            };
             if accept {
                 let (plan, planned) = plan_files(&request, &info)?;
                 summary.skipped = planned.skipped;

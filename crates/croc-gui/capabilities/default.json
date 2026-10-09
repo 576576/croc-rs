@@ -1,7 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "crocw-rs 默认能力：只开核心 IPC。文件选择、剪贴板等按需再加，默认最小权限。",
+  "description": "crocw-rs 的能力：核心 IPC + 自绘标题栏要的窗口控制 + 文件选择 / 剪贴板 / 打开路径。",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "dialog:default",
+    "clipboard-manager:default",
+    "opener:default"
+  ]
 }

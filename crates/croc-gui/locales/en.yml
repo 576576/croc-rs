@@ -1,0 +1,19 @@
+# User-facing strings (English).
+
+gui:
+  error:
+    no_paths: "Pick at least one file."
+    transfer_finished: "%{id} has already finished."
+    bad_curve: "%{name} is not a curve."
+    bad_code: "%{code} is not a valid code phrase."
+    relay_pool: "Cannot place this code phrase on the public relay pool."
+    no_offer: "This transfer is not waiting for a decision."
+    mobile_only: "Only available on Android."
+  summary:
+    send: "Sent %{files} files (%{bytes} bytes)."
+    receive: "Received %{received} (%{bytes} bytes), skipped %{skipped}."
+  status:
+    transferring: "Transferring %{name}."
+    file_done: "Done: %{name}."
+  offer:
+    title: "Incoming transfer"

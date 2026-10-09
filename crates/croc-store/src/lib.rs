@@ -19,9 +19,12 @@ mod http;
 
 pub mod client;
 pub mod crypto;
+pub mod expiration;
 pub mod manifest;
 pub mod proxy;
 pub mod share;
+
+pub use expiration::parse_expiration;
 
 /// 协议名。同时用作 CLI token 的前缀与 HKDF 的 info 前缀。
 pub const PROTOCOL: &str = "croc-store-v1";

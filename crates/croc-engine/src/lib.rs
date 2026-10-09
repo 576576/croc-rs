@@ -40,10 +40,11 @@ pub mod public_relay;
 pub mod receive;
 pub mod relay;
 pub mod send;
+pub mod text;
 pub mod throttle;
 
 pub use error::EngineError;
-pub use receive::{ReceiveRequest, Summary as ReceiveSummary, receive};
+pub use receive::{AsyncConfirmSink, ConfirmFuture, ConfirmSink, ReceiveRequest, Summary as ReceiveSummary, receive};
 pub use send::{SendRequest, Summary as SendSummary, send};
 
 use std::sync::Arc;

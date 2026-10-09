@@ -5,7 +5,7 @@
 
 | 计划 | 状态 | 说明 |
 |------|------|------|
-| [gui.md](gui.md) | [PENDING] | Tauri 2 GUI（产物 `crocw-rs`）。后端命令齐全，前端有一套无构建的原生三文件；UI 基准改为 getcroc.com，待换成 Vite + React + TS |
+| [gui.md](gui.md) | [IN PROGRESS] | Tauri 2 GUI（产物 `crocw-rs`）。G0–G10 已落地：Vite + React + TS 前端、中英 i18n、中继路由修复、清单确认、进度 ETA、二维码与复制、CI 前端构建、文本直传、存储模式、Android 宿主工程与 Rust→Kotlin 桥。**剩 G11（SSH 共享终端）**：数据面未做，界面上有显式占位 |
 | [tailscale.md](tailscale.md) | [PENDING] | Tailscale / Tailcat 数据面。等上游 tailcat-rs；数据面抽象本身尚未实现 |
 
 > 标记约定：`[PENDING]` = **尚未实现**。参考文档里描述未实现能力的段落也用它标注，

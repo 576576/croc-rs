@@ -22,13 +22,24 @@ workspace = true
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# Rust → Kotlin 的桥（`src/android.rs`）。只有 Android 要，桌面端不该把它们链接进来。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+
 [dependencies]
 croc-protocol.workspace = true
 croc-core.workspace = true
 croc-engine.workspace = true
 croc-pake.workspace = true
 croc-net.workspace = true
+croc-store.workspace = true
+time.workspace = true
 tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+rust-i18n = "4"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

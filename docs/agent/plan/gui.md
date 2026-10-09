@@ -1,4 +1,8 @@
-# [PENDING] GUI 计划（Tauri 2，产物 `crocw-rs`）
+# [IN PROGRESS] GUI 计划（Tauri 2，产物 `crocw-rs`）
+
+> 进度：G0–G10 均已落地（前端工程、中继路由修复、清单确认、设置持久化、进度与 ETA、
+> 二维码与复制、CI 前端构建、文本直传、存储模式、Android 宿主工程与 Rust→Kotlin 桥）。
+> **G11（SSH 共享终端）未实现**：数据面还没有，界面上留了显式占位（第四格工作区）。
 
 > 目标平台：Windows / macOS / Linux / **Android**（iOS 列为 stretch）。
 > 后端复用 `croc-core` + `croc-engine`，与 CLI 同源。产物名 **`crocw-rs`**（w = window），与 CLI
@@ -20,21 +24,35 @@
 事件桥在 `commands.rs` 的 `bridge()`：把 `EngineEvent` 折成 `ProgressEvent` 后 `emit("croc://progress")`，
 结束时 `emit("croc://finished")`。
 
-### 0.2 前端（`crates/croc-gui/ui`，302 行，无构建链）
+G2 之后新增两处：`offers.rs`（清单确认的一次性决策通道，带三个测试）与 `locales/*.yml`
+（rust-i18n，键名与前端对齐，由 `set_locale` 切换）。
 
-| 文件 | 行数 | 内容 |
-|------|------|------|
-| `index.html` | 90 | 头部 + 三个标签页（发送 / 接收 / 设置）+ 传输列表 |
-| `style.css` | 71 | CSS 变量主题（只跟 `prefers-color-scheme`）、圆角 6px、蓝色强调色 `--accent: #2d7d9a` |
-| `main.js` | 141 | `invoke` / `listen` 封装、标签页切换、传输列表渲染与取消 |
+### 0.2 前端（`crates/croc-gui/ui`，已换成 Vite + React + TS）
 
-`tauri.conf.json` 的 `frontendDist` 直接指向 `ui`（静态目录）。
+| 路径 | 内容 |
+|------|------|
+| `index.html` | 单页挂载点；`<html data-theme>` 在 React 之前定好，避免首帧闪白 |
+| `src/main.tsx` | `LocaleProvider` + `App` + `styles.css` |
+| `src/App.tsx` | 工作区状态、三个事件的监听、发送 / 接收命令的调用 |
+| `src/locales.ts` | `en` / `zh-CN` 两套文案 |
+| `src/components/*` | `TitleBar` · `WorkspaceSwitch` · `SendPanel` · `ReceivePanel` · `FileList` · `SendCode` · `OfferCard` · `ProgressBlock` · `SettingsGrid` · `TransfersList` · `StatusDot` |
+| `src/styles.css` | §1.1 的令牌 + §1.4 的组件规则（从上游 `styles.css` 按类名抽出）+ 少量自补 |
+
+包管理器是 **pnpm 12**（`packageManager` 字段钉住版本，锁文件是 `pnpm-lock.yaml`）。
+`tauri.conf.json` 的 `frontendDist` 指向 `ui/dist`，`beforeBuildCommand` 是
+`pnpm --prefix ui run build`。
 
 ### 0.3 权限
 
-`capabilities/default.json` 只有 `core:default`。没有 dialog / opener / clipboard / sql / store 任何插件。
+`capabilities/default.json` 除 `core:default` 外，给了自绘标题栏（`core:window:allow-start-dragging`
+/ `allow-minimize` / `allow-toggle-maximize` / `allow-close`）、事件监听（`core:event:allow-listen`）
+与三个插件（`dialog` / `clipboard-manager` / `opener`）的默认权限集。
 
-### 0.4 阻断级缺陷（G1 之前必须修）
+### 0.4 阻断级缺陷（G1，已修）
+
+第一条已经在 `pick_relay`（`commands.rs`）里按上面那条判据修掉：用户没给中继就
+`codephrase::relay_index(码, 池长)` 折到 `croc_engine::public_relay::RELAYS`，给了就以用户的为准。
+第二、三条分别在 G1（文件选择器 + `tauri://file-drop`）与 G2（清单确认，见 §4.1）里补上。
 
 | 缺陷 | 事实 | 后果 |
 |------|------|------|
@@ -108,7 +126,7 @@ localStorage 在 Tauri 的 WebView 里照常可用，所以这段可以整体搬
 | 二维码 | `.share-qr` | 可折叠，默认收起 |
 | 清单确认卡 | `.offer` | `1px solid var(--foreground)`，背景 `--panel-tint` |
 | 进度条 | `.progress-track` | `height: 7px`，`1px solid var(--foreground)` |
-| 速率 / ETA | `.progress-metrics` | 两格；ETA 由 npm `arrival-time` 在前端算 |
+| 速率 / ETA | `.progress-metrics` | 两格；ETA 由前端 `project()` 自算（见下） |
 | 文件清单 | `.file-list` | `max-height: 154px`，可滚 |
 | 连接状态点 | `.status-dot` | 7×7 描边；连上后 `background: var(--foreground)` |
 | 传输双栏 | `.transfer-grid` | `1fr 1fr`，共享上 / 左边框 |
@@ -161,10 +179,14 @@ crates/croc-gui/
   tauri.conf.json         frontendDist 指向 ui/dist，加 beforeBuildCommand
 ```
 
-- **`beforeBuildCommand` 要在 `ui/` 下跑 npm**。Tauri 2 不会自动切工作目录，命令串怎么写在 G0
-  实测定（`--prefix ui` 或先把纳米 packages 放在 `ui/` 内部二选一）。
+- **`beforeBuildCommand` 要在 `ui/` 下跑包管理器**。Tauri 2 不会自动切工作目录：命令是在
+  `tauri.conf.json` 所在的 crate 根执行的。实测 `pnpm --prefix ui run build` 可行，CI 与
+  本地都用它（本地想省事就 `cd crates/croc-gui/ui && pnpm run build`，两者等价）。
 - 事件名与载荷形状保持现状（`croc://progress` / `croc://finished`），避免 Rust 与前端同时改。
-  ETA 与速率在上游也是前端算的（用观察到的字节序列喂 `arrival-time`），Rust 侧不必改。
+  新增的一个是 `croc://offer`（清单确认，见 §4.1）。
+- ETA 在前端 `src/format.ts::project()` 里算：拿最近 8 个观测点做线性外推。**没有引
+  `arrival-time`**——这里的速率抖动本来就比拟合精度大一个量级，为一个几十行的窗口平均
+  再拉一个依赖不划算。这是与上游有意为之的一处偏差。
 - `withGlobalTauri` 暂保留；新代码通过 `@tauri-apps/api` 导入，逐步不依赖全局对象。
 
 ### 3.1 Rust 侧要补的依赖
@@ -194,25 +216,34 @@ G1 实测它在 `core:default` 里是否已覆盖，不够就补 `core:window` /
 | 接收前的清单确认 | `.offer` 卡 | **需先在 croc-engine 支持异步确认**（见下） | P0 |
 | 传输进度 / 速率 / ETA | `arrival-time` | 复用：`Progress` 事件 → 前端算 | P0 |
 | 取消传输 | 上层 abort | `cancel_transfer`（已有） | P0 |
-| 发送内容二选一（文件 / 文本） | `SendContent` | 前端加 `croc send --text` 的等价通道 | P1 |
-| 存储模式（加密链接 + 有效期） | `stored-ui.tsx` | `croc-store` 已就绪，前端照搬；限额参考 §1.5 | P1 |
+| 发送内容二选一（文件 / 文本） | `SendContent` | ✅ G6：`SendArgs.text` → `croc_engine::text::write_text_artifact`，与 CLI 的 `--text` 同一个临时文件规则 | P1 |
+| 存储模式（加密链接 + 有效期） | `stored-ui.tsx` | ✅ G7：`store_upload` 命令（`croc-store`），前端 `StoredPanel` 给链接 / 二维码 / 到期时间 | P1 |
 | 连接状态指示 | `.status-dot` | 中继已连 / 数据面已建两个状态点 | P1 |
 | 高级设置 | `.settings-grid` | 网关、中继地址、中继密码、记住密码 | P1 |
-| SSH 模式 | `SSHPanel` + xterm.js（懒加载，独立 `croc-ssh.wasm`） | pending：依赖本仓库尚未实现的 SSH 数据面，见 [tailscale.md](tailscale.md) 同族问题 | pending |
+| SSH 模式 | `SSHPanel` + xterm.js（懒加载，独立 `croc-ssh.wasm`） | ⏸ G11：依赖本仓库尚未实现的 SSH 数据面。**界面上有显式占位**（第四格工作区 + `SshPlaceholder` 面板），不藏起来 | pending |
 | 多任务并发 | 无（浏览器里一次一个） | 我们本来就有（每个传输独立 ID 与 token），优于上游，保留 | — |
 | 传输历史 | 无 | 不在 croc-web 清单内，暂缓 | P2 |
-| i18n | 无（英文） | **待定**，见下 | 待定 |
+| i18n | 无（英文） | ✅ 中英双语，见下 | 已定 |
 
-### 4.1 两个必须在评审时定的点
+### 4.1 两个待定点（已定，2026-10-09）
 
-**异步接收确认。** 现在 `ConfirmSink = Arc<dyn Fn(&SenderInfo) -> bool>` 是同步的，而清单确认卡要等
-用户点按钮。方案在 G2 时三选一：把 `ConfirmSink` 改成返回 future；或新增 `EngineEvent::Offer(SenderInfo)`
-并把接受/拒绝做成独立 command；或在 Tauri 侧用 channel 把同步回调桥到异步 UI。约束是
-**CLI 的 `prompt_confirm` 行为一字节都不能变**（终端交互有 golden 测试）。
+**异步接收确认 —— 加了 `AsyncConfirmSink`。** 原先只有同步的
+`ConfirmSink = Arc<dyn Fn(&SenderInfo) -> bool>`。现在 `ReceiveRequest` 多一个
+`confirm_async: Option<AsyncConfirmSink>`（`Arc<dyn Fn(&SenderInfo) -> ConfirmFuture>`）：
 
-**界面语言。** upstream 只有英文；而 `croc-rs` 的 CLI 已经用 `rust-i18n` 提供 zh-CN。
-彻底对齐上游意味着 GUI 先出英文版。两个方向：GUI 先英文（与上游零偏差，后续再补语言包）；
-或者一开始就把界面文案接进 `locales/`（成本高，而且会持续偏离上游）。**倾向前者**。
+* `croc-engine` 的取舍规则写在 `receive.rs` 的决策分支上：**`confirm` 优先，其次
+  `confirm_async`，都没有才直接接受**。CLI 只给 `confirm`，所以它的 `prompt_confirm`
+  一字节没动，golden 测试照旧全绿。
+* GUI 走 `confirm_async`：清单 emit 成 `croc://offer`，答案由 `respond_to_offer` 投递
+  （`crates/croc-gui/src/offers.rs`，一次等待一根 `oneshot`）。
+* 取消要把等待一起放开：`OfferRegistry::abandon` drop 掉 sender，等在它上面的 future
+  得到 `Err` → 视为拒绝。不这么做的话，还挂在"等用户按按钮"上的传输收不到取消令牌。
+
+**界面语言 —— 中英双语，首版就有。** 前端自带 `ui/src/locales.ts`（`en` / `zh-CN`，
+可能动时才插值），后端另有一套 `crates/croc-gui/locales/*.yml`（rust-i18n，键的分组与
+前端对齐），由 `set_locale` 命令同步——用户点右上角的 `EN / 中文` 时两边一起换。
+取值顺序沿用 CLI 的判据：`localStorage` → 浏览器语言（`zh*` 归中文）→ 英文兜底。
+代价是界面文案要走 key，不能照抄上游的字面串；换来的是 CLI 已有的语种 GUI 也有。
 
 ## 5. 桌面端
 
@@ -235,6 +266,24 @@ G1 实测它在 `core:default` 里是否已覆盖，不够就补 `core:window` /
 ## 6. Android 适配
 
 按 §4 的功能表走同一个 UI；本节只列移动端特有的部分。
+
+### 6.0 工程归属与包名
+
+* **包名 `cn.sumitm.croc_rs`**（`tauri.conf.json` 的 `identifier`）。Android 的 Java 包名
+  每段必须以字母开头，所以纯数字的用户名不能直接当包段用。
+* **整个 `gen/android/` 入库**。理由：里面有我们自己写的 Kotlin（`TransferForegroundService.kt`
+  与改过的 `MainActivity.kt`）。实测 `cargo tauri android init` **不会覆盖已存在的文件**，
+  重跑 init 不需要手工合并；因此 `.gitignore` 只忽略 Gradle 产物（`app/build/`、`.gradle/`）。
+* `app/tauri.build.gradle.kts` 与 `tauri.properties` **不入库**：它们是 Gradle 首次配置
+  时生成的（模板自带的 `app/.gitignore` 已经忽略），内容是 Tauri 的 Android 依赖表。
+
+我们加的两个文件：
+
+| 文件 | 作用 |
+|------|------|
+| `MainActivity.kt` | Activity 入口：请求通知权限、启停前台服务、SAF 另存的 Activity Result |
+| `TransferForegroundService.kt` | 前台服务 + `PARTIAL_WAKE_LOCK` + 通知渠道 |
+| `CrocBridge.kt` | Rust 调过来的 `@JvmStatic` 入口（见 §6.5） |
 
 ### 6.1 构建
 
@@ -276,16 +325,26 @@ SAF 另存到公共目录。多一次拷贝，但绕开 fd 通路。
 
 ```kotlin
 class TransferForegroundService : Service() {
-    override fun onCreate() {
-        startForeground(NOTIF_ID, buildNotification())   // 必须 5 s 内调用
-        acquireWakeLock(PARTIAL_WAKE_LOCK)
-    }
+  override fun onCreate() {
+    super.onCreate()
+    createChannel()
+    startForeground(NOTIF_ID, buildNotification())   // 必须 5 s 内调用
+    acquireWakeLock(PARTIAL_WAKE_LOCK)
+  }
 }
 ```
 
+已实现，见 `gen/android/app/src/main/java/cn/sumitm/croc_rs/TransferForegroundService.kt`
+（通知渠道 + `PARTIAL_WAKE_LOCK`，超时 10 min 自动释放）。
+`MainActivity.onCreate` 启它、`onDestroy` 停它，Android 13+ 会先请求 `POST_NOTIFICATIONS`。
+
+通知里的进度目前只有静态文案：**Rust 侧要把实时进度送到 Kotlin，得写 Tauri 插件或 JNI 桥**，
+这条路见 §6.5。
+
 清单需 `FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_DATA_SYNC`（Android 14+ 要声明类型）、
-`WAKE_LOCK`、`INTERNET`、`ACCESS_NETWORK_STATE`。通知里显示 Rust 侧推的实时进度。
-必须引导用户关闭电池优化（`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`），否则 Doze 下仍会断。
+`WAKE_LOCK`、`INTERNET`、`ACCESS_NETWORK_STATE`。**不申请**
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`，也不去引导用户关电池优化：前台服务已经把应用抬到
+"用户可见正在运行"的那一档，多一次系统弹窗换不到与之匹配的传输可靠性。
 
 ### 6.4 其它移动端事项
 
@@ -297,6 +356,30 @@ class TransferForegroundService : Service() {
 | 权限 | 仅 `INTERNET` + 通知；**不要**申请 `READ_EXTERNAL_STORAGE` |
 | 大文件 OOM | 前端绝不持有文件字节，只用路径 / URI |
 | 断点 | 进程被杀后状态丢失，启动时扫描未完成的 `.croc-partial` 提示续传 |
+
+### 6.5 Rust → Kotlin 的桥（G10，已实现）
+
+`crates/croc-gui/src/android.rs`（仅 Android 编译）+ `gen/android/.../CrocBridge.kt`：
+
+| Rust | Kotlin | 作用 |
+|------|--------|------|
+| `start_service` / `stop_service` | `CrocBridge.startService` / `stopService` | 前台服务按需启停（队列空了才停） |
+| `notify_progress` | `CrocBridge.notifyProgress` | 把 Rust 侧的状态句写进通知 |
+| `export_file` | `CrocBridge.exportFile` | SAF 另存（`ACTION_CREATE_DOCUMENT`，结果在 `MainActivity` 里拷贝） |
+| `share_file` | `CrocBridge.shareFile` | 系统分享（`FileProvider` + `ACTION_SEND`） |
+
+两边靠**类名 + 方法名 + JNI 描述符**对上，改签名只会以 `NoSuchMethodError` 在运行时暴露，
+所以改一边必须改另一边。桌面端这几个 Rust 函数是空的（no-op），调用方不写 `cfg` 分叉。
+
+返回键由前端处理：`tauri://back-button` → 回到发送页，而不是直接退应用。
+
+**还没做 / 未验证**：
+
+| 项 | 状态 |
+|----|------|
+| 真机验证 | ❌ 只做到 `cargo check --target aarch64-linux-android` 通过，没在设备上跑过 |
+| SAF 直接收文件（不落私有目录） | ❌ 仍要 §6.2 的 `FileSink` / `FileSource` 抽象；现在是"先落私有目录、再另存" |
+| 通知里的字节级进度 | ⚠️ 现在推的是 Rust 侧的状态句，不是百分比 |
 
 ## 7. 里程碑
 
@@ -324,7 +407,7 @@ class TransferForegroundService : Service() {
 | 上游 `styles.css` 4487 行整体照搬会带入营销区样式 | 中 | 按 §1.4 白名单挑类名，不做全文拷贝 |
 | 异步确认改法与 CLI 的 golden 冲突 | 中 | 先做 G2 的方案评审，CLI 测试必须全绿 |
 | Android WebView 版本差异 | 中 | `minSdk 24`；禁用前沿 CSS |
-| Android 后台被杀 | 高 | 前台服务 + WakeLock + 引导关闭电池优化 |
+| Android 后台被杀 | 高 | 前台服务 + WakeLock；按另有 IO standards 详见 §6.5 |
 | SAF 复杂度超预期 | 高 | v1 走"私有目录 + 完成后另存" |
 | Windows 缺 WebView2 | 中 | 安装包内嵌 Evergreen Bootstrap |
 | Tauri 2 API 变动 | 中 | 锁 minor，升级前冒烟 |

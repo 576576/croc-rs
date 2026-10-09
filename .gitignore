@@ -16,9 +16,19 @@ target/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Tauri 移动端工程骨架：由 `cargo tauri android init` 生成，不入库（模板会随 CLI 版本漂移）。
-crates/croc-gui/gen/
+# Tauri 的移动端工程**入库**：`TransferForegroundService.kt` 与改过的 `MainActivity.kt`
+# 在里面，`tauri android init` 不会覆盖已存在的文件（实测），重跑 init 也不需要手工合并。
+# 只忽略 Gradle 的构建产物。
+crates/croc-gui/gen/android/app/build/
+crates/croc-gui/gen/android/app/.cargo/
+crates/croc-gui/gen/android/.gradle/
+crates/croc-gui/gen/android/build/
 
 # Tauri 生成的权限 schema。
 crates/croc-gui/gen/schemas/
+
+# 前端依赖与构建产物。
+crates/croc-gui/ui/node_modules/
+crates/croc-gui/ui/dist/
+
 /build

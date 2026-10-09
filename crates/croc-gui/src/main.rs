@@ -1,27 +1,22 @@
 //! `crocw-rs`：桌面入口。
 //!
 //! 这个文件极简是刻意的：所有能测的东西都在 `croc_gui` 库里（见 `commands.rs` /
-//! `state.rs`），`main.rs` 只剩"装日志、起 Tauri、注册命令"。
-//! 移动端不编译这个文件——Android 走 `lib.rs` 里的 JNI 入口。
+//! `state.rs` / `offers.rs`），桌面这里只负责装日志、拉起 [`croc_gui::app`]。
+//! 移动端不编译这个文件——Android 走 [`croc_gui::run`]。
 
 // Windows 上不要弹出控制台窗口（release 构建）。调试构建保留控制台，
 // 否则 `tracing` 的输出没人看得到。
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//
+// 条件里带上 `target_os = "windows"`：只写 `not(debug_assertions)` 时，这个属性会被
+// 原样带到 Android/iOS 的编译单元里，rustc 在非 Windows target 上处理它会触发内部
+// 错误（android target 编译 bin 时实测 panic）。
+#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
     croc_gui::init_tracing();
-    let result = tauri::Builder::default()
-        .manage(std::sync::Arc::new(croc_gui::TransferRegistry::new()))
-        .invoke_handler(tauri::generate_handler![
-            croc_gui::generate_code,
-            croc_gui::send,
-            croc_gui::receive,
-            croc_gui::cancel_transfer,
-            croc_gui::list_transfers,
-        ])
-        .run(tauri::generate_context!());
+    let result = croc_gui::app().run(tauri::generate_context!());
 
     match result {
         Ok(()) => ExitCode::SUCCESS,

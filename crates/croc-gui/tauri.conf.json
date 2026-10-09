@@ -2,9 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "crocw-rs",
   "version": "0.1.0",
-  "identifier": "io.github.576576.croc-rs",
+  "identifier": "cn.sumitm.croc_rs",
   "build": {
-    "frontendDist": "ui"
+    "beforeDevCommand": "npm --prefix ui run dev",
+    "beforeBuildCommand": "npm --prefix ui run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "ui/dist"
   },
   "app": {
     "windows": [
@@ -15,11 +18,12 @@
         "height": 660,
         "minWidth": 720,
         "minHeight": 520,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
     },
     "withGlobalTauri": true
   },

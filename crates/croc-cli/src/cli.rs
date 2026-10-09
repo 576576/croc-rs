@@ -737,7 +737,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
             if let Some(text) = args.text {
                 // `--text`：与 Go 一样落到一个 `croc-stdin-<时间戳>` 临时文件上。
                 // 接收方靠这个名字前缀识别"这是文本传输"。
-                match write_text_artifact(&text) {
+                match croc_engine::text::write_text_artifact(&text) {
                     Ok(path) => paths.push(path),
                     Err(error) => {
                         eprintln!("croc-rs: {error}");
@@ -907,6 +907,8 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     no_multi: false,
                     machine_id,
                     confirm,
+                    // 异步确认只给 GUI：`prompt_confirm` 是同步的，走不到这条路。
+                    confirm_async: None,
                     events,
                 })),
             })
@@ -1139,13 +1141,6 @@ fn generate_code(requested: Option<&str>) -> Result<(String, Components), codeph
     Ok((code, components))
 }
 
-/// 把 `--text` 的内容落到临时文件。
-fn write_text_artifact(text: &str) -> Result<PathBuf, String> {
-    let path = temp_artifact_path();
-    std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
-    Ok(path)
-}
-
 /// 把管道进来的 stdin 落到临时文件。
 ///
 /// 只在 stdin 不是终端时才读——交互式终端下读它会把 `croc-rs send a.txt` 卡在等
@@ -1165,20 +1160,9 @@ fn write_stdin_artifact() -> Result<Option<PathBuf>, String> {
     if buffer.is_empty() {
         return Ok(None);
     }
-    let path = temp_artifact_path();
+    let path = croc_engine::text::artifact_path();
     std::fs::write(&path, &buffer).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(Some(path))
-}
-
-/// 一个 `croc-stdin-<纳秒时间戳>` 的临时文件路径。
-///
-/// 名字前缀是协议的一部分：接收方靠它识别"这是 `--text` / 管道来的东西"。
-fn temp_artifact_path() -> PathBuf {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    std::env::temp_dir().join(format!("croc-stdin-{stamp}"))
 }
 
 /// 定下口令码与中继地址。
@@ -1779,7 +1763,7 @@ mod tests {
 
     #[test]
     fn text_artifacts_use_the_prefix_the_policy_layer_expects() {
-        let path = write_text_artifact("hello").expect("写临时文件");
+        let path = croc_engine::text::write_text_artifact("hello").expect("写临时文件");
         let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         assert!(croc_core::policy::is_text_artifact(true, &name), "{name} 应被识别为文本传输的临时文件");
         assert_eq!(std::fs::read_to_string(&path).expect("读"), "hello");

@@ -1,90 +1,33 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>croc</title>
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
-<header>
-  <h1>croc<span>w-rs</span></h1>
-  <p class="tagline">端到端加密的文件传输 · 后端与 <code>croc-rs</code> CLI 完全同源</p>
-</header>
-
-<nav class="tabs" role="tablist">
-  <button class="tab is-active" data-panel="send" role="tab">发送</button>
-  <button class="tab" data-panel="receive" role="tab">接收</button>
-  <button class="tab" data-panel="settings" role="tab">设置</button>
-</nav>
-
-<main>
-  <!-- 发送 -->
-  <section id="panel-send" class="panel is-active">
-    <label class="field">
-      <span>要发送的文件或目录</span>
-      <input id="send-paths" type="text" placeholder="每行一个路径（桌面版可拖拽文件到窗口）">
-    </label>
-    <label class="field">
-      <span>自定义口令码（留空则自动生成）</span>
-      <input id="send-code" type="text" placeholder="acid-acorn-acre">
-    </label>
-    <div class="row">
-      <button id="send-generate" class="ghost">生成口令码</button>
-      <button id="send-start" class="primary">开始发送</button>
-    </div>
-    <p id="send-code-out" class="code-out"></p>
-    <p class="hint">口令码是这次会话的唯一凭据。把它交给对方，对方在「接收」里输入即可。</p>
-  </section>
-
-  <!-- 接收 -->
-  <section id="panel-receive" class="panel">
-    <label class="field">
-      <span>口令码</span>
-      <input id="recv-code" type="text" placeholder="acid-acorn-acre">
-    </label>
-    <label class="field">
-      <span>保存到</span>
-      <input id="recv-out" type="text" value=".">
-    </label>
-    <div class="row">
-      <label class="check"><input id="recv-overwrite" type="checkbox"> 直接覆盖同名文件</label>
-      <label class="check"><input id="recv-rename" type="checkbox"> 同名时自动改名</label>
-    </div>
-    <div class="row"><button id="recv-start" class="primary">开始接收</button></div>
-  </section>
-
-  <!-- 设置 -->
-  <section id="panel-settings" class="panel">
-    <label class="field">
-      <span>中继地址</span>
-      <input id="set-relay" type="text" value="croc.schollz.com:9009">
-    </label>
-    <label class="field">
-      <span>中继密码</span>
-      <input id="set-pass" type="text" value="pass123">
-    </label>
-    <label class="field">
-      <span>PAKE 曲线（只有接收方说了算）</span>
-      <select id="set-curve">
-        <option value="p256">p256</option>
-        <option value="p384">p384</option>
-        <option value="p521">p521</option>
-        <option value="siec">siec</option>
-        <option value="ed25519">ed25519</option>
-      </select>
-    </label>
-    <label class="check"><input id="set-nocompress" type="checkbox"> 关闭压缩</label>
-    <p class="hint">传输方式里的 <code>derp / tailscale</code> 暂不可用：等待上游 tailcat-rs 稳定（见 docs/agent/plan/tailscale.md）。</p>
-  </section>
-
-  <!-- 传输列表 -->
-  <section id="transfers">
-    <h2>传输</h2>
-    <ul id="transfer-list"><li class="empty">还没有传输</li></ul>
-  </section>
-</main>
-
-<script src="main.js"></script>
-</body>
+<!doctype html>
+<!--
+  data-theme 要在 React 挂载前落到确定值，否则第一帧会闪白：这段脚本与 src/theme.ts
+  的取值顺序必须一致（localStorage → 系统 → 深色兜底）。
+-->
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#121411" />
+    <title>croc</title>
+    <script>
+      (function () {
+        var theme = 'dark';
+        try {
+          var stored = localStorage.getItem('croc-web-theme');
+          if (stored === 'light' || stored === 'dark') {
+            theme = stored;
+          } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+            theme = 'light';
+          }
+        } catch (error) {
+          theme = 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
