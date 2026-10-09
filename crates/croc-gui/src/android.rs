@@ -55,6 +55,29 @@ pub fn share_file(path: &str) {
     });
 }
 
+/// 把已落盘的文件发布到公共下载目录，返回落到的文件名。
+///
+/// 用 `MediaStore` 插条目，不需要任何运行时权限；失败时返回 `None`。
+#[cfg(target_os = "android")]
+pub fn publish_to_downloads(path: &str) -> Option<String> {
+    attach("publishToDownloads", |env| {
+        let path = env.new_string(path)?;
+        let args = [jni::objects::JValue::from(&path)];
+        let returned =
+            env.call_static_method(BRIDGE, "publishToDownloads", "(Ljava/lang/String;)Ljava/lang/String;", &args)?;
+        read_string(env, returned.l()?)
+    })
+}
+
+/// 应用私有目录：接收时先落在这里，完成后再发布到下载目录。
+#[cfg(target_os = "android")]
+pub fn sandbox_dir() -> Option<String> {
+    attach("sandboxDir", |env| {
+        let returned = env.call_static_method(BRIDGE, "sandboxDir", "()Ljava/lang/String;", &[])?;
+        read_string(env, returned.l()?)
+    })
+}
+
 /// 附着到当前线程，跑一次 JNI 调用。
 ///
 /// 参数在闭包里造，是因为 `JString` 的生命周期绑在附着出来的 `JNIEnv` 上。
@@ -63,6 +86,15 @@ fn with_env<F>(name: &str, call: F)
 where
     F: for<'a, 'b> FnOnce(&'a mut jni::JNIEnv<'b>) -> jni::errors::Result<jni::objects::JValueOwned<'a>>,
 {
+    attach::<(), _>(name, move |env| call(env).map(|_| None));
+}
+
+/// 同 [`with_env`]，但把闭包的结果带回来。
+#[cfg(target_os = "android")]
+fn attach<T, F>(name: &str, call: F) -> Option<T>
+where
+    F: for<'a, 'b> FnOnce(&'a mut jni::JNIEnv<'b>) -> jni::errors::Result<Option<T>>,
+{
     use jni::JavaVM;
 
     let context = ndk_context::android_context();
@@ -70,17 +102,31 @@ where
     #[expect(unsafe_code, reason = "ndk-context 只提供裸指针")]
     let Ok(vm) = (unsafe { JavaVM::from_raw(context.vm().cast()) }) else {
         tracing::debug!("拿不到 JavaVM，跳过 {name}");
-        return;
+        return None;
     };
     let Ok(mut env) = vm.attach_current_thread() else {
         tracing::debug!("附着到 JVM 失败，跳过 {name}");
-        return;
+        return None;
     };
-    if let Err(error) = call(&mut env) {
-        tracing::debug!(%error, "{name} 调用失败");
-        // 不清掉挂起的异常，后面每一次 JNI 调用都会继续报同一个错。
-        let _ = env.exception_clear();
+    match call(&mut env) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::debug!(%error, "{name} 调用失败");
+            // 不清掉挂起的异常，后面每一次 JNI 调用都会继续报同一个错。
+            let _ = env.exception_clear();
+            None
+        }
     }
+}
+
+/// 读一个 Java 字符串；`null` 读成 `None`。
+#[cfg(target_os = "android")]
+fn read_string(env: &mut jni::JNIEnv<'_>, object: jni::objects::JObject<'_>) -> jni::errors::Result<Option<String>> {
+    if object.is_null() {
+        return Ok(None);
+    }
+    let text: jni::objects::JString<'_> = object.into();
+    Ok(Some(env.get_string(&text)?.to_string_lossy().into_owned()))
 }
 
 #[cfg(not(target_os = "android"))]
@@ -97,3 +143,13 @@ pub fn export_file(_path: &str) {}
 
 #[cfg(not(target_os = "android"))]
 pub fn share_file(_path: &str) {}
+
+#[cfg(not(target_os = "android"))]
+pub fn publish_to_downloads(_path: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn sandbox_dir() -> Option<String> {
+    None
+}

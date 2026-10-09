@@ -111,8 +111,13 @@ crates/croc-gui/
 - 改过的两个文件：`MainActivity.kt`（入口：请求 `POST_NOTIFICATIONS`、启停前台服务）、
   `TransferForegroundService.kt`（前台服务 + `PARTIAL_WAKE_LOCK`，10 min 超时自动放）。
 - **Rust→Kotlin 桥**：`CrocBridge.kt`（`@JvmStatic`）+ `src/android.rs`（jni 0.21 +
-  ndk-context，仅 Android 编译）。四件事：服务按需启停、通知进度、SAF 另存、系统分享。
+  ndk-context，仅 Android 编译）。五件事：服务按需启停、通知进度、落盘目录
+  （`sandboxDir`）、发布到下载目录（`publishToDownloads`）、SAF 另存与系统分享。
   桌面端这几个 Rust 函数是 no-op，调用方不写 `cfg` 分叉。返回键由前端接 `tauri://back-button`。
+- **接收落盘**：先写应用私有目录（`sandboxDir`，Android 上工作目录不可写），收完按
+  `EngineEvent::FileDone` 记下的名字逐个 `publishToDownloads`——往 `MediaStore.Downloads`
+  插条目**不需要任何运行时权限**，只有改动别人创建的文件才要 `MANAGE_EXTERNAL_STORAGE` 或 SAF。
+  代价是一次拷贝（无法直接写到公共目录）；免掉拷贝需要 `croc-engine` 支持 fd 写入，见 §5。
 - 清单要 `FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_DATA_SYNC`（Android 14+ 需声明类型）、
   `WAKE_LOCK`、`INTERNET`、`ACCESS_NETWORK_STATE`。**不申请**
   `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`，也不引导用户关电池优化。
@@ -120,14 +125,17 @@ crates/croc-gui/
   windows-x86_64/bin/aarch64-linux-android24-clang.cmd`、`AR_...=llvm-ar.exe`。
   Android 实际只构建 lib，验证用 `cargo check --lib --target aarch64-linux-android -p croc-gui`。
 
-移动端其它：触摸目标 48px；前端绝不持有文件字节，只用路径 / URI；`minSdk 24`。
+移动端其它：触摸目标 48px；前端绝不持有文件字节，只用路径 / URI。
+SDK：`minSdk 30` / `targetSdk 36` / `compileSdk 37`（`app/build.gradle.kts`）。
+minSdk 30 已经高于 29，所以存储只有 `MediaStore` 一条路，没有 `WRITE_EXTERNAL_STORAGE`
+那条 legacy 分支，也不需要申请它。
 
 ## 5. 剩余待办
 
 | 项                   | 阻塞点                                                                        |
 | ------------------- | -------------------------------------------------------------------------- |
 | G11 SSH 共享终端        | 依赖 SSH 数据面（上游 `src/sshshare` + `internal/sshclient`），未实现；界面第四格是显式占位      |
-| SAF 直接写入用户目录        | 需要 `croc-engine` 的 fs 层抽象出 `FileSink` / `FileSource`（路径 或 raw fd）。现在是"先落私有目录、完成后让用户另存" |
+| 直写公共目录（免掉一次拷贝）    | 需要 `croc-engine` 的 fs 层抽象出 `FileSink` / `FileSource`（路径 或 raw fd）。现在是"先落私有目录、收完 `publishToDownloads`" |
 | Android 真机验证        | 只做到交叉编译通过。JNI 桥靠类名 + 方法名 + 描述符对上，改签名只会在运行时以 `NoSuchMethodError` 暴露         |
 | 通知里的字节级百分比          | 现在推的是 Rust 侧的状态句                                                            |
 | 系统托盘 / 更新器 / 传输历史   | P2                                                                          |
@@ -137,7 +145,7 @@ crates/croc-gui/
 | 风险                        | 对策                             |
 | ------------------------- | ------------------------------ |
 | Android 后台被杀              | 前台服务 + WakeLock（已实现，未经真机验证）    |
-| SAF 复杂度超预期                | 保持"私有目录 + 完成后另存"，不提前引入 fd 通路   |
+| 公共目录写入的拷贝开销           | 保持"私有目录 + 收完发布"，不提前引入 fd 通路     |
 | 上游 `styles.css` 整体照搬带入营销区 | 按 §2.3 白名单挑类名，不做全文拷贝           |
 | Windows 缺 WebView2        | 安装包内嵌 Evergreen Bootstrap      |
 | Tauri 2 API 变动            | 锁 minor，升级前冒烟                  |

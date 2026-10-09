@@ -12,6 +12,7 @@ gui:
   summary:
     send: "Sent %{files} files (%{bytes} bytes)."
     receive: "Received %{received} (%{bytes} bytes), skipped %{skipped}."
+    published: "Saved %{count} file(s) to Downloads."
   status:
     transferring: "Transferring %{name}."
     file_done: "Done: %{name}."

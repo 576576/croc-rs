@@ -217,7 +217,7 @@ pub async fn send(
     let relay = pick_relay(&code, args.relay)?;
     let id = new_id("send");
 
-    let events = bridge(&app, &id, "send");
+    let events = bridge(&app, &id, "send", None);
     let request = SendRequest {
         relay,
         relay_password: args.pass.unwrap_or_else(|| DEFAULT_PASSPHRASE.to_owned()),
@@ -296,13 +296,15 @@ pub async fn receive(
         }) as croc_engine::ConfirmFuture
     }) as croc_engine::AsyncConfirmSink);
 
-    let events = bridge(&app, &id, "receive");
+    let received: Received = Received::default();
+    let events = bridge(&app, &id, "receive", Some(received.clone()));
+    let out_dir = PathBuf::from(args.out_dir.unwrap_or_else(default_out_dir));
     let request = ReceiveRequest {
         relay,
         relay_password: args.pass.unwrap_or_else(|| DEFAULT_PASSPHRASE.to_owned()),
         components,
         curve: parse_curve(args.curve.as_deref())?,
-        out_dir: PathBuf::from(args.out_dir.unwrap_or_else(|| ".".to_owned())),
+        out_dir: out_dir.clone(),
         preferences: Preferences { overwrite: args.overwrite, rename: args.rename },
         no_compress: false,
         // GUI 还没有 `--local` 的开关：默认走中继。
@@ -328,11 +330,33 @@ pub async fn receive(
         // 无论成败都要把等待中的决策端收掉，否则取消后的一次多余的"接受"会留在表里。
         offers_to_clear.abandon(&id_to_clear);
         result.map(|summary| {
-            t!("gui.summary.receive", received = summary.received, bytes = summary.bytes, skipped = summary.skipped)
-                .to_string()
+            let mut text = t!(
+                "gui.summary.receive",
+                received = summary.received,
+                bytes = summary.bytes,
+                skipped = summary.skipped
+            )
+            .to_string();
+            // Android 上收到的文件先落在应用私有目录里（用户看不见），收完发布到公共
+            // 下载目录。桌面端这一步是空操作，`published` 为 0，不会追加文案。
+            let published = publish_received(&out_dir, &received);
+            if published > 0 {
+                text.push('\n');
+                text.push_str(&t!("gui.summary.published", count = published));
+            }
+            text
         })
     });
     Ok(id)
+}
+
+/// 把收到的文件发布到公共下载目录，返回发布成功的个数。
+fn publish_received(out_dir: &std::path::Path, received: &Received) -> usize {
+    let names = std::mem::take(&mut *received.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    names
+        .iter()
+        .filter(|name| crate::android::publish_to_downloads(&out_dir.join(name).to_string_lossy()).is_some())
+        .count()
 }
 
 /// 回答一次清单确认。
@@ -401,12 +425,20 @@ pub fn list_transfers(registry: State<'_, Arc<TransferRegistry>>) -> Result<Vec<
 
 // ───────────────────────────── 内部工具 ─────────────────────────────
 
+/// 接收过程中收到的文件名（`EngineEvent::FileDone` 记下来的）。
+type Received = Arc<std::sync::Mutex<Vec<String>>>;
+
+/// 没指定落盘目录时用哪个。Android 上工作目录不可写，得落到应用私有目录。
+fn default_out_dir() -> String {
+    crate::android::sandbox_dir().unwrap_or_else(|| ".".to_owned())
+}
+
 /// 把引擎事件转成 Tauri event。
 ///
 /// 回调必须是 `Fn`（引擎那边是 `Arc<dyn Fn>`，不要求 `FnMut`），所以累加器不能用
 /// 捕获的 `let mut`，只能用 `AtomicU64` / `Mutex`。多花的这几行换来的是：进度上报
 /// 不需要引擎配合加锁。
-fn bridge(app: &AppHandle, id: &str, direction: &str) -> croc_engine::EventSink {
+fn bridge(app: &AppHandle, id: &str, direction: &str, received: Option<Received>) -> croc_engine::EventSink {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     let app = app.clone();
@@ -415,6 +447,8 @@ fn bridge(app: &AppHandle, id: &str, direction: &str) -> croc_engine::EventSink 
     let transferred = AtomicU64::new(0);
     let total = AtomicU64::new(0);
     let file: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    // 接收时把收到的文件名记下来，收完统一发布到下载目录（Android）。
+    let received = received.unwrap_or_default();
 
     Arc::new(move |event: EngineEvent| {
         let snapshot = |status: String, current: Option<String>| ProgressEvent {
@@ -440,7 +474,12 @@ fn bridge(app: &AppHandle, id: &str, direction: &str) -> croc_engine::EventSink 
                 total.store(sum, Ordering::Relaxed);
                 snapshot(String::new(), file.lock().ok().and_then(|guard| guard.clone()))
             }
-            EngineEvent::FileDone { name } => snapshot(t!("gui.status.file_done", name = name).to_string(), Some(name)),
+            EngineEvent::FileDone { name } => {
+                if let Ok(mut guard) = received.lock() {
+                    guard.push(name.clone());
+                }
+                snapshot(t!("gui.status.file_done", name = name).to_string(), Some(name))
+            }
             // `EngineEvent` 是 `#[non_exhaustive]`：将来新增的事件默认不上报，
             // 免得一个没设计过的事件把前端弄懵。
             _ => return,

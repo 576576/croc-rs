@@ -1,10 +1,14 @@
 package cn.sumitm.crocw
 
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import java.io.File
 
@@ -21,9 +25,14 @@ import java.io.File
 object CrocBridge {
   @Volatile private var activity: MainActivity? = null
 
+  /// 发布到下载目录不需要 Activity，用 ApplicationContext 就够，这样界面退到后台之后
+  /// 也能跑完。它不随 unbind 清空：ApplicationContext 不持有 Activity，留着不会泄漏。
+  @Volatile private var appContext: Context? = null
+
   @JvmStatic
   fun bind(activity: MainActivity) {
     this.activity = activity
+    this.appContext = activity.applicationContext
   }
 
   @JvmStatic
@@ -67,6 +76,46 @@ object CrocBridge {
       .setContentIntent(openApp)
       .build()
     manager.notify(TransferForegroundService.NOTIFICATION_ID, notification)
+  }
+
+  /// 应用私有目录，接收时先落在这里。
+  @JvmStatic
+  fun sandboxDir(): String? = appContext?.filesDir?.absolutePath
+
+  /// 把已经落盘的文件发布到公共下载目录。
+  ///
+  /// 往 `MediaStore.Downloads` 插条目**不需要任何运行时权限**（minSdk 30，没有
+  /// `WRITE_EXTERNAL_STORAGE` 那条路）；只有改动别人创建的文件才要
+  /// `MANAGE_EXTERNAL_STORAGE` 或 SAF。
+  ///
+  /// @return 落到的文件名，失败返回 null。
+  @JvmStatic
+  fun publishToDownloads(path: String): String? {
+    val context = appContext ?: return null
+    val file = File(path)
+    if (!file.exists()) return null
+    val name = file.name
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+      put(MediaStore.Downloads.DISPLAY_NAME, name)
+      put(MediaStore.Downloads.MIME_TYPE, MimeTypeMap.getSingleton()
+        .getMimeTypeFromExtension(file.extension) ?: "*/*")
+      put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+      // 先把条目标成待定：拷字节期间别的应用不该看到半个文件。
+      put(MediaStore.Downloads.IS_PENDING, 1)
+    }
+    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+    return runCatching {
+      val out = resolver.openOutputStream(uri) ?: throw java.io.IOException("openOutputStream($uri)")
+      out.use { file.inputStream().use { it.copyTo(out) } }
+      values.clear()
+      values.put(MediaStore.Downloads.IS_PENDING, 0)
+      resolver.update(uri, values, null, null)
+      name
+    }.getOrElse {
+      resolver.delete(uri, null, null)
+      null
+    }
   }
 
   /// SAF 另存：把已经落在应用私有目录里的文件，让用户自己挑一个位置存。

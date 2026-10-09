@@ -12,6 +12,7 @@ gui:
   summary:
     send: "已发送 %{files} 个文件（%{bytes} 字节）。"
     receive: "新收 %{received} 个（%{bytes} 字节），跳过 %{skipped} 个。"
+    published: "已保存 %{count} 个文件到下载目录。"
   status:
     transferring: "正在传 %{name}。"
     file_done: "完成 %{name}。"
