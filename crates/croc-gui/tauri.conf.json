@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Crocw",
+  "productName": "crocw-rs",
   "version": "0.1.0",
   "identifier": "cn.sumitm.crocw",
   "build": {
