@@ -75,7 +75,7 @@ pub fn encrypt(plaintext: &[u8], key: &[u8], nonce: &[u8; AEAD_NONCE_LEN]) -> Re
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|_| ProtocolError::InvalidKeyLength { expected: ENCRYPTION_KEY_LEN, actual: key.len() })?;
     let ciphertext =
-        cipher.encrypt(Nonce::from_slice(nonce), plaintext).map_err(|_| ProtocolError::AuthenticationFailed)?;
+        cipher.encrypt(&Nonce::from(*nonce), plaintext).map_err(|_| ProtocolError::AuthenticationFailed)?;
 
     let mut payload = Vec::with_capacity(AEAD_NONCE_LEN + ciphertext.len());
     payload.extend_from_slice(nonce);
@@ -94,7 +94,8 @@ pub fn decrypt(payload: &[u8], key: &[u8]) -> Result<Vec<u8>, ProtocolError> {
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|_| ProtocolError::InvalidKeyLength { expected: ENCRYPTION_KEY_LEN, actual: key.len() })?;
     let (nonce, ciphertext) = payload.split_at(AEAD_NONCE_LEN);
-    cipher.decrypt(Nonce::from_slice(nonce), ciphertext).map_err(|_| ProtocolError::AuthenticationFailed)
+    let nonce = Nonce::try_from(nonce).map_err(|_| ProtocolError::CiphertextTooShort(payload.len()))?;
+    cipher.decrypt(&nonce, ciphertext).map_err(|_| ProtocolError::AuthenticationFailed)
 }
 
 #[cfg(test)]

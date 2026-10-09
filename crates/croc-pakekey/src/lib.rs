@@ -36,7 +36,7 @@
 
 use croc_pake::{CurveKind, EPHEMERAL_LEN, Identities, Initiator, PakeError, Responder};
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroize;

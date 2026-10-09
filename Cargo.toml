@@ -77,32 +77,32 @@ description = "A Rust rewrite of croc: send files anywhere, simply and securely.
 [workspace.dependencies]
 # ---- 大整数与曲线算术 ----
 # 线路字节按 Go `math/big` 的语义来：欧几里得取模、十进制 JSON 数字。
-num-bigint = "0.4"
+num-bigint = "0.5"
 num-traits = "0.2"
 # pake v3 的第五条曲线：Ed25519。
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
+curve25519-dalek = { version = "5", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
 
 # ---- 加密栈 ----
-sha2 = "0.10"
-hmac = "0.12"
-hkdf = "0.12"
+sha2 = "0.11"
+hmac = "0.13"
+hkdf = "0.13"
 # 中继握手的密钥派生：Go 用 `pbkdf2.Key(strongKey, salt, 100, 32, sha256.New)`。
 # 迭代次数只有 100，这是 croc 的既有设计（弱口令只是用来给中继鉴权，不是给用户口令）。
-pbkdf2 = "0.12"
+pbkdf2 = "0.13"
 subtle = "2"
 zeroize = { version = "1", features = ["zeroize_derive"] }
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 # ---- 序列化 ----
 # Go 的 `[]byte` 在 JSON 里是标准 base64（带 padding），所以字节字段要自己接管编解码，
 # 见 croc-protocol 的 `base64_bytes`。
 serde = { version = "1", features = ["derive"] }
-base64 = "0.22"
+base64 = "0.23"
 # RFC3339 编解码：Go 的 `time.Time` 在 JSON 里是 RFC3339Nano。
 time = { version = "0.3", features = ["serde-well-known"] }
 # ---- `--hash` 的四种算法 ----
-md-5 = "0.10"
+md-5 = "0.11"
 highway = "1"
 imohash = "0.1"
 
@@ -126,9 +126,8 @@ zip = "2"
 # image / svg 特性（那俩会拉一整套图形依赖）。
 qrcode = { version = "0.14", default-features = false }
 # ---- stored transfer（`croc store`）的 HTTP 客户端 ----
-# `socks` 是 `--socks5` 要的；根证书用 Mozilla 的静态列表，不读系统信任库
-# （精简容器里可能不存在）。
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "socks"] }
+# `socks` 是 `--socks5` 要的；TLS 走 rustls。
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "socks"] }
 
 # ---- 清单里的文件名校验 ----
 # 名字要在所有支持的平台上都安全，所以不能只看 ASCII：Windows / macOS 的文件系统
@@ -139,7 +138,7 @@ caseless = "0.2"
 unicode-general-category = "1"
 # `--socks5`：只做 CONNECT。
 tokio-socks = "0.5"
-getrandom = "0.3"
+getrandom = "0.4"
 
 # ---- 仅测试用 ----
 # 基准向量是 JSON，十六进制字段用 `hex` 解。
