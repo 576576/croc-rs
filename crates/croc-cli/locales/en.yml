@@ -1,0 +1,272 @@
+# User-facing strings (English).
+
+help:
+  # Section headings.
+  section:
+    name: "NAME"
+    usage: "USAGE"
+    version: "VERSION"
+    commands: "COMMANDS"
+    global_options: "GLOBAL OPTIONS"
+    description: "DESCRIPTION"
+    options: "OPTIONS"
+    command_options: "[command options]"
+  # The word inside `(default: …)`.
+  default: "default"
+  app:
+    usage: "securely transfer files or share a terminal"
+    usage_text: |-
+      croc-rs [GLOBAL OPTIONS] [COMMAND] [COMMAND OPTIONS] [filename(s) or folder]
+
+         USAGE EXAMPLES:
+         Send a file:
+            croc-rs send file.txt
+
+            -git to respect your .gitignore
+         Send multiple files:
+            croc-rs send file1.txt file2.txt file3.txt
+          or
+            croc-rs send *.jpg
+
+         Send everything in a folder:
+            croc-rs send example-folder-name
+
+         Send a file with a custom code:
+            croc-rs send --code secret-code file.txt
+
+         Receive a file using code:
+            croc-rs secret-code
+
+         Store files for later download:
+            croc-rs store --downloads 3 --expiration 3d file.txt
+
+         Share a terminal:
+            croc-rs ssh
+
+         Join a shared terminal:
+            CROC_SECRET=six-word-invitation croc-rs ssh
+    # The left column (command names) lives in the code: aliases such as
+    # `update, upgrade` look the same in every language. Only the descriptions are here.
+    command:
+      send: "send file(s), or folder (see options with croc-rs send -h)"
+      store: "upload encrypted files for later download"
+      ssh: "share or join a secure, collaborative terminal"
+      update: "check for and safely install a newer croc-rs release"
+      relay: "start your own relay (optional)"
+      help: "Shows a list of commands or help for one command"
+  global:
+    flag:
+      internal-dns: "use a built-in DNS stub resolver rather than the host operating system"
+      classic: "toggle between the classic mode (insecure due to local attack vector) and new mode (secure)"
+      remember: "save these settings to reuse next time"
+      debug: "toggle debug mode"
+      yes: "automatically agree to all prompts"
+      stdout: "redirect file to stdout"
+      no-compress: "disable compression"
+      ask: "make sure sender and recipient are prompted"
+      local: "force to use only local connections"
+      ignore-stdin: "ignore piped stdin"
+      overwrite: "do not prompt to overwrite or resume"
+      rename: "receive files that already exist under a new name instead of prompting"
+      testing: "flag for testing purposes"
+      quiet: "disable all output"
+      disable-clipboard: "disable copy to clipboard"
+      extended-clipboard: "copy full command with secret as env variable to clipboard"
+      revoke: "revoke a stored transfer using its local sender receipt"
+      multicast: "multicast address to use for local discovery"
+      curve: "choose an encryption curve (p521, p256, p384, siec, ed25519)"
+      ip: "set sender ip if known e.g. 10.0.0.1:9009, [::1]:9009"
+      relay: "address of the relay"
+      relay6: "ipv6 address of the relay"
+      out: "specify an output folder to receive the file"
+      pass: "password for the relay"
+      socks5: "SOCKS5 proxy address (relay DNS is resolved by the proxy)"
+      connect: "add a http proxy"
+      throttleUpload: "throttle the upload speed e.g. 500k"
+      help: "show help"
+      version: "print the version"
+  send:
+    usage: "send file(s), or folder (see options with croc-rs send -h)"
+    description: "send file(s), or folder"
+    args_usage: "[filename(s) or folder]"
+    flag:
+      zip: "zip folder before sending"
+      code: "codephrase used to connect to relay (at least 6 characters)"
+      transport: "sender file data transport (auto, derp, relay)"
+      hash: "hash algorithm (xxhash, imohash, md5, highway)"
+      text: "send some text"
+      no-local: "disable local relay when sending"
+      no-multi: "disable multiplexing"
+      git: "enable .gitignore respect / don't send ignored files"
+      port: "base port for the relay"
+      transfers: "number of ports to use for transfers"
+      qrcode: "show the web receive URL as a qrcode"
+      exclude: "exclude files if they contain any of the comma separated strings"
+      exclude-file: "exclude files matching any of the comma separated relative paths exactly"
+      socks5: "SOCKS5 proxy address (relay DNS is resolved by the proxy)"
+      connect: "add a http proxy"
+      store: "upload encrypted files for a finite lifetime or a limited number of verified downloads"
+      store-downloads: "number of verified downloads allowed in stored mode"
+      store-expiration: "stored lifetime after upload (for example 90m, 12h, 3d, or 2w)"
+      store-url: "stored-transfer service origin"
+      help: "show help"
+  store:
+    usage: "upload encrypted files for later download"
+    description: "store regular files with a download limit and expiration"
+    args_usage: "[filename(s)]"
+    flag:
+      downloads: "number of verified downloads allowed in stored mode"
+      expiration: "stored lifetime after upload (for example 90m, 12h, 3d, or 2w)"
+      url: "stored-transfer service origin"
+      socks5: "SOCKS5 proxy address (relay DNS is resolved by the proxy)"
+      connect: "add a http proxy"
+      qrcode: "show the web receive URL as a qrcode"
+      help: "show help"
+  ssh:
+    usage: "share or join a secure, collaborative terminal"
+    description: "start without a code to host; provide a six-word code to join"
+    args_usage: "[six-word-code]"
+    flag:
+      headless: "host without attaching the local terminal"
+      duration: "maximum hosted session lifetime"
+      reconnect-window: "how long a guest retries after a connection loss"
+      no-reconnect: "disable automatic guest reconnection"
+      transport: "guest transport (auto, tailcat, relay)"
+      dir: "working directory for a hosted shell"
+      help: "show help"
+  update:
+    usage: "check for and safely install a newer croc-rs release"
+    description: "self-update official standalone installs; show package-manager guidance for other installs"
+    args_usage: "[arguments...]"
+    flag:
+      check: "check for a newer release without installing it"
+      yes: "install without prompting when self-update is safe"
+      help: "show help"
+  relay:
+    usage: "start your own relay (optional)"
+    description: "start relay"
+    args_usage: "[arguments...]"
+    flag:
+      host: "host of the relay"
+      ports: "ports of the relay"
+      port: "base port for the relay"
+      transfers: "number of ports to use for relay"
+      max-rooms-open: "maximum waiting rooms per relay port"
+      max-pending-handshakes: "maximum incomplete handshakes per relay port"
+      handshake-timeout: "maximum time for an initial relay handshake"
+      source-join-limit: "maximum room joins per source IP in the admission window"
+      room-join-limit: "maximum joins per room in the admission window"
+      join-limit-window: "sliding window for relay admission limits"
+      help: "show help"
+  # `generate-fish-completion` has no `DESCRIPTION:` section (neither does Go), so
+  # `description` is an empty string: an empty value means "skip this section".
+  fish:
+    usage: "generate fish completion and output to stdout"
+    description: ""
+    args_usage: "[arguments...]"
+    flag:
+      help: "show help"
+
+# The sender's two lines. Same shape as Go, written to stderr.
+notice:
+  run_heading: "On the other computer, run:"
+  or_open: "Or open:"
+  clipboard_code: "code copied to clipboard"
+  clipboard_command: "command copied to clipboard"
+  machine_id: "\rYour machine ID is '%{id}'"
+  sending: "Sending %{label} (%{size})"
+  sending_folders: "Sending %{label} and %{folders} folders (%{size})"
+  # 多于一个文件时用计数代替文件名。
+  files: "%{count} files"
+
+cli:
+  cancelled: "croc-rs: cancelled"
+  interrupt: "\nInterrupt received, finishing up…"
+  sent_one: "Sent 1 file (%{size})"
+  sent_many: "Sent %{count} files (%{size})"
+  received_summary: "Receive done: %{received} new (%{bytes} bytes), %{skipped} skipped, %{declined} declined"
+  need_code_or_subcommand: "croc-rs: need a codephrase, or a subcommand (send / relay)"
+  prompt_receive_code: "Enter receive code: "
+  machine_id: "Your machine ID: %{id}"
+  unknown_machine: "unknown machine"
+  confirm_receive: "Receive %{count} files (%{bytes} bytes) from %{peer}? [Y/n] "
+  sending_file: "Sending '%{name}' (%{size})"
+  receiving_file: "Receiving '%{name}' (%{bytes} bytes)"
+  file_done: "Done '%{name}'"
+  classic_prompt_on: "classic mode is currently **on**.\n\nTurning it off keeps the codephrase out of the process list, so other local users on a multi-user machine cannot see it.\n\nTurn classic mode off? (y/N) "
+  classic_prompt_off: "classic mode is currently **off**.\n\nTurning it on puts the codephrase in the process list, where other local users on a multi-user machine may see it and grab the files first.\n\nTurn classic mode on? (y/N) "
+  classic_notice_on: "\nclassic mode is now off.\n\nPass the codephrase through the environment instead:\n\n  CROC_SECRET=**** croc-rs send file\n  CROC_SECRET=**** croc-rs\n"
+  classic_notice_off: "\nclassic mode is now on.\n\nYou can put the codephrase on the command line again:\n\n  croc-rs send --code **** file\n  croc-rs ****\n"
+  classic_unchanged: "\nclassic mode stays %{state}."
+  classic_state_on: "on"
+  classic_state_off: "off"
+  # 命令行上的口令码被拒时的说明（Go 的原文在 `src/cli/cli.go:750`）。
+  send_code_refused: |-
+    croc-rs: a codephrase on the command line stays in the shell history and the process list, where other users on a multi-user machine can see it.
+
+    Use the environment instead:
+
+      CROC_SECRET=**** croc-rs send file
+
+    Or let this program generate one:
+
+      croc-rs send file
+
+    To restore the old behaviour (allow a codephrase on the command line), enable classic mode:
+
+      croc-rs --classic
+  receive_code_refused: |-
+    croc-rs: a codephrase on the command line stays in the shell history and the process list, where other users on a multi-user machine can see it.
+
+    Use the environment instead:
+
+      CROC_SECRET=**** croc-rs
+
+    To restore the old behaviour (allow a codephrase on the command line), enable classic mode:
+
+      croc-rs --classic
+  error:
+    transport_conflict: "croc-rs: --transport must be auto for local-only transfers"
+    send_needs_source: "croc-rs: send needs a path, some --text, or stdin piped in"
+    hash_unsupported: "croc-rs: unsupported hash algorithm %{algorithm}, available: %{list}"
+    relay_index_out_of_range: "croc-rs: relay index %{index} is out of range"
+    throttle_invalid: "croc-rs: --throttle-upload %{value} is not a valid rate (for example 500k, 1M, 1048576)"
+    runtime_start: "croc-rs: cannot start the async runtime: %{error}"
+  note:
+    tailscale_pending: "note: tailscale data plane is not available yet (pending upstream tailcat-rs); using relay"
+    ssh_unimplemented: "note: ssh terminal sharing is not implemented yet"
+    update_unimplemented: "note: self-update is not implemented yet; install a newer release from the release page"
+    update_check_unimplemented: "note: checking for a newer release is not implemented yet"
+    fish_completion_unimplemented: "note: fish completion generation is not implemented yet"
+    store_link_refused: |-
+      For security, stored-transfer links are not accepted as command-line
+      arguments on UNIX systems because their decryption key would be visible in
+      the process list.
+
+      Run croc-rs with no argument and paste the link at the prompt, or use:
+
+        CROC_STORE_TOKEN='croc-store-v1....' croc-rs
+
+store:
+  error:
+    need_path: "croc-rs: stored mode needs a file path"
+    expiration: "croc-rs: --expiration %{reason}"
+    receipt_failed: "croc-rs: failed to save the revoke receipt: %{error}"
+  summary: "Stored transfer is encrypted and available until %{expires} or %{downloads}."
+  downloads_one: "one verified download"
+  downloads_many: "%{count} verified downloads"
+  browser_link: "Browser link:"
+  cli_recipient: "CLI recipient:"
+  cli_recipient_hint: "Run croc, then paste this token:"
+  revoke_hint: "Revoke before download:"
+
+relay:
+  started: "croc-rs relay started on %{ports}"
+  error:
+    need_two_ports: "croc-rs relay: need at least two ports (one control port plus at least one data port)"
+    bind_failed: "croc-rs relay: cannot bind %{host}:%{port}: %{error}"
+
+config:
+  error:
+    write_failed: "croc-rs: cannot write %{path}: %{error}"
+    update_failed: "croc-rs: cannot update %{path}: %{error}"

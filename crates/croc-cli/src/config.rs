@@ -1,18 +1,18 @@
 //! `--remember` 与 `--classic`：配置文件的位置、格式与读写。
 //!
-//! 目录沿用 Go 的 `utils.GetConfigDir`（`utils.go:64`）：`CROC_CONFIG_DIR` →
+//! 目录沿用 Go 的 `utils.GetConfigDir`：`CROC_CONFIG_DIR` →
 //! `XDG_CONFIG_HOME/croc` → `~/.config/croc`。文件也是同一套：
 //!
 //! | 文件 | 谁写 | 谁读 |
 //! |------|------|------|
-//! | `send.json` | `send --remember` | `send`（只在本次**没给** `--remember` 时） |
+//! | `send.json` | `send --remember` | `send`（只在本次没给 `--remember` 时） |
 //! | `receive.json` | 接收端 `--remember` | 接收（同上） |
 //! | `classic_enabled` | `--classic` | 收发两端（决定要不要拒绝命令行口令码） |
 //!
 //! # 字段名照抄 Go
 //!
 //! `Remembered` 的 JSON 字段名是 Go `croc.Options` 的名字（`SharedSecret`、
-//! `RelayAddress`……），而且只写 Go 也会**应用**的那些字段：两个实现在同一台机器上
+//! `RelayAddress`……），而且只写 Go 也会应用的那些字段：两个实现在同一台机器上
 //! 共用同一份 `send.json`，谁写谁读都不会把对方的设置清成零值。
 //!
 //! 中继地址用 Go 的编码记「用户改过没有」：`"default"` 或 `"non-default: <地址>"`。
@@ -22,6 +22,7 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 
 /// 读哪一侧的配置。
@@ -45,7 +46,7 @@ impl Side {
 /// 中继地址「还是默认值」的标记。
 const DEFAULT_MARKER: &str = "default";
 
-/// 中继地址「被用户改过」的前缀。Go 的 `saveConfig`（`cli.go:946`）。
+/// 中继地址「被用户改过」的前缀。Go 的 `saveConfig`。
 const NON_DEFAULT_PREFIX: &str = "non-default:";
 
 /// 记住的那几项。
@@ -54,7 +55,7 @@ const NON_DEFAULT_PREFIX: &str = "non-default:";
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools, reason = "每一项对应一个 Go 的布尔 flag，合并成位标志只会更难与上游对照")]
 pub struct Remembered {
-    /// 口令码。**只有命令行确实给了才写**（Go 的 `saveConfig` 同）。
+    /// 口令码。只有命令行确实给了才写（Go 的 `saveConfig` 同）。
     #[serde(rename = "SharedSecret", default)]
     pub shared_secret: String,
     /// 中继地址，编码见模块说明。
@@ -110,7 +111,7 @@ impl Remembered {
         std::fs::read_to_string(&path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
     }
 
-    /// 写下来。写不进去只提示一句，**不影响这次传输**。
+    /// 写下来。写不进去只提示一句，不影响这次传输。
     pub fn save(&self, side: Side, quiet: bool) {
         let Some(path) = config_dir().map(|dir| dir.join(side.file_name())) else {
             return;
@@ -119,7 +120,7 @@ impl Remembered {
         if let Err(error) = create_private_dirs_and_write(&path, text.as_bytes())
             && !quiet
         {
-            eprintln!("croc-rs: 无法写入 {}：{error}", path.display());
+            eprintln!("{}", t!("config.error.write_failed", path = path.display().to_string(), error = error));
         }
     }
 }
@@ -161,13 +162,13 @@ pub fn set_classic(enabled: bool, quiet: bool) {
     if let Err(error) = result
         && !quiet
     {
-        eprintln!("croc-rs: 无法更新 {}：{error}", path.display());
+        eprintln!("{}", t!("config.error.update_failed", path = path.display().to_string(), error = error));
     }
 }
 
-/// 上次探测选中的公共中继。Go 叫 `best-relay`（`cli.go:368`）。
+/// 上次探测选中的公共中继。Go 叫 `best-relay`。
 ///
-/// 存的是**地址**而不是索引：索引是池的排列，池一改就会指到别的中继上；地址不在池
+/// 存的是地址而不是索引：索引是池的排列，池一改就会指到别的中继上；地址不在池
 /// 里时会被当成"没记过"。
 fn best_relay_marker() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("best-relay"))
@@ -189,7 +190,7 @@ pub fn save_best_public_relay(address: &str, quiet: bool) {
     if let Err(error) = create_private_dirs_and_write(&path, address.as_bytes())
         && !quiet
     {
-        eprintln!("croc-rs: 无法写入 {}：{error}", path.display());
+        eprintln!("{}", t!("config.error.write_failed", path = path.display().to_string(), error = error));
     }
 }
 
@@ -207,7 +208,7 @@ pub fn clear_best_public_relay() {
     }
 }
 
-/// `--internal-dns` 的持久化标记路径。Go 就叫这个名字（`constants.go:55`）。
+/// `--internal-dns` 的持久化标记路径。Go 就叫这个名字。
 fn internal_dns_marker() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("internal-dns"))
 }
@@ -220,8 +221,8 @@ pub fn internal_dns_enabled() -> bool {
 
 /// 把 `--internal-dns` 记下来（配合 `--remember`）。
 ///
-/// Go 的触发条件是「`--remember` 出现在 argv 里」——**不带 `--internal-dns` 也会把标记
-/// 写上**，于是一次 `croc --remember file.txt` 就把内置 DNS 永久打开了。这里要求两个
+/// Go 的触发条件是「`--remember` 出现在 argv 里」——不带 `--internal-dns` 也会把标记
+/// 写上，于是一次 `croc --remember file.txt` 就把内置 DNS 永久打开了。这里要求两个
 /// 开关同时给出，差异见 docs/agent/cli.md 的行为差异一节。
 pub fn remember_internal_dns(quiet: bool) {
     let Some(path) = internal_dns_marker() else {
@@ -231,13 +232,13 @@ pub fn remember_internal_dns(quiet: bool) {
     if let Err(error) = create_private_dirs_and_write(&path, b"")
         && !quiet
     {
-        eprintln!("croc-rs: 无法写入 {}：{error}", path.display());
+        eprintln!("{}", t!("config.error.write_failed", path = path.display().to_string(), error = error));
     }
 }
 
-/// 配置目录，对应 Go 的 `utils.GetConfigDir`（`utils.go:64`）。
+/// 配置目录，对应 Go 的 `utils.GetConfigDir`。
 ///
-/// `CROC_CONFIG_DIR` 是**整个目录**（不再往下拼 `croc`），后两个才是。
+/// `CROC_CONFIG_DIR` 是整个目录（不再往下拼 `croc`），后两个才是。
 pub(crate) fn config_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CROC_CONFIG_DIR") {
         return Some(PathBuf::from(dir));
@@ -251,7 +252,7 @@ pub(crate) fn config_dir() -> Option<PathBuf> {
 
 /// 建目录并写文件，Unix 上限定 `0600`。
 ///
-/// 这些文件里有口令码与中继密码，Go 的 `writePrivateConfigFile`（`cli.go:916`）同样
+/// 这些文件里有口令码与中继密码，Go 的 `writePrivateConfigFile`同样
 /// 只给属主权限。
 fn create_private_dirs_and_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {

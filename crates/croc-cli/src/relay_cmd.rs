@@ -3,7 +3,7 @@
 //! 参数与 Go 版逐个对齐（`--host` / `--ports` / `--port` / `--transfers` /
 //! `--max-rooms-open` / `--max-pending-handshakes` / `--handshake-timeout` /
 //! `--source-join-limit` / `--room-join-limit` / `--join-limit-window`），
-//! 因为**中继是要被 Go 客户端连的**，flag 名对不上就等于自建中继没法用。
+//! 因为中继是要被 Go 客户端连的，flag 名对不上就等于自建中继没法用。
 //!
 //! # banner 就是端口列表
 //!
@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use clap::Args;
 use croc_relay::{Relay, RelayConfig};
+use rust_i18n::t;
 use tokio_util::sync::CancellationToken;
 
 /// 默认端口列表，与 Go 的 `--ports` 默认值一致。
@@ -107,7 +108,7 @@ impl RelayArgs {
 /// 跑起来。
 ///
 /// `password` 由调用方从全局 `--pass` 传进来（它已经解析过 `CROC_PASS` 环境变量与默认值）。
-/// **不要在这里再读一次环境变量**——那样 `croc-rs --pass x relay` 会被悄悄忽略，
+/// 不要在这里再读一次环境变量——那样 `croc-rs --pass x relay` 会被悄悄忽略，
 /// 症状是对端一律 `bad password`。
 ///
 /// `ports_explicit` 是"命令行上给了 `--ports` 吗"，决定端口从 `--ports` 来还是从
@@ -115,7 +116,7 @@ impl RelayArgs {
 pub async fn run(args: RelayArgs, password: &str, ports_explicit: bool, cancel: CancellationToken) -> ExitCode {
     let ports = args.resolved_ports(ports_explicit);
     if ports.len() < 2 {
-        eprintln!("croc-rs relay: 至少要两个端口（一个控制 + 至少一个数据）");
+        eprintln!("{}", t!("relay.error.need_two_ports"));
         return ExitCode::FAILURE;
     }
 
@@ -134,15 +135,13 @@ pub async fn run(args: RelayArgs, password: &str, ports_explicit: bool, cancel: 
         match Relay::bind((host, *port)).await {
             Ok(listener) => listeners.push(listener),
             Err(error) => {
-                eprintln!("croc-rs relay: 绑不上 {host}:{port}：{error}");
+                eprintln!("{}", t!("relay.error.bind_failed", host = host, port = port, error = error));
                 return ExitCode::FAILURE;
             }
         }
     }
-    println!(
-        "croc-rs relay 已启动：{}",
-        ports.iter().map(|port| format!("{host}:{port}")).collect::<Vec<_>>().join(", ")
-    );
+    let listening = ports.iter().map(|port| format!("{host}:{port}")).collect::<Vec<_>>().join(", ");
+    println!("{}", t!("relay.started", ports = listening));
 
     match relay.run(listeners, cancel).await {
         Ok(()) => ExitCode::SUCCESS,

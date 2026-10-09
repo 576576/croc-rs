@@ -37,8 +37,7 @@ GUI 与 CLI 用的是同一套协议与引擎，只是入口不同——所以�
 
 ## 安装
 
-目前只有 **alpha 预发布版**（[Releases](https://github.com/576576/croc-rs/releases)）——
-Windows 与 Linux x64 的压缩包自带两个二进制，解压即用：
+压缩包自带两个二进制，解压即用：
 
 | OS | 资产 |
 |---|---|
@@ -46,7 +45,8 @@ Windows 与 Linux x64 的压缩包自带两个二进制，解压即用：
 | Linux | `croc-rs-<版本>-linux-x64.tar.gz` |
 
 包里含 `croc-rs`（CLI）、`crocw-rs`（GUI）、`LICENSE` 与 `README.md`。
-校验和见每个 release 附的 `SHA256SUMS.txt`。alpha 阶段产物可能随时变，介意的话自行构建：
+
+## 手动构建
 
 ```bash
 git clone https://github.com/576576/croc-rs
@@ -55,7 +55,7 @@ cargo build --release -p croc-cli
 # 产物在 target/release/croc-rs（Windows 是 .exe）
 ```
 
-需要 Rust stable（edition 2024，MSRV 1.98）。全仓不使用 nightly。
+需要 Rust stable（edition 2024，MSRV 1.98）。
 
 ## 用法
 
@@ -178,16 +178,11 @@ croc-rs --relay "myrelay.example.com:9009" --pass 你的口令 send [文件]
 
 `--relay` 与 `--pass` 也可以走环境变量 `CROC_RELAY` / `CROC_PASS` / `CROC_PORTS`。
 
-### 与 Go 版互通
-
-默认走的是公共中继池（`1..4.getcroc.com:9009`，与 Go 版同一个池）。口令码按
-`sha256(码) mod 4` 决定落在池里的哪一台，两端各自算，所以互传时**不需要**额外指定中继。
-自建中继时两边都要带同样的 `--relay` 和 `--pass`。
-
 ## 界面语言
 
 界面文案只有中文与英文，按 `LC_ALL` → `LC_MESSAGES` → `LANG` → 系统区域依次判定，前缀 `zh`
-用中文，其余用英文；都判不出来时用英文。
+用中文，其余用英文；都判不出来时用英文。文案不在代码里：`crates/croc-cli/locales/` 下每种
+语言一个 yml，键一一对应，缺的键回退英文。
 
 ```bash
 LC_ALL=zh_CN.UTF-8 croc-rs -h    # 强制中文
@@ -247,13 +242,13 @@ croc-pakekey / croc-pake / croc-siec    纯数学与密钥协商
 
 所以也**不跑 Miri**（安全 Rust 产不出 UB）。全仓只用 stable 工具链。
 
-**本仓库是纯 Rust 仓库，不含任何 Go 源码。** 需要 Go 的辅助工具（黄金向量生成器）与
+**本仓库是纯 Rust 仓库，不含任何 Go 源码。** 需要 Go 的辅助工具（基准向量生成器）与
 互通用的 Go 版二进制都放在平级的 `croc-playground/` 里。
 
 ### 协议改动的规矩
 
 **先改文档再改代码。** 协议理解沉淀在 [`docs/agent/`](docs/agent)（`protocol.md` /
-`crypto.md`），改完才动实现。兼容性知识靠黄金向量与互通测试钉住，不靠代码里的
+`crypto.md`），改完才动实现。兼容性知识靠基准向量与互通测试保证，不靠代码里的
 `// COMPAT:` 注释。
 
 ## 致谢

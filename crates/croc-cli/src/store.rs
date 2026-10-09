@@ -1,10 +1,11 @@
 //! `croc store`：把文件存到暂存服务，拿一个取件链接。
 //!
-//! 与普通传输的区别是**不需要两端同时在线**：发送方传完就走，收件方什么时候取都行，
+//! 与普通传输的区别是不需要两端同时在线：发送方传完就走，收件方什么时候取都行，
 //! 服务端只保管密文（它看不到文件名与内容）。代价是要信任一个第三方来保管与计数。
 //!
 //! 撤销凭据（上传令牌）存在本机的 `store-receipts.json` 里，`--revoke <id>` 用它。
 
+use rust_i18n::t;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -258,13 +259,13 @@ fn remove_receipt(id: &str) -> Result<(), std::io::Error> {
 /// 上传。返回进程退出码。
 pub async fn send(request: StoreRequest) -> std::process::ExitCode {
     if request.paths.is_empty() {
-        eprintln!("croc-rs: 暂存模式需要一个文件路径");
+        eprintln!("{}", t!("store.error.need_path"));
         return std::process::ExitCode::FAILURE;
     }
     let expiration = match parse_expiration(&request.expiration) {
         Ok(value) => value,
         Err(reason) => {
-            eprintln!("croc-rs: --expiration {reason}");
+            eprintln!("{}", t!("store.error.expiration", reason = reason));
             return std::process::ExitCode::FAILURE;
         }
     };
@@ -302,24 +303,24 @@ pub async fn send(request: StoreRequest) -> std::process::ExitCode {
         upload_token: result.upload_token.clone(),
         expires_at: result.expires_at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
     }) {
-        eprintln!("croc-rs: 保存撤销凭据失败：{error}");
+        eprintln!("{}", t!("store.error.receipt_failed", error = error));
         return std::process::ExitCode::FAILURE;
     }
 
     let downloads = match result.downloads {
-        1 => "one verified download".to_owned(),
-        count => format!("{count} verified downloads"),
+        1 => t!("store.downloads_one").into_owned(),
+        count => t!("store.downloads_many", count = count).into_owned(),
     };
-    println!("Stored transfer is encrypted and available until {} or {downloads}.", result.expires_at);
+    println!("{}", t!("store.summary", expires = result.expires_at, downloads = downloads));
     println!();
-    println!("Browser link:");
+    println!("{}", t!("store.browser_link"));
     println!("    {browser_url}");
     println!();
-    println!("CLI recipient:");
-    println!("    Run croc, then paste this token:");
+    println!("{}", t!("store.cli_recipient"));
+    println!("    {}", t!("store.cli_recipient_hint"));
     println!("    {token}");
     println!();
-    println!("Revoke before download:");
+    println!("{}", t!("store.revoke_hint"));
     println!("    croc-rs --revoke {}", result.share.id);
 
     if request.clipboard != Clipboard::Off {
@@ -406,7 +407,7 @@ pub async fn revoke(id: &str) -> std::process::ExitCode {
         eprintln!("croc-rs: no unexpired local revoke receipt for {id}");
         return std::process::ExitCode::FAILURE;
     };
-    // 撤销只需要来源与 ID，不需要主密钥——但 `browser_url()` 会校验长度，所以给一把占位密钥。
+    // 撤销只需要来源与 ID，不需要主密钥——但 `browser_url()` 会校验长度，所以给一个占位密钥。
     let share = Share { origin: receipt.origin, id: receipt.id, master_key: vec![0u8; croc_store::KEY_SIZE] };
     let client = match Client::new(None) {
         Ok(client) => client,

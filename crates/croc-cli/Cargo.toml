@@ -32,11 +32,15 @@ thiserror.workspace = true
 qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# 撤销凭据里的过期时间是 RFC3339；`--expiration` 也用它。
+# 上传凭据的过期时间戳按 RFC3339 读写，`--expiration` 的时长也用它的 `Duration`。
 time.workspace = true
-# 界面语言：`LANG` / `LC_ALL` 都没设时要知道系统区域。Windows 上只有这一个来源，
-# 而查它必须调 API（`GetUserDefaultLocaleName`），不能靠环境变量。
+# 界面语言：三个 `LC_*` / `LANG` 都没设时读系统区域。Windows 上这些变量通常为空，
+# 只能由它调 `GetUserPreferredUILanguages` 取用户的首选 UI 语言。
 sys-locale = "0.3"
+# 界面文案。`t!(键)` 取自 `locales/<语言>.yml`，键在编译期烘进二进制；语言由
+# `src/locale.rs` 判定后 `set_locale`。某语言缺这个键时回退英文（`main.rs` 里给
+# `fallback`），英文也缺就直接把键名打出来。
+rust-i18n = "4"
 
 [dev-dependencies]
 hex.workspace = true

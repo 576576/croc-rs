@@ -20,6 +20,15 @@ pub enum Locale {
 }
 
 impl Locale {
+    /// `rust-i18n` 用的语言标签，与 `locales/` 下的文件名对应。
+    #[must_use]
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::En => "en",
+            Self::Zh => "zh-CN",
+        }
+    }
+
     /// 从当前环境判定。
     #[must_use]
     pub fn detect() -> Self {
@@ -36,7 +45,7 @@ impl Locale {
     /// 抽成纯函数是为了能脱开真实环境测优先级。
     #[must_use]
     pub fn resolve(lc_all: Option<&str>, lc_messages: Option<&str>, lang: Option<&str>, system: Option<&str>) -> Self {
-        // `C` / `POSIX` 是"不要本地化"的显式选择，此刻**不能**再退到系统区域——
+        // `C` / `POSIX` 是"不要本地化"的显式选择，此刻不能再退到系统区域——
         // 它表达的就是"给我英文"，而不是"我没设"。
         for value in [lc_all, lc_messages, lang].into_iter().flatten() {
             if let Some(tag) = normalize(value) {
@@ -50,6 +59,13 @@ impl Locale {
     fn from_tag(tag: &str) -> Self {
         if tag.starts_with("zh") { Self::Zh } else { Self::En }
     }
+}
+
+/// 把环境判出来的语言装进 `rust-i18n`。
+///
+/// 要在打出第一句话之前调一次：`t!` 不传 `locale` 时用的是这里的全局值。
+pub fn install() {
+    rust_i18n::set_locale(Locale::detect().tag());
 }
 
 /// 剥掉编码与修饰符，转小写。空串（以及 `C` / `POSIX`）返回 `Some("c")`，

@@ -97,7 +97,7 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
     的文件时，其余字段取零值，与 Go 自身在未设置时写出的值相同。
 12. **`croc store` 只做客户端**。Go 的 `croc-web` 既是网站又是暂存服务端；本实现只实现客户端
     （`croc-rs store`、`send --store`、`--revoke`），服务端请用 Go 的。协议名 `croc-store-v1`，
-    加密格式与九个 HTTP 端点都兼容：`crates/croc-store` 的黄金向量测试比对 HKDF 派生、AAD、清单
+    加密格式与九个 HTTP 端点都兼容：`crates/croc-store` 的基准向量测试比对 HKDF 派生、AAD、清单
     JSON 与 Share 编码，互通由端到端验证（Rust 上传 → Go 下载，反向亦然，两个方向内容都一致）。
     上传成功后打印的过期时间用的是本实现的日期格式，Go 用 RFC1123。
 13. **`--no-multi` 只影响发送端**。Go 的接收端没有这个开关，它按中继 banner 里的端口数走；
@@ -151,27 +151,45 @@ I12 因此在单机环境跳过，验证该路径需要两台机器。
 > 注意 `LANG` 压得住系统区域。Git Bash 默认设 `LANG=en_US.UTF-8`，所以在那里跑的
 > `croc-rs -h` 是英文；想看中文用 `LC_ALL=zh_CN.UTF-8 croc-rs -h`。
 
-### 4.2 英文 `-h` 与 Go 版逐字一致
+### 4.2 文案在 `locales/` 里
+
+面向用户的句子**不写在 Rust 里**：`crates/croc-cli/locales/en.yml` 与 `zh-CN.yml` 各存一栏，
+键一一对应，代码里只写键（`t!("cli.cancelled")`）。
+
+* 文件名就是语言标签（`zh-CN` 对应 `Locale::Zh`），文件里**不带**语言根，顶层直接是
+  `help:` / `cli:` / `notice:` / `store:` / `relay:` / `config:`；
+* 变量写成 `%{name}`，由 `t!` 的同名实参替换
+  （`t!("cli.sent_many", count = 3, size = "4.9 kB")`）；
+* 缺键时 `t!` 返回**键本身**，界面上会直接出现 `cli.cancelled` 这种东西。
+  `every_locale_translates_the_same_keys` 校验两种语言的键集合完全相同；
+* `i18n!("locales", fallback = "en")` 放在 `src/main.rs` 的 crate 根——`t!` 展开成
+  `crate::_rust_i18n_t!`，那个名字只能由宏生成；
+* proc macro 不能自己声明依赖，所以 `build.rs` 里写了 `rerun-if-changed=locales`：
+  没有它，改了 yml 不会重编译，界面会一直用旧表。
+
+加一门语言 = 加一个 `<tag>.yml`（键照抄 `en.yml`）+ 在 `Locale` 里加一个分支并给出标签。
+
+### 4.3 英文 `-h` 与 Go 版逐字一致
 
 英文帮助**不是翻译**，而是 Go 版 `croc -h` 的原样输出，只做两处改动：
 
 * 程序名 `croc` → `croc-rs`（`croc.schollz.com` 这类主机名不动）；
-* `VERSION:` 段里的版本号——它随构建变，黄金文件里写成 `<VERSION>`。
+* `VERSION:` 段里的版本号——它随构建变，基准文件里写成 `<VERSION>`。
 
 其余每一个字、每一处对齐、每一处 `(default: …)` 与 `[%VAR%]` 都与 Go 版相同。环境变量标记与 Go
 一样按平台变：Windows 上 `[%CROC_RELAY%]`，其余平台 `[$CROC_RELAY]`。
 
 对齐这件事是**手写表 + 自渲染**做的（`crates/croc-cli/src/help.rs`），没有走 clap 的渲染器——后者
 的分节与占位符写法（`Usage:` / `Commands:` / `--relay <RELAY>`）与 Go 版对不上。代价是帮助表与
-clap 的开关定义可能走散，所以有两条测试钉住：
+clap 的开关定义可能走散，所以有两条测试约束：
 
-* `tests/golden/help/*.txt` 是与 Go 版输出的黄金对照（生成方式见该目录的 README）；
+* `tests/golden/help/*.txt` 是与 Go 版输出的逐字对照（生成方式见该目录的 README）；
 * `the_help_table_and_the_parser_agree_on_every_flag` 双向核对帮助表与 clap 的开关集。
 
 因为版式要逐字一致，**flag 的归属也必须与 Go 一致**：`--transport` / `--no-local` / `--no-multi`
 只挂在 `send` 上，全局多了 `--testing`。接收端因此没有 `--transport` / `--no-multi`——与 Go 相同。
 
-### 4.3 英文的发送提示与 Go 同形
+### 4.4 英文的发送提示与 Go 同形
 
 发送端那两行也打到 **stderr**，形状照 Go（`croc.go:1819`）：
 

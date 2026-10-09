@@ -12,6 +12,9 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CROC_VERSION_NAME");
+    // 界面文案由 `i18n!` 这个 proc macro 在编译期读进去，而 proc macro 没法自己声明依赖，
+    // 改了 yml 不重跑就会一直用旧表（症状是界面上直接出现键名）。让 cargo 监视整个目录。
+    println!("cargo:rerun-if-changed=locales");
     watch_git_head();
     println!("cargo:rustc-env=CROC_CLI_VERSION={}", version());
 }

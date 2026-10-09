@@ -1,0 +1,234 @@
+# 界面文案（简体中文）。
+
+help:
+  section:
+    name: "名称"
+    usage: "用法"
+    version: "版本"
+    commands: "命令"
+    global_options: "全局选项"
+    description: "说明"
+    options: "选项"
+    command_options: "[子命令选项]"
+  default: "默认"
+  app:
+    usage: "安全传输文件或共享终端"
+    usage_text: |-
+      croc-rs [全局选项] [子命令] [子命令选项] [文件名或目录]
+
+         用法示例：
+         发送文件：
+            croc-rs send file.txt
+
+            -git 遵循 .gitignore
+         发送多个文件：
+            croc-rs send file1.txt file2.txt file3.txt
+          或
+            croc-rs send *.jpg
+
+         发送整个目录：
+            croc-rs send example-folder-name
+
+         指定口令码发送：
+            croc-rs send --code secret-code file.txt
+
+         用口令码接收：
+            croc-rs secret-code
+
+         暂存后取件：
+            croc-rs store --downloads 3 --expiration 3d file.txt
+
+         共享终端：
+            croc-rs ssh
+
+         加入共享终端：
+            CROC_SECRET=six-word-invitation croc-rs ssh
+    command:
+      send: "发送文件或目录（见 croc-rs send -h）"
+      store: "加密上传文件，供以后下载"
+      ssh: "共享或加入安全协作终端"
+      update: "检查并安全安装新版本"
+      relay: "自建中继（可选）"
+      help: "列出命令，或查看子命令帮助"
+  global:
+    flag:
+      internal-dns: "使用内置 DNS stub resolver，而非操作系统解析器"
+      classic: "切换 classic 模式（不安全，存在本地攻击面）与新模式（安全）"
+      remember: "记住这些设置供下次使用"
+      debug: "切换调试模式"
+      yes: "所有询问自动同意"
+      stdout: "将文件内容输出到标准输出"
+      no-compress: "禁用压缩"
+      ask: "发送与接收两端均需确认"
+      local: "仅使用局域网连接"
+      ignore-stdin: "忽略管道输入的 stdin"
+      overwrite: "覆盖或续传时不询问"
+      rename: "同名文件以新名字接收，不询问"
+      testing: "测试用开关"
+      quiet: "不输出任何内容"
+      disable-clipboard: "不复制口令码到剪贴板"
+      extended-clipboard: "复制整条命令，口令码以环境变量传递"
+      revoke: "用本机保存的发送方凭据撤销暂存传输"
+      multicast: "局域网发现使用的组播地址"
+      curve: "选择加密曲线（p521, p256, p384, siec, ed25519）"
+      ip: "已知的对方地址，如 10.0.0.1:9009、[::1]:9009"
+      relay: "中继地址"
+      relay6: "中继的 IPv6 地址"
+      out: "接收文件的落盘目录"
+      pass: "中继密码"
+      socks5: "SOCKS5 代理地址（中继 DNS 由代理解析）"
+      connect: "HTTP CONNECT 代理地址"
+      throttleUpload: "上行限速，如 500k"
+      help: "显示帮助"
+      version: "打印版本"
+  send:
+    usage: "发送文件或目录（见 croc-rs send -h）"
+    description: "发送文件或目录"
+    args_usage: "[文件名或目录]"
+    flag:
+      zip: "发送前将目录打包为 zip"
+      code: "连接中继的口令码（至少 6 个字符）"
+      transport: "发送方的数据面（auto, derp, relay）"
+      hash: "哈希算法（xxhash, imohash, md5, highway）"
+      text: "发送文本"
+      no-local: "发送时禁用本地中继"
+      no-multi: "禁用多端口复用"
+      git: "遵循 .gitignore，不发送被忽略的文件"
+      port: "中继的基准端口"
+      transfers: "传输使用的端口数"
+      qrcode: "将 web 接收链接显示为二维码"
+      exclude: "相对路径包含任一子串（逗号分隔）的文件不发送"
+      exclude-file: "相对路径精确等于任一项（逗号分隔）的文件不发送"
+      socks5: "SOCKS5 代理地址（中继 DNS 由代理解析）"
+      connect: "HTTP CONNECT 代理地址"
+      store: "加密上传文件，可限制有效期或下载次数"
+      store-downloads: "暂存模式下允许的验证下载次数"
+      store-expiration: "上传后的存储时长（如 90m、12h、3d、2w）"
+      store-url: "暂存服务地址"
+      help: "显示帮助"
+  store:
+    usage: "加密上传文件，供以后下载"
+    description: "暂存普通文件，可限制下载次数与有效期"
+    args_usage: "[文件名]"
+    flag:
+      downloads: "暂存模式下允许的验证下载次数"
+      expiration: "上传后的存储时长（如 90m、12h、3d、2w）"
+      url: "暂存服务地址"
+      socks5: "SOCKS5 代理地址（中继 DNS 由代理解析）"
+      connect: "HTTP CONNECT 代理地址"
+      qrcode: "将 web 接收链接显示为二维码"
+      help: "显示帮助"
+  ssh:
+    usage: "共享或加入安全协作终端"
+    description: "不给口令码即作为主机；给出六词码即加入"
+    args_usage: "[六词码]"
+    flag:
+      headless: "仅作为主机，不接入本地终端"
+      duration: "主机会话的最长存活时长"
+      reconnect-window: "客户端掉线后的重试时长"
+      no-reconnect: "禁用客户端自动重连"
+      transport: "客户端的数据面（auto, tailcat, relay）"
+      dir: "主机 shell 的工作目录"
+      help: "显示帮助"
+  update:
+    usage: "检查并安全安装新版本"
+    description: "自更新官方独立安装；其他安装方式给出包管理器指引"
+    args_usage: "[参数…]"
+    flag:
+      check: "仅检查是否有新版本，不安装"
+      yes: "自更新安全时不再询问"
+      help: "显示帮助"
+  relay:
+    usage: "自建中继（可选）"
+    description: "启动中继"
+    args_usage: "[参数…]"
+    flag:
+      host: "中继的监听地址"
+      ports: "中继的端口列表"
+      port: "中继的基准端口"
+      transfers: "中继使用的端口数"
+      max-rooms-open: "每个中继端口的最大等待房间数"
+      max-pending-handshakes: "每个中继端口的最大未完成握手数"
+      handshake-timeout: "单次初始握手的超时时间"
+      source-join-limit: "准入窗口内单个来源 IP 的最大加入次数"
+      room-join-limit: "准入窗口内单个房间的最大加入次数"
+      join-limit-window: "准入限流的滑动窗口长度"
+      help: "显示帮助"
+  fish:
+    usage: "生成 fish 补全并输出到 stdout"
+    description: ""
+    args_usage: "[参数…]"
+    flag:
+      help: "显示帮助"
+
+notice:
+  run_heading: "让对方执行："
+  or_open: "或访问："
+  clipboard_code: "口令码已复制到剪贴板"
+  clipboard_command: "命令已复制到剪贴板"
+  machine_id: "\r本机 ID 为 '%{id}'"
+  sending: "发送 %{label}（%{size}）"
+  sending_folders: "发送 %{label} 与 %{folders} 个目录（%{size}）"
+  files: "%{count} 个文件"
+
+cli:
+  cancelled: "croc-rs: 已取消"
+  interrupt: "\n收到中断，正在收尾…"
+  sent_one: "已发送 1 个文件（%{size}）"
+  sent_many: "已发送 %{count} 个文件（%{size}）"
+  received_summary: "接收完成：新收 %{received} 个（%{bytes} 字节），跳过 %{skipped} 个，拒绝 %{declined} 个"
+  need_code_or_subcommand: "croc-rs: 需要一个口令码，或者一个子命令（send / relay）"
+  prompt_receive_code: "请输入接收口令码："
+  machine_id: "本机 ID：%{id}"
+  unknown_machine: "未知机器"
+  confirm_receive: "接收来自 %{peer} 的 %{count} 个文件（%{bytes} 字节）？[Y/n] "
+  sending_file: "发送 '%{name}'（%{size}）"
+  receiving_file: "接收 '%{name}'（%{bytes} 字节）"
+  file_done: "完成 '%{name}'"
+  classic_prompt_on: "classic 模式当前是**开启**的。\n\n关闭它可以避免口令码出现在进程表里，多用户机器上别的本地用户就看不到它了。\n\n确定要关闭 classic 模式吗？(y/N) "
+  classic_prompt_off: "classic 模式当前是**关闭**的。\n\n开启它会让口令码出现在进程表里，多用户机器上别的本地用户可能看到它、并抢先把文件收走。\n\n确定要开启 classic 模式吗？(y/N) "
+  classic_notice_on: "\nclassic 模式已关闭。\n\n改用环境变量传口令码：\n\n  CROC_SECRET=**** croc-rs send 文件\n  CROC_SECRET=**** croc-rs\n"
+  classic_notice_off: "\nclassic 模式已开启。\n\n可以直接把口令码写在命令行上：\n\n  croc-rs send --code **** 文件\n  croc-rs ****\n"
+  classic_unchanged: "\nclassic 模式保持%{state}。"
+  classic_state_on: "开启"
+  classic_state_off: "关闭"
+  send_code_refused: "croc-rs: 命令行上的口令码会留在 shell 历史与进程表里，多用户机器上别人能看到。\n\n改用环境变量：\n\n  CROC_SECRET=**** croc-rs send 文件\n\n或者让本程序自己生成一个：\n\n  croc-rs send 文件\n\n要恢复旧行为（允许命令行口令码），启用 classic 模式：\n\n  croc-rs --classic"
+  receive_code_refused: "croc-rs: 命令行上的口令码会留在 shell 历史与进程表里，多用户机器上别人能看到。\n\n改用环境变量：\n\n  CROC_SECRET=**** croc-rs\n\n要恢复旧行为（允许命令行口令码），启用 classic 模式：\n\n  croc-rs --classic"
+  error:
+    transport_conflict: "croc-rs: 仅局域网传输时 --transport 必须是 auto"
+    send_needs_source: "croc-rs: send 需要至少一个路径、一段 --text 文本，或者管道进来的 stdin"
+    hash_unsupported: "croc-rs: 不支持的哈希算法 %{algorithm}，可用：%{list}"
+    relay_index_out_of_range: "croc-rs: 中继索引 %{index} 超出范围"
+    throttle_invalid: "croc-rs: --throttle-upload %{value} 不是合法速率（例：500k、1M、1048576）"
+    runtime_start: "croc-rs: 无法启动异步运行时：%{error}"
+  note:
+    tailscale_pending: "note: tailscale 数据面尚未可用（等上游 tailcat-rs），改用中继"
+    ssh_unimplemented: "note: ssh 终端共享尚未实现"
+    update_unimplemented: "note: 自更新尚未实现，请到发布页安装新版本"
+    update_check_unimplemented: "note: 检查新版本尚未实现"
+    fish_completion_unimplemented: "note: 生成 fish 补全尚未实现"
+    store_link_refused: "为安全起见，暂存链接不接受作为命令行参数：链接里带的解密密钥会出现在进程表里，同机其他用户可见。\n\n不带参数运行 croc-rs，在提示处粘贴链接；或者：\n\n  CROC_STORE_TOKEN='croc-store-v1....' croc-rs"
+
+store:
+  error:
+    need_path: "croc-rs: 暂存模式需要一个文件路径"
+    expiration: "croc-rs: --expiration %{reason}"
+    receipt_failed: "croc-rs: 保存撤销凭据失败：%{error}"
+  summary: "暂存传输已加密，有效期至 %{expires}，或 %{downloads} 后失效。"
+  downloads_one: "1 次验证下载"
+  downloads_many: "%{count} 次验证下载"
+  browser_link: "浏览器链接："
+  cli_recipient: "命令行接收方："
+  cli_recipient_hint: "运行 croc，然后粘贴这个 token："
+  revoke_hint: "下载前撤销："
+
+relay:
+  started: "croc-rs relay 已启动：%{ports}"
+  error:
+    need_two_ports: "croc-rs relay: 至少要两个端口（一个控制 + 至少一个数据）"
+    bind_failed: "croc-rs relay: 绑不上 %{host}:%{port}：%{error}"
+
+config:
+  error:
+    write_failed: "croc-rs: 无法写入 %{path}：%{error}"
+    update_failed: "croc-rs: 无法更新 %{path}：%{error}"
