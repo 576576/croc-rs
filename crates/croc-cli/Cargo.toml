@@ -34,6 +34,9 @@ serde.workspace = true
 serde_json.workspace = true
 # 撤销凭据里的过期时间是 RFC3339；`--expiration` 也用它。
 time.workspace = true
+# 界面语言：`LANG` / `LC_ALL` 都没设时要知道系统区域。Windows 上只有这一个来源，
+# 而查它必须调 API（`GetUserDefaultLocaleName`），不能靠环境变量。
+sys-locale = "0.3"
 
 [dev-dependencies]
 hex.workspace = true

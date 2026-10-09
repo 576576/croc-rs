@@ -13,7 +13,7 @@
 |---------|-----------|------|
 | `croc send` / `croc relay` / `croc store` | ✅ | |
 | `croc update` | [PENDING] 只有提示 | 子命令位置留了，`--check` / `--yes` 与别名 `upgrade` 都照 Go 收下，但不做任何事：打一条 `note:` 并以**失败码**退出（见 §2.1 第 3 条） |
-| `croc ssh` | [PENDING] 只有提示 | 子命令与参数（`--headless` / `--duration` / `--reconnect-window` / `--no-reconnect` / `--dir`，以及全局的 `--transport`）都照 Go 收下，但不做任何事：打一条 `note:` 并以**失败码**退出 |
+| `croc ssh` | [PENDING] 只有提示 | 子命令与参数（`--headless` / `--duration` / `--reconnect-window` / `--no-reconnect` / `--transport` / `--dir`）都照 Go 收下，但不做任何事：打一条 `note:` 并以**失败码**退出。它的 `--transport` 是子命令自己的，与 `send` 的同名开关无关（Go 也是这样，两者取值集不同） |
 | `croc generate-fish-completion` | [PENDING] 只有提示 | 同上；并且与 Go 一样在 `--help` 里隐藏 |
 
 > ⚠️ 顶层第一个位置参数是**口令码**。所以任何没被认出来的词（例如 `croc-rs foo`）都会被当成口令码
@@ -21,13 +21,13 @@
 
 ### 1.2 `send` 子命令参数
 
-| Go flag | `croc-rs` | 说明 |
-|---------|-----------|------|
-| `--ts-authkey` | [PENDING] 暂缓 | 见 §1.4 |
+无未实现项。
 
 ### 1.3 全局参数
 
 无未实现项。
+
+> `--testing` 是 Go 的测试开关。本实现照收（不报"未知参数"），但它是空操作。
 
 ### 1.4 `--transport derp` —— [PENDING] 暂缓实现
 
@@ -70,44 +70,84 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 
 1. **`--git` 的匹配基准**。Go 取 `info.Name()`（仅 basename）与 `.gitignore` 比对，因此 `src/*.log`
    这类含路径的规则在 Go 版中不生效；本实现按相对路径匹配。差异仅影响「发送哪些文件」，不涉及协议。
-2. **`--no-multi` 的作用域**。Go 只把它挂在 `send` 子命令上，接收方无法给出；本实现做成全局参数，
-   否则它对接收方无从生效。
-3. **`--hash` 缺少 `imohash-v2`**。该项是 Go 的渐进式哈希协商能力
+2. **`--hash` 缺少 `imohash-v2`**。该项是 Go 的渐进式哈希协商能力
    （`progressive-file-hash-v1`），需要额外的往返消息，本实现未协商该能力。
-4. **`--socks5` / `--connect` 不实现代理认证**。地址中含 `user:pass@` 时直接报错，而不是静默忽略
+3. **`--socks5` / `--connect` 不实现代理认证**。地址中含 `user:pass@` 时直接报错，而不是静默忽略
    ——忽略只会让用户面对「连不上」反复排查。
-5. **`--stdout` 的输出时机**。本实现在全部文件接收完毕后统一输出；Go 每收完一个文件即输出一次。
+4. **`--stdout` 的输出时机**。本实现在全部文件接收完毕后统一输出；Go 每收完一个文件即输出一次。
    内容与顺序一致，仅时机不同。
-6. **`--internal-dns` 的持久化条件更严格**。Go 只要 argv 中出现 `--remember` 就写出
+5. **`--internal-dns` 的持久化条件更严格**。Go 只要 argv 中出现 `--remember` 就写出
    `<config>/internal-dns` 标记（不必同时给出 `--internal-dns`，因此一次 `croc --remember file.txt`
    便会永久启用内置 DNS），且其 argv 扫描遇到 `--internal-dns` 即终止，两个开关的先后顺序会改变
    结果。本实现要求两个开关同时给出。
-7. **`CROC_SECRET` 仅作兜底**。命令行的位置参数优先于该环境变量；Go 的 `resolveSendSharedSecret`
-   （`cli.go:395`）则是环境变量优先——原因是 Go 的 `send` 默认不允许在命令行上给出码。本实现两条
-   路径都保留，因此以更明确的那条为准。
-8. **`--throttleUpload` 参数非法的处理方式**。Go 触发 `panic`（退出码 2 加栈回溯），本实现输出一行
+6. **`--throttleUpload` 参数非法的处理方式**。Go 触发 `panic`（退出码 2 加栈回溯），本实现输出一行
    可读的错误信息并以失败码退出。两者都不静默忽略——未生效的限速比报错更难排查。
-9. **剪贴板不预探测 `PATH`**。本实现按优先级依次尝试启动各平台的剪贴板程序，第一个成功的即为命中；
+7. **剪贴板不预探测 `PATH`**。本实现按优先级依次尝试启动各平台的剪贴板程序，第一个成功的即为命中；
    Go 先做 `LookPath` 判断再启动。另：`--extended-clipboard` 复制的命令中，可执行文件名是 `croc-rs`。
-10. **默认不做局域网发现**。Go 默认开启（除非显式给出 `--no-local`）；本实现只在显式给出 `--local`
-    时才做组播发现，因此 `--no-local` 在 v1 中是空操作。影响：同一局域网内的传输默认仍经中继，
-    需显式 `--local` 才走本地直连。
-11. **拒绝命令行口令码时的退出码**。拒绝的条件与 Go 一致（非 Windows、命令行给出码、未启用 classic
-    模式、环境变量未给出 `CROC_SECRET`），但 Go 以 `os.Exit(0)` 结束，本实现返回失败码：请求被拒绝
-    属于失败，脚本不应据此认为传输已完成。
-12. **接收端缺少口令码时的行为**。Go 一律从 stdin 读取一行；本实现仅在 stdin 为终端时询问，管道中
+8. **默认不做局域网发现**。Go 默认开启（除非显式给出 `--no-local`）；本实现只在显式给出 `--local`
+   时才做组播发现，因此 `--no-local` 在 v1 中是空操作。影响：同一局域网内的传输默认仍经中继，
+   需显式 `--local` 才走本地直连。
+9. **拒绝命令行口令码时的退出码**。拒绝的条件与 Go 一致（非 Windows、命令行给出码、未启用 classic
+   模式、环境变量未给出 `CROC_SECRET`），但 Go 以 `os.Exit(0)` 结束，本实现返回失败码：请求被拒绝
+   属于失败，脚本不应据此认为传输已完成。
+10. **接收端缺少口令码时的行为**。Go 一律从 stdin 读取一行；本实现仅在 stdin 为终端时询问，管道中
     直接报错，以免脚本静默挂起。
-13. **配置文件是 Go 格式的子集**。两个实现共用 `<config>/send.json` 与 `<config>/receive.json`，
+11. **配置文件是 Go 格式的子集**。两个实现共用 `<config>/send.json` 与 `<config>/receive.json`，
     字段名与 Go 的 `croc.Options` 一致，但本实现只写出 Go 也会应用的那部分字段。Go 读取本实现写出
     的文件时，其余字段取零值，与 Go 自身在未设置时写出的值相同。
-14. **`croc store` 只做客户端**。Go 的 `croc-web` 既是网站又是暂存服务端；本实现只实现客户端
+12. **`croc store` 只做客户端**。Go 的 `croc-web` 既是网站又是暂存服务端；本实现只实现客户端
     （`croc-rs store`、`send --store`、`--revoke`），服务端请用 Go 的。协议名 `croc-store-v1`，
     加密格式与九个 HTTP 端点都兼容：`crates/croc-store` 的黄金向量测试比对 HKDF 派生、AAD、清单
     JSON 与 Share 编码，互通由端到端验证（Rust 上传 → Go 下载，反向亦然，两个方向内容都一致）。
     上传成功后打印的过期时间用的是本实现的日期格式，Go 用 RFC1123。
+13. **`--no-multi` 只影响发送端**。Go 的接收端没有这个开关，它按中继 banner 里的端口数走；
+    本实现照抄这一点。想要单流，只给发送方加 `--no-multi` 即可。
 
 ### 2.3 不构成差异，但影响验证
 
 单机上 `Rust 发送 → Go 接收` 的 `--local` 永远发现不到对端：Go 的 `peerdiscovery` 默认
 `AllowSelf=false`，会丢弃源 IP 为本机的组播。Go 自身两端同机时同样失败，与本实现无关。互通矩阵的
 I12 因此在单机环境跳过，验证该路径需要两台机器。
+
+## 3. 界面语言与 `-h`
+
+### 3.1 只做中文与英文
+
+判定顺序固定，先命中先算：
+
+1. `LC_ALL`
+2. `LC_MESSAGES`
+3. `LANG`
+4. 系统区域（Windows 上取系统 UI 语言，其余平台读区域设置；都经 `sys-locale`）
+5. 兜底英文
+
+取值先剥掉 `.编码` 与 `@修饰符`（`zh_CN.UTF-8@euro` → `zh_cn`），前缀是 `zh` 用中文，其余一律英文。
+`LANG=C` / `LANG=POSIX` 是"给我英文"的显式选择，**不会**再回落到系统区域。
+
+> 注意 `LANG` 压得住系统区域。Git Bash 默认设 `LANG=en_US.UTF-8`，所以在那里跑的
+> `croc-rs -h` 是英文；想看中文用 `LC_ALL=zh_CN.UTF-8 croc-rs -h`。
+
+### 3.2 英文 `-h` 与 Go 版逐字一致
+
+英文帮助**不是翻译**，而是 Go 版 `croc -h` 的原样输出，只做两处改动：
+
+* 程序名 `croc` → `croc-rs`（`croc.schollz.com` 这类主机名不动）；
+* `VERSION:` 段里的版本号——它随构建变，黄金文件里写成 `<VERSION>`。
+
+其余每一个字、每一处对齐、每一处 `(default: …)` 与 `[%VAR%]` 都与 Go 版相同。环境变量标记与 Go
+一样按平台变：Windows 上 `[%CROC_RELAY%]`，其余平台 `[$CROC_RELAY]`。
+
+对齐这件事是**手写表 + 自渲染**做的（`crates/croc-cli/src/help.rs`），没有走 clap 的渲染器——后者
+的分节与占位符写法（`Usage:` / `Commands:` / `--relay <RELAY>`）与 Go 版对不上。代价是帮助表与
+clap 的开关定义可能走散，所以有两条测试钉住：
+
+* `tests/golden/help/*.txt` 是与 Go 版输出的黄金对照（生成方式见该目录的 README）；
+* `the_help_table_and_the_parser_agree_on_every_flag` 双向核对帮助表与 clap 的开关集。
+
+因为版式要逐字一致，**flag 的归属也必须与 Go 一致**：`--transport` / `--no-local` / `--no-multi`
+只挂在 `send` 上，全局多了 `--testing`。接收端因此没有 `--transport` / `--no-multi`——与 Go 相同。
+
+> 已知限制：Windows 上控制台代码页不是 UTF-8（`chcp` 显示 936）时，中文会显示成乱码。
+> 这是终端解码的问题，不是输出编码的问题（程序写出的始终是 UTF-8）。Git Bash、Windows Terminal
+> 或把代码页切到 65001 都正常。修它需要在启动时改控制台代码页（`unsafe` FFI），而本仓库不含
+> `unsafe`，因此不修。

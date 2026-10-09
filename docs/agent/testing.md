@@ -6,7 +6,7 @@
 |----|------|--------------|---------|
 | L0 纯函数测试 | `croc-protocol` / `croc-pake` / `croc-siec` / `croc-core`：性质测试 + 事件序列重放 | 否 | 每次提交 |
 | L1 单元测试 | 曲线算术、帧编解码、分片区间、codephrase、哈希 | 否 | 每次提交 |
-| L2 Golden 测试 | `tests/golden/*.json` 向量比对 | 否（向量已入库） | 每次提交 |
+| L2 Golden 测试 | `tests/golden/`（协议向量 + 帮助输出） | 否（向量已入库） | 每次提交 |
 | L3 交叉验证 | Rust ↔ Go 交换 PAKE / 消息字节 | **是** | 随互通矩阵 |
 | L4 集成测试 | 本机起 Rust relay + Rust sender/receiver 互传 | 否 | 每次提交 |
 | L5 互通测试 | Rust ↔ Go 客户端互传（含 Go relay） | **是** | 本地 `cargo xtask ci-interop` |
@@ -58,10 +58,13 @@ harness 自身的要求：**每个用例必须显式收尾**（停中继、清�
 | `pake.json` | 各曲线的 `InitCurve` → `Bytes()`、`Update` 后的 `SessionKey()` | `crates/croc-pake/tests/golden.rs` |
 | `pakekey.json` | `(room, secret, curve, 两端的 wire, salt) → (encKey, confA, confB)` | `crates/croc-pakekey/tests/golden.rs` |
 | `store.json` | `croc-store-v1` 的加密格式：HKDF 派生、分片 AAD、清单 JSON、Share 的两种编码 | `crates/croc-store/tests/golden.rs` |
+| `help/*.txt` | 各页 `-h` 的英文输出，逐字取自 Go 版（只有程序名换成 `croc-rs`、版本号留成 `<VERSION>`） | `crates/croc-cli/src/help.rs` 的测试 |
 
 维护约定：
 
 - 生成器是 `croc-playground/tools/gen-golden`（Go 程序，**不在本仓库**，一次性，需要 Go 环境）。
+  `help/` 那一组不一样：它们是 `croc -h` 的输出直接抄下来的，生成脚本见
+  [tests/golden/help/README.md](../../tests/golden/help/README.md)。
 - 向量文件**只增不改**。Go 版行为变了就新增文件，并在本文记录。
 - 每次改动密码学相关代码，先跑 L2，再跑 L5。
 - 涉及密文的向量在**固定随机源**下产出，所以可以重算并直接比对；只要密钥派生、AAD、JSON 字段名

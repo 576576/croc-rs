@@ -1,0 +1,8 @@
+NAME:
+   croc-rs generate-fish-completion - generate fish completion and output to stdout
+
+USAGE:
+   croc-rs generate-fish-completion [command options] [arguments...]
+
+OPTIONS:
+   --help, -h  show help (default: false)

@@ -15,6 +15,8 @@ use croc_engine::{EngineEvent, EventSink, ReceiveRequest, SendRequest, silent_si
 use croc_pake::CurveKind;
 
 use crate::config::{Remembered, Side, decode_relay, encode_relay};
+use crate::help;
+use crate::locale::Locale;
 use tokio_util::sync::CancellationToken;
 
 /// croc 的默认中继地址。
@@ -64,8 +66,6 @@ pub const FISH_COMPLETION_UNIMPLEMENTED_NOTE: &str = "note: fish completion gene
 pub const SSH_UNIMPLEMENTED_NOTE: &str = "note: ssh terminal sharing is not implemented yet";
 
 /// `--transport` 与 `--local` 冲突时的报错（Go 版同文，`src/cli/cli.go:700`）。
-///
-/// `--local` 与 `--no-local` 的互斥交给 clap（`conflicts_with`），不在这里重复一句。
 pub const TRANSPORT_CONFLICT: &str = "croc-rs: --transport must be auto for local-only transfers";
 
 /// 数据面选择。
@@ -93,7 +93,12 @@ pub enum Transport {
     // 习惯 `croc -v` 的人会撞到 "unexpected argument"。这里关掉内置的，自己声明一个，
     // 两个短选项都收。
     disable_version_flag = true,
-    about = "Send files anywhere, simply and securely.",
+    // `-h` / `--help` 由 `crate::help` 自己渲染（版式要与 Go 版逐字一致，clap 的渲染器
+    // 形状对不上），所以在 clap 这一层把它关掉；`parse()` 会在进 clap 之前先截住它。
+    // `help` 子命令同理——它在 Go 版里是 `help, h`，由 `crate::help` 一并接管。
+    disable_help_flag = true,
+    disable_help_subcommand = true,
+    about = "securely transfer files or share a terminal",
     // 允许 `croc-rs <口令码>` 这种"没有子命令"的用法：clap 先试子命令，匹配不上就
     // 落到位置参数上。
     args_conflicts_with_subcommands = false
@@ -153,15 +158,23 @@ struct SshArgs {
     /// 只当主机，不接本地终端。
     #[arg(long)]
     headless: bool,
-    /// 主机会话的最长存活时间。
-    #[arg(long, default_value = "12h")]
+    /// 主机会话的最长存活时间（Go 风格时长，默认 12h）。
+    ///
+    /// 默认值写成 `12h0m0s` 而不是 `12h`：这是 Go 的 `time.Duration` 打印自己的样子，
+    /// `-h` 要逐字对上。
+    #[arg(long, default_value = "12h0m0s")]
     duration: String,
     /// 掉线后客户端重试多久。
-    #[arg(long, default_value = "2m")]
+    #[arg(long, default_value = "2m0s")]
     reconnect_window: String,
     /// 关掉客户端的自动重连。
     #[arg(long)]
     no_reconnect: bool,
+    /// 客户端的数据面（`auto` / `tailcat` / `relay`）。
+    ///
+    /// 与 Go 一样是 `ssh` 自己的开关，不是全局 `--transport`——后者的取值集也不同。
+    #[arg(long, default_value = "auto")]
+    transport: String,
     /// 主机 shell 的工作目录。
     #[arg(long, default_value = ".")]
     dir: PathBuf,
@@ -169,7 +182,7 @@ struct SshArgs {
 
 /// `croc-rs update` 的参数。
 ///
-/// 两个开关都照 Go 的公开形式收下（`src/cli/cli.go:150`），但目前没有功能可做——收到就只为
+/// 三个开关都照 Go 的公开形式收下（`src/cli/cli.go:150`），但目前没有功能可做——收到就只为
 /// 挑一句更贴切的提示。
 #[derive(Debug, clap::Args)]
 struct UpdateArgs {
@@ -179,6 +192,10 @@ struct UpdateArgs {
     /// 安全时不再询问确认。
     #[arg(long)]
     yes: bool,
+    /// Go 内部用来登记安装方式的开关（`src/cli/cli.go:157`）。它照 Go 一样隐藏，
+    /// 留在命令行里只为让别人脚本里的 `--register-installer` 不至于报"未知参数"。
+    #[arg(long, hide = true)]
+    register_installer: bool,
 }
 
 /// `croc store`：把文件存到暂存服务。
@@ -191,12 +208,18 @@ struct StoreArgs {
     paths: Vec<PathBuf>,
 
     /// 允许的验证下载次数。
-    #[arg(long, default_value_t = 1, env = "CROC_STORE_DOWNLOADS")]
+    #[arg(long, default_value_t = 1)]
     downloads: i64,
 
     /// 存储时长（`90m` / `12h` / `3d` / `2w`）。
     #[arg(long, default_value = "1d")]
     expiration: String,
+
+    /// 把 web 接收链接显示成二维码。
+    ///
+    /// Go 的 `store` 与 `send --store` 都能给，展示的是同一个取件页面的链接。
+    #[arg(long, alias = "qr")]
+    qrcode: bool,
 
     /// 暂存服务的来源。
     #[arg(long, default_value = crate::store::DEFAULT_STORE_URL, env = "CROC_STORE_URL")]
@@ -215,15 +238,39 @@ struct SendArgs {
 
     /// 自定义口令码（至少 6 个字符）。
     ///
-    /// 没给就用环境变量 `CROC_SECRET`（与 Go 同名）。**命令行给的优先**——环境变量
-    /// 只是省得每次重打。
-    // `hide_env_values`：口令码是凭据，`--help` 不该把它原样打出来——那个输出经常被贴进 issue。
-    #[arg(short = 'c', long, env = "CROC_SECRET", hide_env_values = true)]
+    /// 没给就用环境变量 `CROC_SECRET`（与 Go 同名，见 [`merge_send`]）。**环境变量优先**
+    /// ——Go 的 `resolveSendSharedSecret`（`cli.go:395`）就是这么定的。
+    ///
+    /// 这里**不**把 `CROC_SECRET` 声明成 clap 的 `env`：Go 版的 `--code` 没有环境变量，
+    /// 声明了 `-h` 里就会多出一个 `[%CROC_SECRET%]` 标记，与 Go 版对不上。
+    #[arg(short = 'c', long)]
     code: Option<String>,
 
     /// 发送一段文本而不是文件。
     #[arg(short = 't', long)]
     text: Option<String>,
+
+    /// 发送方的数据面：`auto`（默认）/ `relay` / `derp`。
+    ///
+    /// Go 把它挂在 `send` 上（不是全局），所以接收端没有这个开关。
+    ///
+    /// `derp` 目前是 **pending** 状态：打一条 `note:` 后按 `relay` 处理，不影响退出码。
+    /// 理由见 `docs/agent/plan/tailscale.md`。
+    #[arg(long, value_enum, default_value_t = Transport::Auto)]
+    transport: Transport,
+
+    /// 发送时不启用内建中继（与全局的 `--local` 相对）。
+    ///
+    /// Go 的语义：`--local` 开内建中继，`--no-local` 关掉它。本实现默认就不做局域网
+    /// 发现（等价于默认关），所以它目前是空操作。
+    #[arg(long)]
+    no_local: bool,
+
+    /// 不用多端口复用（只用一条数据流）。
+    ///
+    /// 与 Go 一样只挂在 `send` 上：接收端不能给，它按中继 banner 里的端口数走。
+    #[arg(long)]
+    no_multi: bool,
 
     /// 哈希算法：`xxhash`（默认）/ `md5` / `imohash` / `highway`。
     ///
@@ -283,7 +330,10 @@ struct SendArgs {
     store: bool,
 
     /// `--store` 时的下载次数上限。
-    #[arg(long, default_value_t = 1, env = "CROC_STORE_DOWNLOADS")]
+    ///
+    /// Go 的 `--store-downloads` 没有环境变量（`CROC_STORE_DOWNLOADS` 只在 web 服务端
+    /// 用），这里也不声明，免得 `-h` 里多一个标记。
+    #[arg(long, default_value_t = 1)]
     store_downloads: i64,
 
     /// `--store` 时的存储时长。
@@ -332,27 +382,20 @@ struct Global {
     #[arg(long, global = true)]
     no_compress: bool,
 
-    /// 数据面：`auto`（默认）/ `relay` / `derp`。
+    /// 测试用开关。
     ///
-    /// `derp` 目前是 **pending** 状态：打一条 `note:` 后按 `relay` 处理，不影响退出码。
-    /// 理由见 `docs/agent/plan/tailscale.md`。
-    #[arg(long, value_enum, default_value_t = Transport::Auto, global = true)]
-    transport: Transport,
+    /// Go 拿它让引擎走一条更适合测试的路径（`src/croc/croc.go:2064`）。本实现接受它
+    /// 只为命令行兼容——脚本里带了这个参数不该报"未知参数"。
+    #[arg(long, global = true)]
+    testing: bool,
 
     /// 只走局域网连接（不碰公网中继）。
     ///
     /// 发送方起一个**只活在这次传输里**的中继，用 UDP 组播把端口喊出去
     /// （`239.255.255.250:9999`，载荷 `croc` + 端口），接收方组播找到它再连。
     /// 见 `croc_engine::local`。
-    #[arg(long, global = true, conflicts_with = "no_local")]
+    #[arg(long, global = true)]
     local: bool,
-
-    /// 禁用局域网直连（只走中继）。
-    ///
-    /// 发送方不起内建中继、也不广播。留着它是为了命令行兼容——用户脚本里带了这个
-    /// 参数不该报"未知参数"。
-    #[arg(long, global = true, conflicts_with = "local")]
-    no_local: bool,
 
     /// 经 SOCKS5 代理连中继（如 Tor）。
     ///
@@ -364,7 +407,9 @@ struct Global {
     /// 经 HTTP CONNECT 代理连中继。
     ///
     /// 地址可以带 `http://` 前缀。其余同 [`Self::socks5`]。
-    #[arg(long, global = true)]
+    ///
+    /// 认 `HTTP_PROXY` 环境变量：Go 版的声明里就有它。
+    #[arg(long, env = "HTTP_PROXY", global = true)]
     connect: Option<String>,
 
     /// 忽略管道进来的 stdin。
@@ -403,7 +448,10 @@ struct Global {
     /// 上行限速，如 `500k` / `1M` / `1048576`（不带单位就是字节/秒）。
     ///
     /// 只对发送方有效。`k` / `m` / `g` 按 1024 进位。
-    #[arg(long, alias = "throttleUpload", default_value = "", global = true)]
+    ///
+    /// 主名字是 Go 的 `--throttleUpload`（驼峰，没有横线）；`--throttle-upload` 作为
+    /// 别名保留，免得已经习惯那个写法的人撞车。
+    #[arg(long = "throttleUpload", alias = "throttle-upload", default_value = "", global = true)]
     throttle_upload: String,
 
     /// IPv6 中继地址。默认 `croc6.schollz.com:9009`。
@@ -445,13 +493,6 @@ struct Global {
     /// 端口固定是 9999（Go 用的 `peerdiscovery` 默认值，没有对应开关）。
     #[arg(long, default_value = "239.255.255.250", global = true)]
     multicast: std::net::Ipv4Addr,
-
-    /// 禁用多端口复用（只用一条数据流）。
-    ///
-    /// 两端要**各自**设：流数不在握手里协商，收发两端各自按中继的 banner 推导，只有一
-    /// 端设了的话两边的数据面对不上。Go 只把它挂在 `send` 子命令上（`src/cli/cli.go:101`）。
-    #[arg(long, global = true)]
-    no_multi: bool,
 
     /// 什么都不打印。
     #[arg(long, global = true)]
@@ -531,6 +572,16 @@ pub struct RelayRequest {
     pub args: crate::relay_cmd::RelayArgs,
     /// 中继密码（已解析过 `CROC_PASS` 与默认值）。
     pub password: String,
+    /// 命令行上给了 `--ports` 吗。决定端口从 `--ports` 来还是从 `--port` 推。
+    pub ports_explicit: bool,
+}
+
+/// 命令行参数，**不含**程序名。
+///
+/// 只给 `crate::help` 认 `-h` / `--help` 用。这里 `to_string_lossy` 是有意的：判帮助
+/// 不需要精确的字节，而口令码里出现非 UTF-8 时也不该在写帮助这一步炸掉。
+fn argv() -> Vec<String> {
+    std::env::args_os().skip(1).map(|word| word.to_string_lossy().into_owned()).collect()
 }
 
 /// 解析 argv。
@@ -540,6 +591,13 @@ pub struct RelayRequest {
 /// 参数不合法（曲线名拼错、口令码太短、既没给子命令也没给口令码）时返回
 /// [`ExitCode::FAILURE`]，并且已经把原因打到 stderr 上了。
 pub fn parse() -> Result<Parsed, ExitCode> {
+    // `-h` / `--help` 先自己接住：它要的版式与 clap 的渲染器不是一回事，见 [`crate::help`]。
+    // 放在 clap 之前是因为那样连"参数不合法"都不必先过一遍——`croc-rs send -h --typo`
+    // 在 Go 版里也照样打帮助。
+    if let Some(topic) = help::request(&argv()) {
+        help::print(topic, Locale::detect());
+        return Err(ExitCode::SUCCESS);
+    }
     let matches = Cli::command().get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
@@ -571,18 +629,6 @@ pub fn parse() -> Result<Parsed, ExitCode> {
     // 带了 `--remember` 就不读旧配置：这一趟是要**覆盖**它（Go 的 `!c.Bool("remember")`）。
     let side = if cli.command.is_none() { Side::Receive } else { Side::Send };
     let remembered = if cli.global.remember { Remembered::default() } else { Remembered::load(side) };
-
-    // `--transport` 可能来自配置，所以先合出来再校验。
-    let transport = effective_transport(&cli.global, &given, &remembered);
-    if let Err(reason) = validate_transport(cli.global.local, transport) {
-        eprintln!("{reason}");
-        return Err(ExitCode::FAILURE);
-    }
-    // 降级提示在 `--quiet` 下要吞掉——Go 的 `writeTailcatRelayFallbackWarning()`
-    // 也是先看 `quiet`（`src/cli/cli.go:581`）。
-    if transport == Transport::Derp && !cli.global.quiet {
-        eprintln!("{TAILSCALE_PENDING_NOTE}");
-    }
 
     // `--throttleUpload` 的写错要在这里就报出来：等连上中继再报，用户已经等过一次握手。
     let throttle_upload = match parse_throttle(&cli.global.throttle_upload) {
@@ -627,14 +673,31 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                 return Err(ExitCode::FAILURE);
             }
             let request =
-                stored_upload(&cli.global, clipboard, paths, args.downloads, args.expiration, args.url, false);
+                stored_upload(&cli.global, clipboard, paths, args.downloads, args.expiration, args.url, args.qrcode);
             Ok(Parsed { debug: cli.global.debug, action: Action::Store(Box::new(request)) })
         }
         Some(Command::Relay(args)) => {
             let password = cli.global.pass.clone();
-            Ok(Parsed { debug: cli.global.debug, action: Action::Relay(Box::new(RelayRequest { args, password })) })
+            // `--ports` 给没给决定端口从哪儿来，与 Go 的 `c.IsSet("ports")` 一致。
+            let ports_explicit = given.sub_given("ports");
+            Ok(Parsed {
+                debug: cli.global.debug,
+                action: Action::Relay(Box::new(RelayRequest { args, password, ports_explicit })),
+            })
         }
         Some(Command::Send(args)) => {
+            // `--transport` 是 `send` 自己的开关（Go 也是），可能来自配置文件，所以先合出来
+            // 再校验。接收端没有这个开关，所以这段只在发送分支里。
+            let transport = effective_transport(&args, &given, &remembered);
+            if let Err(reason) = validate_transport(cli.global.local, transport) {
+                eprintln!("{reason}");
+                return Err(ExitCode::FAILURE);
+            }
+            // 降级提示在 `--quiet` 下要吞掉——Go 的 `writeTailcatRelayFallbackWarning()`
+            // 也是先看 `quiet`（`src/cli/cli.go:581`）。
+            if transport == Transport::Derp && !cli.global.quiet {
+                eprintln!("{TAILSCALE_PENDING_NOTE}");
+            }
             // `--store` 走的是另一条路：文件先加密上传到一个第三方，不经过中继。
             if args.store {
                 if let Err(reason) = crate::store::validate_store_sources(
@@ -761,7 +824,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                         relay_base_port: Some(args.port),
                         // 已经由 clap 的 range 限到 1..=8。
                         transfers: usize::from(args.transfers),
-                        no_multi: cli.global.no_multi,
+                        no_multi: args.no_multi,
                         machine_id,
                         events,
                     }),
@@ -842,7 +905,9 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     ip: cli.global.ip.clone(),
                     stdout: cli.global.stdout,
                     internal_dns,
-                    no_multi: cli.global.no_multi,
+                    // `--no-multi` 只挂在 `send` 上（与 Go 一致），接收端不能给，
+                    // 它按中继 banner 里的端口数走。
+                    no_multi: false,
                     machine_id,
                     confirm,
                     events,
@@ -918,7 +983,9 @@ pub async fn run(parsed: Parsed) -> ExitCode {
             eprintln!("{FISH_COMPLETION_UNIMPLEMENTED_NOTE}");
             ExitCode::FAILURE
         }
-        Action::Relay(request) => crate::relay_cmd::run(request.args, &request.password, cancel).await,
+        Action::Relay(request) => {
+            crate::relay_cmd::run(request.args, &request.password, request.ports_explicit, cancel).await
+        }
         Action::Store(request) => crate::store::send(*request).await,
         Action::ReceiveStored(request) => crate::store::receive(*request).await,
         Action::Revoke(id) => crate::store::revoke(&id).await,
@@ -1245,7 +1312,11 @@ fn merge_send(cli: &Global, args: &SendArgs, given: &Given<'_>, remembered: &Rem
         password: pick(given.top_given("pass"), &remembered.relay_password, &cli.pass),
         curve: pick(given.top_given("curve"), &remembered.curve, &cli.curve),
         hash: pick(given.sub_given("hash"), &remembered.hash_algorithm, &args.hash),
-        code: if given.sub_given("code") { args.code.clone() } else { non_empty(&remembered.shared_secret) },
+        // 三档，后给的不覆盖先给的：命令行 `--code` → 上次记住的 → `CROC_SECRET`。
+        // 环境变量排最后是 Go 的顺序（`resolveSendSharedSecret`，`cli.go:395`：
+        // `envSecret` 非空就直接用它，压过 `--code`）。
+        code: env_secret()
+            .or_else(|| if given.sub_given("code") { args.code.clone() } else { non_empty(&remembered.shared_secret) }),
         git: if given.sub_given("git") { args.git } else { remembered.git_ignore },
         local: if given.top_given("local") { cli.local } else { remembered.only_local },
     }
@@ -1311,8 +1382,8 @@ fn remembered_for_send(cli: &Global, args: &SendArgs, given: &Given<'_>) -> Reme
         hash_algorithm: args.hash.clone(),
         git_ignore: args.git,
         disable_clipboard: cli.disable_clipboard,
-        disable_local: cli.no_local,
-        transport: transport_name(cli.transport).to_owned(),
+        disable_local: args.no_local,
+        transport: transport_name(args.transport).to_owned(),
     }
 }
 
@@ -1336,12 +1407,13 @@ fn remembered_for_receive(cli: &Global, code: &str) -> Remembered {
 
 /// 这次真正要用的 `--transport`。
 ///
-/// 它可能来自配置（只有发送端记它），所以不能只看 `cli.transport`。
-fn effective_transport(cli: &Global, given: &Given<'_>, remembered: &Remembered) -> Transport {
-    if given.top_given("transport") {
-        return cli.transport;
+/// 它挂在 `send` 上（与 Go 一致），且可能来自配置文件（只有发送端记它），
+/// 所以既不能只看顶层，也不能只看 `args.transport`。
+fn effective_transport(args: &SendArgs, given: &Given<'_>, remembered: &Remembered) -> Transport {
+    if given.sub_given("transport") {
+        return args.transport;
     }
-    remembered_transport(&remembered.transport).unwrap_or(cli.transport)
+    remembered_transport(&remembered.transport).unwrap_or(args.transport)
 }
 
 /// 口令码要不要进剪贴板，进的话放什么。
@@ -1349,8 +1421,11 @@ fn effective_transport(cli: &Global, given: &Given<'_>, remembered: &Remembered)
 /// `--disable-clipboard` 会跟着 `--remember` 走，`--extended-clipboard` 不会
 /// （Go 的记住项里也没有它）。
 fn clipboard_choice(cli: &Global, given: &Given<'_>, remembered: &Remembered) -> Clipboard {
+    // id 是字段名 `disable_clipboard`，不是它对应的长选项名 `--disable-clipboard`：
+    // 写成长选项名在 debug 下 panic、release 下被当成"没给"，于是 `--disable-clipboard`
+    // 会被静默忽略。
     let disabled =
-        if given.top_given("disable-clipboard") { cli.disable_clipboard } else { remembered.disable_clipboard };
+        if given.top_given("disable_clipboard") { cli.disable_clipboard } else { remembered.disable_clipboard };
     if disabled {
         Clipboard::Off
     } else if cli.extended_clipboard {
@@ -1540,6 +1615,130 @@ fn spawn_signal_handler(cancel: CancellationToken) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    /// clap 接受的开关名（主名）。隐藏开关不算——它们本来就不该出现在帮助里。
+    fn long_names(args: impl Iterator<Item = clap::Arg>) -> BTreeSet<String> {
+        args.filter(|arg| !arg.is_hide_set()).filter_map(|arg| arg.get_long().map(ToOwned::to_owned)).collect()
+    }
+
+    /// 帮助表里列出的开关名。
+    fn listed(topic: help::Topic) -> BTreeSet<String> {
+        topic.listed_flags(Locale::En).into_iter().map(ToOwned::to_owned).collect()
+    }
+
+    /// 帮助表与 clap 的开关集不许走散。
+    ///
+    /// 帮助是手写的一张表（为了与 Go 版版式逐字一致），clap 才是真正解析参数的地方；
+    /// 两者一旦分家，症状要么是"帮助里写了但给了报未知参数"，要么是"能用的开关在帮助
+    /// 里查不到"。这条把两个方向都钉住。
+    #[test]
+    fn the_help_table_and_the_parser_agree_on_every_flag() {
+        let root = Cli::command();
+        let global = long_names(root.get_arguments().cloned());
+
+        // 顶层：表里除了 `help`（由 `crate::help` 自己接，clap 这一层没有）之外，
+        // 应当与 clap 的开关集完全相同。
+        assert_eq!(
+            listed(help::Topic::App).difference(&BTreeSet::from(["help".to_owned()])).cloned().collect::<BTreeSet<_>>(),
+            global
+        );
+
+        for topic in [
+            help::Topic::Send,
+            help::Topic::Store,
+            help::Topic::Ssh,
+            help::Topic::Update,
+            help::Topic::Relay,
+            help::Topic::FishCompletion,
+        ] {
+            let name = topic.clap_name().expect("子命令都有名字");
+            let command = root.find_subcommand(name).unwrap_or_else(|| panic!("clap 里没有 {name}"));
+            let own = long_names(command.get_arguments().cloned());
+            // `--help` 由 `crate::help` 自己接，clap 这一层没有它；核对时从表里摘掉。
+            let table: BTreeSet<String> =
+                listed(topic).difference(&BTreeSet::from(["help".to_owned()])).cloned().collect();
+            // 表里写的每一个开关都必须真能解析：或者在子命令上，或者是全局的
+            //（Go 的 `send` / `store` 也把 `--socks5` / `--connect` 列在自己的 OPTIONS 里）。
+            let accepted: BTreeSet<String> = own.union(&global).cloned().collect();
+            let unknown: Vec<_> = table.difference(&accepted).collect();
+            assert!(unknown.is_empty(), "{name} 的帮助里写了 clap 不认的开关：{unknown:?}");
+            // 反过来：子命令自己的开关一个都不能漏（全局的可以不重复列）。
+            let missing: Vec<_> = own.difference(&table).filter(|flag| flag.as_str() != "version").collect();
+            assert!(missing.is_empty(), "{name} 的开关没写进帮助：{missing:?}");
+        }
+    }
+
+    /// 中英两套表列的是同一批开关。
+    #[test]
+    fn both_locales_list_the_same_flags() {
+        for topic in [
+            help::Topic::App,
+            help::Topic::Send,
+            help::Topic::Store,
+            help::Topic::Ssh,
+            help::Topic::Update,
+            help::Topic::Relay,
+            help::Topic::FishCompletion,
+        ] {
+            assert_eq!(
+                topic.listed_flags(Locale::En),
+                topic.listed_flags(Locale::Zh),
+                "{:?} 的两种语言列的不是同一批开关",
+                topic
+            );
+        }
+    }
+
+    /// `--transport` / `--no-local` / `--no-multi` 在 Go 版里只挂在 `send` 上。
+    ///
+    /// 放到顶层会让 `-h` 的全局区多出三条、与 Go 版对不上，所以这条也钉住。
+    #[test]
+    fn the_send_only_flags_stay_on_send() {
+        let root = Cli::command();
+        ["transport", "no-local", "no-multi"].iter().for_each(|flag| {
+            assert!(root.get_arguments().all(|arg| arg.get_long() != Some(flag)), "`--{flag}` 不该出现在顶层");
+        });
+        let send = root.find_subcommand("send").expect("有 send");
+        ["transport", "no-local", "no-multi"].iter().for_each(|flag| {
+            assert!(send.get_arguments().any(|arg| arg.get_long() == Some(flag)), "`--{flag}` 应该在 send 上");
+        });
+    }
+
+    /// `Given` 查过的那些 clap id。
+    ///
+    /// clap 的 id 是**字段名**（`disable_clipboard`），不是长选项名
+    /// （`--disable-clipboard`）。写错一个字的后果不对称：debug 下 `value_source` 直接
+    /// panic，release 下静默返回 `None`、被当成"没给"。这条测试逐条核对它们真的存在。
+    const QUERIED_IDS: &[&str] = &[
+        "relay",
+        "relay6",
+        "pass",
+        "curve",
+        "local",
+        "yes",
+        "overwrite",
+        "rename",
+        "disable_clipboard",
+        "code",
+        "hash",
+        "git",
+        "transport",
+        "ports",
+    ];
+
+    #[test]
+    fn the_ids_we_query_are_real_clap_ids() {
+        let root = Cli::command();
+        let known: BTreeSet<String> = std::iter::once(&root)
+            .chain(root.get_subcommands())
+            .flat_map(clap::Command::get_arguments)
+            .map(|arg| arg.get_id().to_string())
+            .collect();
+        for id in QUERIED_IDS {
+            assert!(known.contains(*id), "`{id}` 不是任何 clap 参数的 id；能用的有：{known:?}");
+        }
+    }
 
     #[test]
     fn the_default_relay_matches_go() {

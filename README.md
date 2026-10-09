@@ -183,6 +183,23 @@ croc-rs --relay "myrelay.example.com:9009" --pass 你的口令 send [文件]
 默认连的是公共中继 `croc.schollz.com:9009`（Go 版 croc 用的同一个）。要跟 `croc` 互传，
 自建中继时两边都要带同样的 `--relay` 和 `--pass`。
 
+## 界面语言
+
+界面文案只有中文与英文，按 `LC_ALL` → `LC_MESSAGES` → `LANG` → 系统区域依次判定，前缀 `zh`
+用中文，其余用英文；都判不出来时用英文。
+
+```bash
+LC_ALL=zh_CN.UTF-8 croc-rs -h    # 强制中文
+LC_ALL=en_US.UTF-8 croc-rs -h    # 强制英文
+```
+
+英文的帮助输出与 Go 版 `croc -h` **逐字相同**（只有程序名和版本号不同），所以从 `croc` 过来的人
+看到的是同一份说明。`-h` / `--help` 等价，`help` / `h` 子命令也认：
+
+```bash
+croc-rs help send                # 等价于 croc-rs send -h
+```
+
 ## 与 Go 版的差距
 
 哪些 flag 和子命令已经实现、哪些还没有，逐项列在

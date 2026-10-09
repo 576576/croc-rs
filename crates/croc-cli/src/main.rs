@@ -19,6 +19,9 @@
 mod cli;
 mod clipboard;
 mod config;
+mod duration;
+mod help;
+mod locale;
 mod qr;
 mod relay_cmd;
 mod store;

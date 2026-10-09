@@ -1,0 +1,75 @@
+NAME:
+   croc-rs - securely transfer files or share a terminal
+
+USAGE:
+   croc-rs [GLOBAL OPTIONS] [COMMAND] [COMMAND OPTIONS] [filename(s) or folder]
+
+   USAGE EXAMPLES:
+   Send a file:
+      croc-rs send file.txt
+
+      -git to respect your .gitignore
+   Send multiple files:
+      croc-rs send file1.txt file2.txt file3.txt
+    or
+      croc-rs send *.jpg
+
+   Send everything in a folder:
+      croc-rs send example-folder-name
+
+   Send a file with a custom code:
+      croc-rs send --code secret-code file.txt
+
+   Receive a file using code:
+      croc-rs secret-code
+
+   Store files for later download:
+      croc-rs store --downloads 3 --expiration 3d file.txt
+
+   Share a terminal:
+      croc-rs ssh
+
+   Join a shared terminal:
+      CROC_SECRET=six-word-invitation croc-rs ssh
+
+VERSION:
+   <VERSION>
+
+COMMANDS:
+   send             send file(s), or folder (see options with croc-rs send -h)
+   store            upload encrypted files for later download
+   ssh              share or join a secure, collaborative terminal
+   update, upgrade  check for and safely install a newer croc-rs release
+   relay            start your own relay (optional)
+   help, h          Shows a list of commands or help for one command
+
+GLOBAL OPTIONS:
+   --internal-dns          use a built-in DNS stub resolver rather than the host operating system (default: false)
+   --classic               toggle between the classic mode (insecure due to local attack vector) and new mode (secure) (default: false)
+   --remember              save these settings to reuse next time (default: false)
+   --debug                 toggle debug mode (default: false)
+   --yes                   automatically agree to all prompts (default: false)
+   --stdout                redirect file to stdout (default: false)
+   --no-compress           disable compression (default: false)
+   --ask                   make sure sender and recipient are prompted (default: false)
+   --local                 force to use only local connections (default: false)
+   --ignore-stdin          ignore piped stdin (default: false)
+   --overwrite             do not prompt to overwrite or resume (default: false)
+   --rename                receive files that already exist under a new name instead of prompting (default: false)
+   --testing               flag for testing purposes (default: false)
+   --quiet                 disable all output (default: false)
+   --disable-clipboard     disable copy to clipboard (default: false)
+   --extended-clipboard    copy full command with secret as env variable to clipboard (default: false)
+   --revoke value          revoke a stored transfer using its local sender receipt
+   --multicast value       multicast address to use for local discovery (default: "239.255.255.250")
+   --curve value           choose an encryption curve (p521, p256, p384, siec, ed25519) (default: "p256")
+   --ip value              set sender ip if known e.g. 10.0.0.1:9009, [::1]:9009
+   --relay value           address of the relay (default: "croc.schollz.com:9009") [%CROC_RELAY%]
+   --relay6 value          ipv6 address of the relay (default: "croc6.schollz.com:9009") [%CROC_RELAY6%]
+   --out value             specify an output folder to receive the file (default: ".")
+   --pass value            password for the relay (default: "pass123") [%CROC_PASS%]
+   --socks5 value          SOCKS5 proxy address (relay DNS is resolved by the proxy) [%SOCKS5_PROXY%]
+   --connect value         add a http proxy [%HTTP_PROXY%]
+   --throttleUpload value  throttle the upload speed e.g. 500k
+   --help, -h              show help (default: false)
+   --version, -v           print the version (default: false)

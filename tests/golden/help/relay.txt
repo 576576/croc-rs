@@ -1,0 +1,21 @@
+NAME:
+   croc-rs relay - start your own relay (optional)
+
+USAGE:
+   croc-rs relay [command options] [arguments...]
+
+DESCRIPTION:
+   start relay
+
+OPTIONS:
+   --host value                    host of the relay
+   --ports value                   ports of the relay (default: "9009,9010,9011,9012,9013") [%CROC_PORTS%]
+   --port value                    base port for the relay (default: 9009) [%CROC_PORT%]
+   --transfers value               number of ports to use for relay (default: 5)
+   --max-rooms-open value          maximum waiting rooms per relay port (default: 128) [%CROC_MAX_ROOMS_OPEN%]
+   --max-pending-handshakes value  maximum incomplete handshakes per relay port (default: 64) [%CROC_MAX_PENDING_HANDSHAKES%]
+   --handshake-timeout value       maximum time for an initial relay handshake (default: 5m0s) [%CROC_HANDSHAKE_TIMEOUT%]
+   --source-join-limit value       maximum room joins per source IP in the admission window (default: 30) [%CROC_SOURCE_JOIN_LIMIT%]
+   --room-join-limit value         maximum joins per room in the admission window (default: 30) [%CROC_ROOM_JOIN_LIMIT%]
+   --join-limit-window value       sliding window for relay admission limits (default: 1m0s) [%CROC_JOIN_LIMIT_WINDOW%]
+   --help, -h                      show help (default: false)

@@ -1,0 +1,17 @@
+NAME:
+   croc-rs ssh - share or join a secure, collaborative terminal
+
+USAGE:
+   croc-rs ssh [command options] [six-word-code]
+
+DESCRIPTION:
+   start without a code to host; provide a six-word code to join
+
+OPTIONS:
+   --headless                host without attaching the local terminal (default: false)
+   --duration value          maximum hosted session lifetime (default: 12h0m0s)
+   --reconnect-window value  how long a guest retries after a connection loss (default: 2m0s)
+   --no-reconnect            disable automatic guest reconnection (default: false)
+   --transport value         guest transport (auto, tailcat, relay) (default: "auto")
+   --dir value               working directory for a hosted shell (default: ".")
+   --help, -h                show help (default: false)

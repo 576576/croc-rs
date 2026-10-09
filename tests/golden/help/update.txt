@@ -1,0 +1,13 @@
+NAME:
+   croc-rs update - check for and safely install a newer croc-rs release
+
+USAGE:
+   croc-rs update [command options] [arguments...]
+
+DESCRIPTION:
+   self-update official standalone installs; show package-manager guidance for other installs
+
+OPTIONS:
+   --check     check for a newer release without installing it (default: false)
+   --yes       install without prompting when self-update is safe (default: false)
+   --help, -h  show help (default: false)

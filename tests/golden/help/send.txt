@@ -1,0 +1,30 @@
+NAME:
+   croc-rs send - send file(s), or folder (see options with croc-rs send -h)
+
+USAGE:
+   croc-rs send [command options] [filename(s) or folder]
+
+DESCRIPTION:
+   send file(s), or folder
+
+OPTIONS:
+   --zip                     zip folder before sending (default: false)
+   --code value, -c value    codephrase used to connect to relay (at least 6 characters)
+   --transport value         sender file data transport (auto, derp, relay) (default: "auto")
+   --hash value              hash algorithm (xxhash, imohash, md5, highway) (default: "xxhash")
+   --text value, -t value    send some text
+   --no-local                disable local relay when sending (default: false)
+   --no-multi                disable multiplexing (default: false)
+   --git                     enable .gitignore respect / don't send ignored files (default: false)
+   --port value              base port for the relay (default: 9009)
+   --transfers value         number of ports to use for transfers (default: 4)
+   --qrcode, --qr            show the web receive URL as a qrcode (default: false)
+   --exclude value           exclude files if they contain any of the comma separated strings
+   --exclude-file value      exclude files matching any of the comma separated relative paths exactly
+   --socks5 value            SOCKS5 proxy address (relay DNS is resolved by the proxy) [%SOCKS5_PROXY%]
+   --connect value           add a http proxy [%HTTP_PROXY%]
+   --store                   upload encrypted files for a finite lifetime or a limited number of verified downloads (default: false)
+   --store-downloads value   number of verified downloads allowed in stored mode (default: 1)
+   --store-expiration value  stored lifetime after upload (for example 90m, 12h, 3d, or 2w) (default: "1d")
+   --store-url value         stored-transfer service origin (default: "https://getcroc.com") [%CROC_STORE_URL%]
+   --help, -h                show help (default: false)

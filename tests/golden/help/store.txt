@@ -1,0 +1,17 @@
+NAME:
+   croc-rs store - upload encrypted files for later download
+
+USAGE:
+   croc-rs store [command options] [filename(s)]
+
+DESCRIPTION:
+   store regular files with a download limit and expiration
+
+OPTIONS:
+   --downloads value   number of verified downloads allowed in stored mode (default: 1)
+   --expiration value  stored lifetime after upload (for example 90m, 12h, 3d, or 2w) (default: "1d")
+   --url value         stored-transfer service origin (default: "https://getcroc.com") [%CROC_STORE_URL%]
+   --socks5 value      SOCKS5 proxy address (relay DNS is resolved by the proxy) [%SOCKS5_PROXY%]
+   --connect value     add a http proxy [%HTTP_PROXY%]
+   --qrcode, --qr      show the web receive URL as a qrcode (default: false)
+   --help, -h          show help (default: false)
