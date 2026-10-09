@@ -109,9 +109,33 @@ note: tailscale data plane is not available yet (pending upstream tailcat-rs); u
 `AllowSelf=false`，会丢弃源 IP 为本机的组播。Go 自身两端同机时同样失败，与本实现无关。互通矩阵的
 I12 因此在单机环境跳过，验证该路径需要两台机器。
 
-## 3. 界面语言与 `-h`
+## 3. 公共中继池
 
-### 3.1 只做中文与英文
+默认中继（`croc.schollz.com:9009`）不是一个地址，而是一个**有序的池**：
+
+| 索引 | 地址 |
+|------|------|
+| 0 | `1.getcroc.com:9009` |
+| 1 | `2.getcroc.com:9009` |
+| 2 | `3.getcroc.com:9009` |
+| 3 | `4.getcroc.com:9009` |
+
+口令码按 `sha256(码) mod 池长` 确定性地落在其中一台上，所以**码本身就带着"该连哪台"**
+这层信息：两端各自算，不需要谁来通知谁。
+
+* **发送端**：没给 `--code` 时先探测一遍池（并发 ping/pong，谁先回用谁），再反着生成一个
+  哈希正好落在该索引上的码；给了 `--code` 就按码算索引。
+* **接收端**：解析出码之后按同一个公式算出索引，直接连那一台。
+* 命中条件（Go 的 `usesPublicRelay`，`cli.go:402`）：`--relay` / `--relay6` 都没在命令行或
+  环境里给过、不是 `--local`、没给 `--ip`，且合并出来的地址仍是默认值。
+* 上一次选中的那台记在 `<config>/best-relay`（Go 同名文件），连不上时清掉。
+
+漏掉这一层的症状不是报错，而是**静默挂住**：两端各在自己那个房间名正确、也确实空的房间里
+等一个永远不来的人，接收端一直停在 `Authenticating code`。
+
+## 4. 界面语言与 `-h`
+
+### 4.1 只做中文与英文
 
 判定顺序固定，先命中先算：
 
@@ -127,7 +151,7 @@ I12 因此在单机环境跳过，验证该路径需要两台机器。
 > 注意 `LANG` 压得住系统区域。Git Bash 默认设 `LANG=en_US.UTF-8`，所以在那里跑的
 > `croc-rs -h` 是英文；想看中文用 `LC_ALL=zh_CN.UTF-8 croc-rs -h`。
 
-### 3.2 英文 `-h` 与 Go 版逐字一致
+### 4.2 英文 `-h` 与 Go 版逐字一致
 
 英文帮助**不是翻译**，而是 Go 版 `croc -h` 的原样输出，只做两处改动：
 
@@ -146,6 +170,31 @@ clap 的开关定义可能走散，所以有两条测试钉住：
 
 因为版式要逐字一致，**flag 的归属也必须与 Go 一致**：`--transport` / `--no-local` / `--no-multi`
 只挂在 `send` 上，全局多了 `--testing`。接收端因此没有 `--transport` / `--no-multi`——与 Go 相同。
+
+### 4.3 英文的发送提示与 Go 同形
+
+发送端那两行也打到 **stderr**，形状照 Go（`croc.go:1819`）：
+
+```text
+\r                                 \rSending 'a.bin' (4.9 kB)
+On the other computer, run:
+  croc-rs abc-def-ghi
+
+Or open:
+  https://getcroc.com/?code=abc-def-ghi
+```
+
+三条规则与 Go 一致：
+
+* `--relay` 只在地址**不是默认值**时出现，走公共中继池时一定不出现；
+* `--pass` 只在密码不是 `pass123` 时出现；
+* `Or open:` 段落另起一行，前面有一个空行。
+
+`Sending` 那一行在清点完文件、开始算哈希时打（`crates/croc-engine/src/files.rs` 的 `survey`
+与 `hash_all` 是分开的，就是为这个）。Go 在算哈希期间还会反复重打中间计数，本实现只打最终
+一次——落盘到日志里时中间态只是噪声。
+
+字节数用 Go 的 `utils.ByteCountDecimal`：1024 进位，单位名仍是十进制写法（`4.9 kB`）。
 
 > 已知限制：Windows 上控制台代码页不是 UTF-8（`chcp` 显示 936）时，中文会显示成乱码。
 > 这是终端解码的问题，不是输出编码的问题（程序写出的始终是 UTF-8）。Git Bash、Windows Terminal

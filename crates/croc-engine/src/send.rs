@@ -57,6 +57,11 @@ pub struct SendRequest {
     pub ip: String,
     /// `--ask`：让接收方也确认一次（随清单发过去）。
     pub ask: bool,
+    /// `--text`：内容是命令行给的一段文本，而不是 stdin 或文件。
+    ///
+    /// 只影响"要发什么"那一行里显示的名字（`text` 而不是 `stdin`）——两者都落到
+    /// `croc-stdin-` 开头的临时文件上，光看名字分不出来。
+    pub sending_text: bool,
     /// `--internal-dns`：用自带的 DNS stub resolver，而不是操作系统的解析器。
     pub internal_dns: bool,
     /// `--throttleUpload`：上行限速（字节/秒）。`None` = 不限速。
@@ -153,24 +158,44 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         None => relay::candidate_addresses(&request.ip, &request.relay, &request.relay6),
     };
 
-    // 算哈希与连中继**并行**（Go 把前者丢进后台 goroutine，`croc.go:1792`）。
-    // 清单要带哈希，所以得读一遍全部文件；大目录在 Windows 上十几秒，串在连接之前
-    // 就会让我们进房间进得晚——对端那段时间只能干等，它的局域网探测也会因等不到
-    // 应答而超时（见 `Session::try_local_probe()`）。
-    //
-    // 坏路径依旧早暴露：任一边先出错就立刻返回，另一半被 drop，半开的中继连接随之关掉。
-    emit(&request.events, EngineEvent::Status("hashing the files…".to_owned()));
-    let paths = request.paths.clone();
-    let algorithm = request.hash_algorithm.clone();
+    // 先**只清点**一遍（stat，不读内容），把"要发什么"报给 UI。Go 在进 `Client.Send()`
+    // 之前就已经从 CLI 拿到了完整的文件信息，所以它能在算哈希的同时把口令码打出来；
+    // 合在一起就得等哈希算完才有东西可显示。这一趟只 stat，代价可以忽略。
+    let survey_paths = request.paths.clone();
     let options = files::CollectOptions {
         exclude: request.exclude.clone(),
         exclude_file: request.exclude_file.clone(),
         git: request.git,
         zip: request.zip,
     };
-    // `collect` 是同步的阻塞式文件 IO，直接放在 async 上下文里会把 worker 线程占住，
+    let surveyed = tokio::task::spawn_blocking(move || files::survey(&survey_paths, &options))
+        .await
+        .map_err(|error| EngineError::Config(format!("the file survey task {error}")))?;
+    let (mut entries, empty_folders) = surveyed?;
+    let total_bytes: u64 = entries.iter().filter_map(|entry| u64::try_from(entry.info.size).ok()).sum();
+    emit(
+        &request.events,
+        EngineEvent::Sending {
+            name: single_name(&entries, request.sending_text),
+            files: u64::try_from(entries.len()).unwrap_or(u64::MAX),
+            folders: u64::try_from(files::folder_count(&entries, &empty_folders)).unwrap_or(0),
+            bytes: total_bytes,
+        },
+    );
+
+    // 算哈希与连中继**并行**（Go 把前者丢进后台 goroutine，`croc.go:1792`）。
+    // 清单要带哈希，所以得读一遍全部文件；大目录在 Windows 上十几秒，串在连接之前
+    // 就会让我们进房间进得晚——对端那段时间只能干等，它的局域网探测也会因等不到
+    // 应答而超时（见 `Session::try_local_probe()`）。
+    //
+    // 坏路径依旧早暴露：任一边先出错就立刻返回，另一半被 drop，半开的中继连接随之关掉。
+    let algorithm = request.hash_algorithm.clone();
+    // `hash_all` 是同步的阻塞式文件 IO，直接放在 async 上下文里会把 worker 线程占住，
     // 连中继的 future 就没机会推进——并行也就名存实亡。
-    let hashing = tokio::task::spawn_blocking(move || files::collect(&paths, &algorithm, &options));
+    let hashing = tokio::task::spawn_blocking(move || {
+        files::hash_all(&mut entries, &algorithm)?;
+        Ok::<_, EngineError>(entries)
+    });
     let resolve_with = resolve_mode(request.internal_dns);
     let connecting = relay::connect_any(
         &relay_addresses,
@@ -179,11 +204,11 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         &request.proxy,
         resolve_with,
     );
-    let (manifest, (mut link, relay_address)) = tokio::try_join!(
+    let (hashed, (mut link, relay_address)) = tokio::try_join!(
         async { hashing.await.map_err(|error| EngineError::Config(format!("the hashing task {error}")))? },
         connecting,
     )?;
-    let (mut entries, empty_folders) = manifest;
+    let mut entries = hashed;
     // `--zip` 现造的临时 zip 跟着本次 `send()` 的作用域清理。用 Drop 而不是在每个返回点
     // 手写删除：这函数的返回点很多，漏一个就在磁盘上留一个几百 MB 的垃圾。
     let _zip_cleanup =
@@ -193,14 +218,12 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         // 逐文件压缩开关：接收方靠这个字段决定要不要解压，所以必须随清单一起过去。
         entry.info.is_compressed = compress && entry.info.size > 0;
     }
-    let total_bytes: u64 = entries.iter().filter_map(|entry| u64::try_from(entry.info.size).ok()).sum();
     let info = files::sender_info(&entries, empty_folders, &request.machine_id, &request.hash_algorithm, request.ask);
 
     let ports = link.data_ports();
     if ports.is_empty() {
         return Err(EngineError::Relay("the relay banner carried no data ports".to_owned()));
     }
-    emit(&request.events, EngineEvent::Status("waiting for the recipient…".to_owned()));
 
     // `--no-multi` 把 banner 里的多个数据端口砍成一个，与 Go 的 `croc.go:1522` 一致。
     let ports_to_use = if request.no_multi { 1 } else { ports.len() };
@@ -348,6 +371,22 @@ fn spawn_sender(
         }
     });
     Ok(())
+}
+
+/// 只发一个文件时的显示名；多于一个文件时返回 `None`（UI 改用文件数）。
+///
+/// Go 的规则（`croc.go:1340`）：名字以 `croc-stdin-` 开头说明内容来自 stdin 或
+/// `--text`，这两种都不显示那个临时文件名。
+fn single_name(entries: &[files::SourceEntry], sending_text: bool) -> Option<String> {
+    if entries.len() != 1 {
+        return None;
+    }
+    let name = entries.first()?.info.name.as_str();
+    Some(if name.starts_with("croc-stdin-") {
+        if sending_text { "text".to_owned() } else { "stdin".to_owned() }
+    } else {
+        name.to_owned()
+    })
 }
 
 /// `--internal-dns` → 解析模式。

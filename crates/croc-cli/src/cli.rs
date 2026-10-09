@@ -17,6 +17,7 @@ use croc_pake::CurveKind;
 use crate::config::{Remembered, Side, decode_relay, encode_relay};
 use crate::help;
 use crate::locale::Locale;
+use crate::relay_pool;
 use tokio_util::sync::CancellationToken;
 
 /// croc 的默认中继地址。
@@ -535,8 +536,18 @@ pub struct Parsed {
 
 /// 要执行的动作。
 pub enum Action {
-    /// 发送。`qrcode` / `clipboard` 是纯展示选项，不进 [`SendRequest`]。
-    Send { request: Box<SendRequest>, qrcode: bool, clipboard: Clipboard },
+    /// 发送。
+    ///
+    /// `qrcode` / `clipboard` 是纯展示选项，不进 [`SendRequest`]，它们在
+    /// [`crate::notice::SendNotice`] 里。
+    Send {
+        request: Box<SendRequest>,
+        /// 口令码是本端自动生成的、且走的是公共中继池。
+        ///
+        /// 连不上中继时要**忘掉**池里记住的那台：Go 也是这样
+        /// （`clearBestPublicRelayOnSendError`，`cli.go:485`），否则下次还会先试这台。
+        generated_public_code: bool,
+    },
     /// 接收。
     Receive(Box<ReceiveRequest>),
     /// 自建中继。
@@ -749,6 +760,8 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                 eprintln!("{reason}");
                 return Err(ExitCode::FAILURE);
             }
+            // `--text` 与 stdin 的落点文件名相同，只在这一行的显示上有区别。
+            let sending_text = args.text.is_some();
             if let Some(text) = args.text {
                 // `--text`：与 Go 一样落到一个 `croc-stdin-<时间戳>` 临时文件上。
                 // 接收方靠这个名字前缀识别"这是文本传输"。
@@ -785,51 +798,56 @@ pub fn parse() -> Result<Parsed, ExitCode> {
             if let Some(remembered) = save_remembered {
                 remembered.save(Side::Send, cli.global.quiet);
             }
-            let (code, components) = match generate_code(options.code.as_deref()) {
-                Ok(pair) => pair,
-                Err(error) => {
-                    eprintln!("croc-rs: {error}");
+            // 走公共中继池时，"口令码"和"连哪台中继"是一件事的两半，必须一起定。
+            let target = resolve_send_target(&options, &given, &cli.global, internal_dns);
+            let (code, components, relay, relay6, public_relay) = match target {
+                Ok(resolved) => resolved,
+                Err(reason) => {
+                    eprintln!("{reason}");
                     return Err(ExitCode::FAILURE);
                 }
             };
-            Ok(Parsed {
-                debug: cli.global.debug,
-                action: Action::Send {
-                    qrcode: args.qrcode,
-                    clipboard,
-                    request: Box::new(SendRequest {
-                        relay: options.relay.clone(),
-                        relay_password: options.password.clone(),
-                        components,
-                        code,
-                        curve,
-                        paths,
-                        hash_algorithm: options.hash.clone(),
-                        exclude: args.exclude,
-                        exclude_file: args.exclude_file,
-                        git: options.git,
-                        zip: args.zip,
-                        proxy: croc_engine::proxy::Proxy::from_flags(
-                            cli.global.socks5.as_deref(),
-                            cli.global.connect.as_deref(),
-                        ),
-                        multicast: cli.global.multicast,
-                        relay6: options.relay6.clone(),
-                        ip: cli.global.ip.clone(),
-                        ask: cli.global.ask,
-                        internal_dns,
-                        throttle_upload,
-                        no_compress: cli.global.no_compress,
-                        local: options.local,
-                        relay_base_port: Some(args.port),
-                        // 已经由 clap 的 range 限到 1..=8。
-                        transfers: usize::from(args.transfers),
-                        no_multi: args.no_multi,
-                        machine_id,
-                        events,
-                    }),
-                },
-            })
+            let generated_public_code = public_relay && options.code.is_none();
+            let request = Box::new(SendRequest {
+                relay,
+                relay_password: options.password.clone(),
+                components,
+                code,
+                curve,
+                paths,
+                hash_algorithm: options.hash.clone(),
+                exclude: args.exclude,
+                exclude_file: args.exclude_file,
+                git: options.git,
+                zip: args.zip,
+                proxy: croc_engine::proxy::Proxy::from_flags(
+                    cli.global.socks5.as_deref(),
+                    cli.global.connect.as_deref(),
+                ),
+                multicast: cli.global.multicast,
+                relay6,
+                ip: cli.global.ip.clone(),
+                ask: cli.global.ask,
+                sending_text,
+                internal_dns,
+                throttle_upload,
+                no_compress: cli.global.no_compress,
+                local: options.local,
+                relay_base_port: Some(args.port),
+                // 已经由 clap 的 range 限到 1..=8。
+                transfers: usize::from(args.transfers),
+                no_multi: args.no_multi,
+                machine_id,
+                events,
+            });
+            let mut request = request;
+            // --quiet 下一句话都不打，连口令码也不打：那是这个开关的字面意思，
+            // 也是互通脚本敢直接把输出丢进日志的原因。
+            if !cli.global.quiet {
+                let notice = crate::notice::SendNotice::new(&request, public_relay, args.qrcode, clipboard);
+                request.events = send_sink(Box::new(notice));
+            }
+            Ok(Parsed { debug: cli.global.debug, action: Action::Send { request, generated_public_code } })
         }
         None => {
             // 接收方的应用集比发送方小：Go 在 `receive()` 里手写的一段（`cli.go:1052`）。
@@ -878,6 +896,14 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     return Err(ExitCode::FAILURE);
                 }
             };
+            // 码里带着该连哪台公共中继的索引，所以地址要在解析完码之后才定下来。
+            let (relay, relay6) = match resolve_receive_relay(&code, &options, &given, &cli.global) {
+                Ok(pair) => pair,
+                Err(reason) => {
+                    eprintln!("{reason}");
+                    return Err(ExitCode::FAILURE);
+                }
+            };
             // 回调**总是**注册：对端的 `Ask` 要到清单到达才知道，而它压得住本端的
             // `--yes`（Go 的 `!NoPrompt || Ask || senderInfo.Ask`）。
             let (yes, ask) = (options.yes, cli.global.ask);
@@ -888,7 +914,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
             Ok(Parsed {
                 debug: cli.global.debug,
                 action: Action::Receive(Box::new(ReceiveRequest {
-                    relay: options.relay.clone(),
+                    relay,
                     relay_password: options.password.clone(),
                     components,
                     curve,
@@ -901,7 +927,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                         cli.global.connect.as_deref(),
                     ),
                     multicast: cli.global.multicast,
-                    relay6: options.relay6.clone(),
+                    relay6,
                     ip: cli.global.ip.clone(),
                     stdout: cli.global.stdout,
                     internal_dns,
@@ -989,14 +1015,34 @@ pub async fn run(parsed: Parsed) -> ExitCode {
         Action::Store(request) => crate::store::send(*request).await,
         Action::ReceiveStored(request) => crate::store::receive(*request).await,
         Action::Revoke(id) => crate::store::revoke(&id).await,
-        Action::Send { request, qrcode, clipboard } => {
-            print_send_instructions(&request, qrcode, clipboard);
+        Action::Send { request, generated_public_code } => {
             match croc_engine::send(*request, cancel).await {
                 Ok(summary) => {
-                    println!("发送完成：{} 个文件，{} 字节", summary.files, summary.bytes);
+                    let locale = crate::locale::Locale::detect();
+                    match locale {
+                        crate::locale::Locale::En => eprintln!(
+                            "Sent {} {} ({})",
+                            summary.files,
+                            if summary.files == 1 { "file" } else { "files" },
+                            crate::notice::byte_count_decimal(summary.bytes)
+                        ),
+                        crate::locale::Locale::Zh => eprintln!(
+                            "已发送 {} 个文件（{}）",
+                            summary.files,
+                            crate::notice::byte_count_decimal(summary.bytes)
+                        ),
+                    }
                     ExitCode::SUCCESS
                 }
-                Err(error) => fail(error),
+                Err(error) => {
+                    // Go 只在"连不上中继"时清缓存（`clearBestPublicRelayOnSendError`，
+                    // `cli.go:485`）：对端拒绝、磁盘满这些跟选哪台中继无关，清了只是
+                    // 让下次白白重探一遍。
+                    if generated_public_code && error.is_retryable() {
+                        crate::config::clear_best_public_relay();
+                    }
+                    fail(error)
+                }
             }
         }
         Action::Receive(request) => match croc_engine::receive(*request, cancel).await {
@@ -1027,6 +1073,44 @@ pub fn init_tracing(debug: bool) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default));
     let _ = tracing_subscriber::fmt().with_env_filter(filter).with_target(false).try_init();
+}
+
+/// 发送端的事件出口。
+///
+/// 口令码**不在**这里之外的地方打印：Go 是在 `Client.Send()` 内部、清点完文件之后才
+/// 打的（`croc.go:1819`），所以文件不存在的场合根本不会有码出现。跟着
+/// [`EngineEvent::Sending`] 走就能复现这个顺序。
+fn send_sink(notice: Box<crate::notice::SendNotice>) -> EventSink {
+    use crate::locale::Locale;
+    use crate::notice::byte_count_decimal;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let locale = Locale::detect();
+    // 只打一次：`Sending` 现在只会发一次，但重连之类的路径将来可能再发。
+    let announced = Arc::new(AtomicBool::new(false));
+    Arc::new(move |event: EngineEvent| match event {
+        EngineEvent::Sending { name, files, folders, bytes } => {
+            if announced.swap(true, Ordering::Relaxed) {
+                return;
+            }
+            crate::notice::print_sending(locale, name.as_deref(), files, folders, bytes);
+            notice.print(locale);
+        }
+        EngineEvent::Status(message) => eprintln!("{message}"),
+        EngineEvent::FileStarted { name, size } => match locale {
+            Locale::En => eprintln!("Sending '{name}' ({})", byte_count_decimal(size)),
+            Locale::Zh => eprintln!("发送 '{name}'（{}）", byte_count_decimal(size)),
+        },
+        EngineEvent::Progress { transferred, total } => {
+            if let Some(percent) = transferred.saturating_mul(100).checked_div(total) {
+                eprint!("\r{percent}%  ");
+                if transferred >= total {
+                    eprintln!();
+                }
+            }
+        }
+        _ => {}
+    })
 }
 
 /// 进度事件出口。
@@ -1139,58 +1223,81 @@ fn temp_artifact_path() -> PathBuf {
     std::env::temp_dir().join(format!("croc-stdin-{stamp}"))
 }
 
-/// 打印"让对方执行什么"。
+/// 定下口令码与中继地址。
 ///
-/// 打印的是**口令码**而不是房间名：房间名是 `hex(sha256(码 + "croc"))`，它是线路上的
-/// 东西，人对不上。用户之间传递的永远是码。
-fn print_send_instructions(request: &SendRequest, qrcode: bool, clipboard: Clipboard) {
-    // 先复制、再把结果写进提示里：Go 也是这个顺序（`croc.go:1808`），因为"有没有
-    // 复制上"只有试过才知道。
-    let copied = if clipboard == Clipboard::Off {
-        None
-    } else {
-        crate::clipboard::copy(&clipboard_text(request, clipboard)).then_some(match clipboard {
-            Clipboard::Command => "命令已复制到剪贴板",
-            _ => "口令码已复制到剪贴板",
-        })
+/// 走公共中继池时这两者是**一件事的两半**：码的 SHA-256 对池长取模就是索引，对端拿到
+/// 同一个码就能算出同一台中继。所以不能先随机一个码再随便挑一台——那样对端按码算出的
+/// 索引指向别的中继，两端各自在正确的房间里等一个永远不来的人。
+///
+/// 返回 `(码, 码解出的房间与 PAKE 口令, 中继, IPv6 中继, 是不是走的池)`。走池时
+/// IPv6 中继置空：池里只按码选一台，再给一个 IPv6 候选会连到别的机器上去。
+///
+/// # Errors
+///
+/// 码不合法、池探不到，或者定下索引后生成不出落在它上面的码。
+fn resolve_send_target(
+    options: &SendOptions,
+    given: &Given<'_>,
+    global: &Global,
+    internal_dns: bool,
+) -> Result<(String, Components, String, String, bool), String> {
+    let public = relay_pool::applies(
+        given.top_given("relay"),
+        given.top_given("relay6"),
+        options.local,
+        &global.ip,
+        &options.relay,
+        &options.relay6,
+    );
+    if !public {
+        let (code, components) = generate_code(options.code.as_deref()).map_err(|error| format!("croc-rs: {error}"))?;
+        return Ok((code, components, options.relay.clone(), options.relay6.clone(), false));
+    }
+    let proxy = croc_engine::proxy::Proxy::from_flags(global.socks5.as_deref(), global.connect.as_deref());
+    // 码已经给定：索引由码决定，没得挑。否则探测一遍挑一台最先应答的。
+    let index = match options.code.as_deref() {
+        Some(code) => relay_pool::index_of(code)?,
+        None => relay_pool::select(&proxy, internal_dns, global.quiet)?,
     };
-    let notice = copied.map_or_else(String::new, |text| format!("（{text}）"));
-    println!("口令码：{}", request.code);
-    println!("让对方执行：");
-    // `--local` 时中继就是本端，喊出去的端口每次都不同，对端是靠组播找过来的——
-    // 打印一个 `--relay` 只会让人拿一个下次就失效的地址。
-    if request.local {
-        println!("  croc-rs --local {}{notice}", request.code);
+    let relay = relay_pool::address(index)?.to_owned();
+    let code = if let Some(code) = options.code.as_deref() {
+        code.to_owned()
     } else {
-        println!("  croc-rs --relay {} {}{notice}", request.relay, request.code);
-    }
-    // `--ask`：把自己的 ID 打出来，对方那边会问"来的是不是这台"。
-    if request.ask {
-        println!("本机 ID：{}", request.machine_id);
-    }
-    // web 接收页。链接只由口令码拼成，跟中继是谁无关。
-    let url = crate::qr::web_receive_url(&request.code);
-    println!("或访问：{url}");
-    if qrcode {
-        match crate::qr::render(&url) {
-            Ok(text) => println!("{text}"),
-            Err(reason) => eprintln!("{reason}"),
-        }
-    }
+        // 反着来：先定索引，再找一个哈希正好落在这个索引上的码。
+        let count = relay_pool::count();
+        let wanted = u32::try_from(index).map_err(|_| format!("croc-rs: 中继索引 {index} 超出范围"))?;
+        codephrase::generate_for_relay(&mut croc_net::OsRandomness, wanted, count)
+            .map_err(|error| format!("croc-rs: {error}"))?
+    };
+    let (code, components) = generate_code(Some(&code)).map_err(|error| format!("croc-rs: {error}"))?;
+    Ok((code, components, relay, String::new(), true))
 }
 
-/// 要放进剪贴板的那段文本。
+/// 接收端按码挑中继。
 ///
-/// `--extended-clipboard` 复制的是**整条**接收命令：口令码通过环境变量传，因此不会
-/// 进 shell 历史，也不会留在进程表里（这正是这个开关存在的理由）。
-fn clipboard_text(request: &SendRequest, choice: Clipboard) -> String {
-    match choice {
-        Clipboard::Off | Clipboard::Code => request.code.clone(),
-        Clipboard::Command => {
-            let flags = if request.local { " --local".to_owned() } else { format!(" --relay {}", request.relay) };
-            format!("CROC_SECRET=\"{}\" croc-rs{flags}", request.code)
-        }
+/// 与发送端用同一个 [`relay_pool`]，所以两端算出来的地址必然一致。
+///
+/// # Errors
+///
+/// 码不合法或索引越界。
+fn resolve_receive_relay(
+    code: &str,
+    options: &ReceiveOptions,
+    given: &Given<'_>,
+    global: &Global,
+) -> Result<(String, String), String> {
+    if !relay_pool::applies(
+        given.top_given("relay"),
+        given.top_given("relay6"),
+        options.local,
+        &global.ip,
+        &options.relay,
+        &options.relay6,
+    ) {
+        return Ok((options.relay.clone(), options.relay6.clone()));
     }
+    let index = relay_pool::index_of(code)?;
+    Ok((relay_pool::address(index)?.to_owned(), String::new()))
 }
 
 /// 解析 `--throttleUpload`，返回字节/秒。

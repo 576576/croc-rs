@@ -22,8 +22,10 @@ mod config;
 mod duration;
 mod help;
 mod locale;
+mod notice;
 mod qr;
 mod relay_cmd;
+mod relay_pool;
 mod store;
 
 use std::process::ExitCode;

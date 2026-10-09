@@ -168,6 +168,8 @@ pub async fn send(
         relay6: DEFAULT_RELAY6.to_owned(),
         ip: String::new(),
         ask: false,
+        // GUI 没有"发一段文本"的输入口。
+        sending_text: false,
         // GUI 还没有 DNS 与限速的输入口。
         internal_dns: false,
         throttle_upload: None,

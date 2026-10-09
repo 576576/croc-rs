@@ -180,7 +180,8 @@ croc-rs --relay "myrelay.example.com:9009" --pass 你的口令 send [文件]
 
 ### 与 Go 版互通
 
-默认连的是公共中继 `croc.schollz.com:9009`（Go 版 croc 用的同一个）。要跟 `croc` 互传，
+默认走的是公共中继池（`1..4.getcroc.com:9009`，与 Go 版同一个池）。口令码按
+`sha256(码) mod 4` 决定落在池里的哪一台，两端各自算，所以互传时**不需要**额外指定中继。
 自建中继时两边都要带同样的 `--relay` 和 `--pass`。
 
 ## 界面语言

@@ -165,6 +165,48 @@ pub fn set_classic(enabled: bool, quiet: bool) {
     }
 }
 
+/// 上次探测选中的公共中继。Go 叫 `best-relay`（`cli.go:368`）。
+///
+/// 存的是**地址**而不是索引：索引是池的排列，池一改就会指到别的中继上；地址不在池
+/// 里时会被当成"没记过"。
+fn best_relay_marker() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join("best-relay"))
+}
+
+/// 上次选中的那台在池里的索引；没记过或记的地址已经不在池里就返回 `None`。
+#[must_use]
+pub fn load_best_public_relay(pool: &[&str]) -> Option<usize> {
+    let path = best_relay_marker()?;
+    let address = std::fs::read_to_string(&path).ok()?;
+    pool.iter().position(|relay| *relay == address.trim())
+}
+
+/// 记下这次选中的那台。
+pub fn save_best_public_relay(address: &str, quiet: bool) {
+    let Some(path) = best_relay_marker() else {
+        return;
+    };
+    if let Err(error) = create_private_dirs_and_write(&path, address.as_bytes())
+        && !quiet
+    {
+        eprintln!("croc-rs: 无法写入 {}：{error}", path.display());
+    }
+}
+
+/// 忘掉上次选中的那台。
+///
+/// 连不上中继时调：缓存里那台可能已经下线，留着它下次还会先试它。
+pub fn clear_best_public_relay() {
+    let Some(path) = best_relay_marker() else {
+        return;
+    };
+    match std::fs::remove_file(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        // 删不掉只是下次还会先试旧的那台，探测兜得住，不值得打断一次传输。
+        Err(_) | Ok(()) => {}
+    }
+}
+
 /// `--internal-dns` 的持久化标记路径。Go 就叫这个名字（`constants.go:55`）。
 fn internal_dns_marker() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("internal-dns"))

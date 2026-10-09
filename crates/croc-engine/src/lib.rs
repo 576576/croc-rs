@@ -36,6 +36,7 @@ pub mod files;
 pub mod hash;
 pub mod local;
 pub mod proxy;
+pub mod public_relay;
 pub mod receive;
 pub mod relay;
 pub mod send;
@@ -56,6 +57,20 @@ use std::sync::Arc;
 pub enum EngineEvent {
     /// 一句人类可读的状态（"waiting for the recipient…"）。
     Status(String),
+    /// 发送方已经清点完要发的东西，准备连中继了。
+    ///
+    /// UI 在这一刻把口令码打出来——Go 也是在进 `Client.Send()` 之前就拿到了完整的
+    /// 文件信息，所以它能一边算哈希一边把码显示给用户。
+    Sending {
+        /// 只发一个文件时的文件名；多于一个时是 `None`（UI 改用 `files` 计数）。
+        name: Option<String>,
+        /// 文件数。
+        files: u64,
+        /// 目录数。
+        folders: u64,
+        /// 总字节数。
+        bytes: u64,
+    },
     /// 开始处理某个文件。
     FileStarted {
         /// 文件名。

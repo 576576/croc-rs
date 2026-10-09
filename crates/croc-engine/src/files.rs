@@ -69,19 +69,16 @@ pub struct CollectOptions {
     pub zip: bool,
 }
 
-/// 收集待发送条目，并顺手算好哈希。
+/// 走一遍待发送路径，得到条目清单与空目录清单，**不算哈希**。
 ///
-/// 哈希在这一步就算完（Go 的"急切 xxhash"路径），因为接收方要靠它决定
-/// "本地已有同名文件是不是就是这份"。流式边传边算会让接收方拿不到判定依据。
+/// 与 [`hash_all`] 分开是为了发送端能把"要发什么"先报给 UI：Go 在进 `Client.Send()`
+/// 之前就已经从 CLI 拿到了完整的文件信息（大小、目录数），所以它能在算哈希的同时就把
+/// 口令码打出来。合在一起就得等哈希算完才有东西可显示。
 ///
 /// # Errors
 ///
 /// 路径不存在、读不了、或者目录里出现了不支持的条目（FIFO、设备节点等）。
-pub fn collect(
-    paths: &[PathBuf],
-    algorithm: &str,
-    options: &CollectOptions,
-) -> Result<(Vec<SourceEntry>, Vec<FileInfo>), EngineError> {
+pub fn survey(paths: &[PathBuf], options: &CollectOptions) -> Result<(Vec<SourceEntry>, Vec<FileInfo>), EngineError> {
     let mut files = Vec::new();
     let mut empty_folders = Vec::new();
 
@@ -94,10 +91,10 @@ pub fn collect(
             let gitignore = options.git.then(|| load_gitignore(&root)).flatten();
             if options.zip {
                 // `--zip`：先把目录打成一个 zip，再把它当普通文件发出去（Go 同）。
-                files.push(zip_directory(&root, algorithm, options, gitignore.as_ref())?);
+                files.push(zip_directory(&root, options, gitignore.as_ref())?);
                 continue;
             }
-            collect_directory(&root, &root, &mut files, &mut empty_folders, algorithm, options, gitignore.as_ref())?;
+            collect_directory(&root, &root, &mut files, &mut empty_folders, options, gitignore.as_ref())?;
         } else {
             // 单个文件：Go 比的是**文件名**本身（`croc.go:1258`），给的 `folder_remote`
             // 是 `"./"`（`croc.go:1178`）。
@@ -105,7 +102,7 @@ pub fn collect(
             if excluded_exactly(options, &name) {
                 continue;
             }
-            files.push(entry_for(path, "./", algorithm)?);
+            files.push(entry_for(path, "./")?);
         }
     }
 
@@ -119,13 +116,49 @@ pub fn collect(
     Ok((files, empty_folders))
 }
 
+/// 收集待发送条目，并顺手算好哈希。
+///
+/// 哈希在这一步就算完（Go 的"急切 xxhash"路径），因为接收方要靠它决定
+/// "本地已有同名文件是不是就是这份"。流式边传边算会让接收方拿不到判定依据。
+///
+/// # Errors
+///
+/// 同 [`survey`]，外加哈希算不出来（文件被删、权限变了）。
+pub fn collect(
+    paths: &[PathBuf],
+    algorithm: &str,
+    options: &CollectOptions,
+) -> Result<(Vec<SourceEntry>, Vec<FileInfo>), EngineError> {
+    let (mut files, empty_folders) = survey(paths, options)?;
+    hash_all(&mut files, algorithm)?;
+    Ok((files, empty_folders))
+}
+
+/// 给 [`survey`] 的结果补哈希。
+///
+/// # Errors
+///
+/// 某个文件读不动或算法名不认识。
+pub fn hash_all(entries: &mut [SourceEntry], algorithm: &str) -> Result<(), EngineError> {
+    for entry in entries {
+        // 符号链接在 [`entry_for`] 里就已经定好了（`size == 0`、哈希留空）：Go 也不
+        // 去哈希链接指向的内容，传的是链接本身。
+        if !entry.info.symlink.is_empty() {
+            continue;
+        }
+        // 走 `hash_file` 而不是"读全文再喂给 `hash_for_algorithm`"：imohash 只采样头/中/尾，
+        // 把整个文件读进内存等于把它唯一的优点抹掉，大文件上还多占一份内存。
+        entry.info.hash = hash::hash_file(algorithm, &entry.path)?;
+    }
+    Ok(())
+}
+
 /// 递归收集一个目录。`root` 与 `directory` 都是绝对路径。
 fn collect_directory(
     root: &Path,
     directory: &Path,
     files: &mut Vec<SourceEntry>,
     empty_folders: &mut Vec<FileInfo>,
-    algorithm: &str,
     options: &CollectOptions,
     gitignore: Option<&Gitignore>,
 ) -> Result<(), EngineError> {
@@ -152,7 +185,7 @@ fn collect_directory(
         }
         if metadata.is_dir() {
             let before = files.len() + empty_folders.len();
-            collect_directory(root, &path, files, empty_folders, algorithm, options, gitignore)?;
+            collect_directory(root, &path, files, empty_folders, options, gitignore)?;
             if files.len() + empty_folders.len() == before {
                 // 空目录（或只有空目录）也要在对端建出来。`folder_remote` 里**含它自己
                 // 的名字**，接收方直接 `mkdir -p` 就对了（Go 的 `croc.go:1242`）。
@@ -163,7 +196,7 @@ fn collect_directory(
         // 文件的 `folder_remote` 取**父目录**相对基准的路径——所以直接子文件拿到的是
         // `photos/`，而不是 `photos/a.jpg`。
         let parent = path.parent().unwrap_or(root);
-        files.push(entry_for(&path, &remote_folder_of(&base, parent), algorithm)?);
+        files.push(entry_for(&path, &remote_folder_of(&base, parent))?);
     }
     Ok(())
 }
@@ -237,7 +270,6 @@ fn zip_options() -> zip::write::SimpleFileOptions {
 /// 目标 zip 已存在，或读目录 / 写 zip 时出错。
 fn zip_directory(
     root: &Path,
-    algorithm: &str,
     options: &CollectOptions,
     gitignore: Option<&Gitignore>,
 ) -> Result<SourceEntry, EngineError> {
@@ -251,7 +283,7 @@ fn zip_directory(
     zip_into(&mut writer, root, root, &name, options, gitignore)?;
     writer.finish().map_err(|error| EngineError::file(&destination, error))?;
 
-    let mut entry = entry_for(&destination, "./", algorithm)?;
+    let mut entry = entry_for(&destination, "./")?;
     entry.temporary = true;
     Ok(entry)
 }
@@ -343,7 +375,9 @@ fn substring_excluded(info: &FileInfo, exclude: &[String]) -> bool {
 }
 
 /// 构造一个普通文件（或符号链接）的条目。
-fn entry_for(path: &Path, folder_remote: &str, algorithm: &str) -> Result<SourceEntry, EngineError> {
+///
+/// 哈希留给 [`hash_all`] 去填——见那里的说明。
+fn entry_for(path: &Path, folder_remote: &str) -> Result<SourceEntry, EngineError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| EngineError::file(path, error))?;
     let name = file_name(path)?;
 
@@ -371,10 +405,6 @@ fn entry_for(path: &Path, folder_remote: &str, algorithm: &str) -> Result<Source
         )));
     }
 
-    // 走 `hash_file` 而不是"读全文再喂给 `hash_for_algorithm`"：imohash 只采样头/中/尾，
-    // 把整个文件读进内存等于把它唯一的优点抹掉，大文件上还多占一份内存。
-    let digest = hash::hash_file(algorithm, path)?;
-
     Ok(SourceEntry {
         path: path.to_path_buf(),
         temporary: false,
@@ -382,7 +412,6 @@ fn entry_for(path: &Path, folder_remote: &str, algorithm: &str) -> Result<Source
             name,
             folder_remote: folder_remote.to_owned(),
             folder_source: parent_of(path),
-            hash: digest,
             size: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
             mod_time: metadata
                 .modified()
@@ -451,7 +480,7 @@ pub fn sender_info(
 ///
 /// 这个数在接收方只用于显示，但 Go 的 `validateSendingTextOffer()` 会拿它做校验
 /// （文本传输必须恰好 0 个目录），所以不能随手填 0。
-fn folder_count(files: &[SourceEntry], empty_folders: &[FileInfo]) -> i64 {
+pub fn folder_count(files: &[SourceEntry], empty_folders: &[FileInfo]) -> i64 {
     let mut seen = std::collections::BTreeSet::new();
     let folders = files
         .iter()

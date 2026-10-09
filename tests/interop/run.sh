@@ -753,7 +753,8 @@ case_i20() {
       "$CROC_GO_BIN" --relay "$r" --pass "$RELAY_PASS" --yes --quiet "$CODE"
     # 判定看的是**发送方**报的字节数（Rust 自己的文案，比解析 Go 的输出稳）：0 才说明
     # Go 一个字节都没要——也就是它自己算出来的 md5 与我们清单里的一致。
-    if [ $? -eq 0 ] && grep -q "0 字节" "$CASE_DIR/sender.log"; then
+    # "0 B" 在两种界面语言里都一样（字节数一律用 Go 的写法），所以这条断言不受 locale 影响。
+    if [ $? -eq 0 ] && grep -q "0 B" "$CASE_DIR/sender.log"; then
       result=0
     fi
   fi
