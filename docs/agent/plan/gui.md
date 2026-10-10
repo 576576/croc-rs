@@ -11,16 +11,23 @@ G0–G10 已落地。**剩 G11（SSH 共享终端）**：数据面未做，界�
 ```
 crates/croc-gui/
   ui/                 Vite + React + TS（pnpm 12，锁文件 pnpm-lock.yaml）
-    src/styles.css    从上游 styles.css 按类名裁剪 + 自补（标题栏 / 队列 / 移动端断点）
-    src/locales.ts    en / zh-CN 两套文案
-    src/components/   TitleBar · WorkspaceSwitch · SendPanel · ReceivePanel · StoredPanel
-                      SshPlaceholder · FileList · SendCode · OfferCard · ProgressBlock
+    src/styles.css    从上游 styles.css 按类名裁剪 + 自补（工具栏 / 队列 / 移动端断点）
+    src/locales/      en.ts · zh-CN.ts · index.ts（键的基准是 en.ts 的 `MessageKey`）
+    src/components/   WorkspaceSwitch（三个大页）· ToolbarActions（右上四枚按钮）
+                      Tour（指引）· SendPanel · ReceivePanel · SshPanel · HistoryPanel
+                      FileList · SendCode · OfferCard · ProgressBlock
                       TransfersList · SettingsGrid · StatusDot
     dist/             构建产物，不入库
   src/                commands.rs · offers.rs · store.rs · state.rs · android.rs
-  locales/*.yml       rust-i18n，与前端 locales.ts 的键对齐，由 set_locale 同步切换
+  locales/*.yml       rust-i18n，与前端 locales/*.ts 的键对齐，由 set_locale 同步切换
   gen/android/        Android 宿主工程，入库（含自写 Kotlin）
 ```
+
+- **三个大页**：传输 / SSH / 历史。标题栏是原生的（`tauri.conf.json` 不开 `decorations:
+  false`），所以前端不再自绘标题栏与窗口按钮。
+- 右上角四枚图标按钮（照 croc web 的 `workspace-toolbar-actions`）：指引 / 语言 /
+  仓库 / 深浅色。语言那枚是展开选择（自动 · English · 中文，默认自动），不是点击切换。
+- 暂存（`store`）不是独立页，是发送面板里的一种投递方式（直传 / 暂存链接）。
 
 - `tauri.conf.json` 的 `frontendDist` 指向 `ui/dist`，`beforeBuildCommand` 是
   `pnpm --prefix ui run build`——Tauri 2 在 crate 根执行这条命令，不会切工作目录。

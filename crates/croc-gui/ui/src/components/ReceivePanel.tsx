@@ -28,7 +28,17 @@ export function ReceivePanel({
   const t = useT();
 
   return (
-    <section className="panel">
+    <section className="panel" data-tour="receive">
+      <div className="panel-heading">
+        <span className="step">
+          <Download aria-hidden="true" />
+        </span>
+        <div>
+          <h2>{t('receive.start')}</h2>
+          <p>{t('receive.intro')}</p>
+        </div>
+      </div>
+
       <span className="field-label">{t('receive.code')}</span>
       <input
         type="text"

@@ -146,51 +146,101 @@ details > summary::-webkit-details-marker {
   flex-direction: column;
 }
 
-.title-bar {
+/* 顶部一行：左边是三个大页，右边是四枚图标按钮（照 croc web 的 `workspace-toolbar`）。 */
+.workspace-toolbar {
   display: flex;
-  height: 34px;
-  flex: 0 0 auto;
+  gap: 18px;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--soft-border);
+  border: 1px solid var(--foreground);
+  border-bottom: 0;
+  padding: 12px;
   background: var(--background);
-  cursor: default;
 }
 
-.title-bar .title {
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+.workspace-toolbar .workspace-switch {
+  margin-bottom: 0;
 }
 
-.title-bar .controls {
+.workspace-toolbar-actions {
   display: flex;
   gap: 0;
+  align-items: center;
+  margin-left: auto;
 }
 
-.title-bar .controls button {
-  min-width: 42px;
-  min-height: 34px;
+.workspace-toolbar-actions > * + * {
+  border-left: 0;
+}
+
+.icon-button {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--foreground);
+  color: var(--foreground);
+  background: var(--background);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.icon-button:hover {
+  color: var(--background);
+  background: var(--foreground);
+}
+
+/* 指引开着的时候这枚按钮是按下状态。 */
+.icon-button.active {
+  color: var(--background);
+  background: var(--foreground);
+}
+
+.icon-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.language-picker {
+  position: relative;
+}
+
+.language-menu {
+  position: absolute;
+  z-index: 20;
+  top: 44px;
+  right: 0;
+  display: grid;
+  min-width: 132px;
+  border: 1px solid var(--foreground);
+  background: var(--background);
+}
+
+.language-menu button {
   border: 0;
-  border-left: 1px solid var(--soft-border);
+  border-bottom: 1px solid var(--soft-border);
+  padding: 9px 12px;
+  color: var(--foreground);
+  background: transparent;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
 }
 
-.window-control {
-  padding: 0 14px;
+.language-menu button:last-child {
+  border-bottom: 0;
 }
 
-/* 移动端把三件套换成语言与主题：手机上不存在最小化窗口。 */
-.mobile-controls {
-  display: flex;
-  gap: 6px;
+.language-menu button:hover {
+  color: var(--background);
+  background: var(--foreground);
 }
 
-.mobile-controls button {
-  min-height: 26px;
-  padding: 0 8px;
-  font-size: 10px;
+.language-menu button[aria-checked='true'] {
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .site-head {
@@ -326,10 +376,13 @@ details > summary::-webkit-details-marker {
   background: var(--foreground);
 }
 
-/* 四个工作区（发送 / 接收 / 暂存 / SSH 占位）时把两格的网格拉开。 */
-.workspace-switch.four {
-  display: inline-grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+/* 两个投递方式与三个大页各按格数拉开；默认两格。 */
+.workspace-switch.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.workspace-switch.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .workspace-switch svg {
@@ -371,6 +424,240 @@ details > summary::-webkit-details-marker {
   border-right: 1px solid var(--foreground);
   border-bottom: 1px solid var(--foreground);
   background: var(--background);
+}
+
+/* 面板头：序号格 + 标题 + 一句说明（照 croc web 的 `panel-heading`）。 */
+.panel-heading {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+
+.panel-heading .step {
+  display: inline-grid;
+  width: 32px;
+  height: 25px;
+  place-items: center;
+  border: 1px solid var(--soft-border);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.panel-heading .step svg {
+  width: 14px;
+  height: 14px;
+}
+
+.panel-heading h2 {
+  margin: 0 0 7px;
+  font-size: 22px;
+  letter-spacing: -0.04em;
+}
+
+.panel-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.primary-button {
+  display: flex;
+  width: 100%;
+  min-height: 43px;
+  gap: 9px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--foreground);
+  padding: 11px 14px;
+  color: var(--background);
+  background: var(--foreground);
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.primary-button:hover:not(:disabled) {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+.primary-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ───────────────────────── 共享终端 ───────────────────────── */
+
+.ssh-workspace {
+  border-top: 1px solid var(--foreground);
+  border-left: 1px solid var(--foreground);
+}
+
+.ssh-panel {
+  min-height: 650px;
+}
+
+.ssh-heading {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.ssh-join-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.ssh-invitation-field {
+  min-width: 0;
+}
+
+.ssh-invitation-field > label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ssh-join-form > .primary-button {
+  width: auto;
+  min-height: 42px;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.ssh-code-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+}
+
+.ssh-code-input input {
+  border-right: 0;
+}
+
+.ssh-code-input button {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid var(--subtle);
+  padding: 0;
+  color: var(--foreground);
+  background: var(--background);
+  cursor: pointer;
+}
+
+.ssh-code-input button:hover:not(:disabled) {
+  color: var(--background);
+  border-color: var(--foreground);
+  background: var(--foreground);
+}
+
+.ssh-code-input svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ssh-status-row {
+  display: flex;
+  min-height: 24px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ssh-terminal {
+  min-height: 360px;
+  height: clamp(360px, 54vh, 560px);
+  overflow: auto;
+  border: 1px solid var(--soft-border);
+  padding: 10px;
+  background: var(--panel-tint);
+}
+
+.ssh-actions {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.ssh-actions p {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.ssh-actions p svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+/* ───────────────────────── 指引 ───────────────────────── */
+
+/* 当前这一步描一圈边框：本设计里状态靠前景背景互换，不靠别的颜色。 */
+.tour-target {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.tour-bubble {
+  position: fixed;
+  z-index: 30;
+  bottom: 18px;
+  left: 50%;
+  display: grid;
+  width: min(420px, calc(100% - 32px));
+  gap: 6px;
+  transform: translateX(-50%);
+  border: 1px solid var(--foreground);
+  padding: 14px 16px;
+  background: var(--background);
+}
+
+.tour-step {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+}
+
+.tour-bubble strong {
+  font-size: 13px;
+}
+
+.tour-bubble p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.tour-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.tour-actions button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 11px;
 }
 
 .status-dot {

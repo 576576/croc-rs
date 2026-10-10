@@ -4,18 +4,28 @@ import { api } from './bridge';
 
 const STORAGE_KEY = 'croc-gui-locale';
 
-/// 语言 Deutsch 取值顺序：用户选过就用选过的，否则看浏览器语言，兜底英文。
-/// 与 CLI 的 `locale::Locale::detect()` 判据一致（zh* 归为中文，其余英文）。
-export function detectLocale(): LocaleName {
+/// `auto` 不是一门语言，而是"还没选过"：落到系统语言。
+export type LocalePreference = 'auto' | LocaleName;
+
+/// 判据与 CLI 的 `locale::Locale::detect()` 一致：zh* 归为中文，其余英文。
+function systemLocale(): LocaleName {
+  return navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+}
+
+function readPreference(): LocalePreference {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored && (localeNames as readonly string[]).includes(stored)) {
-      return stored as LocaleName;
+    if (stored === 'auto' || (localeNames as readonly string[]).includes(stored ?? '')) {
+      return stored as LocalePreference;
     }
   } catch {
-    // localStorage 被禁（隐私模式）时退回下一档，不影响使用。
+    // localStorage 被禁（隐私模式）时按自动处理，不影响功能。
   }
-  return navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+  return 'auto';
+}
+
+function resolveLocale(preference: LocalePreference): LocaleName {
+  return preference === 'auto' ? systemLocale() : preference;
 }
 
 type Translator = (key: MessageKey, vars?: Record<string, string | number>) => string;
@@ -31,31 +41,36 @@ function translate(locale: LocaleName, key: MessageKey, vars?: Record<string, st
 }
 
 interface LocaleValue {
+  /// 实际生效的语言。
   locale: LocaleName;
-  setLocale: (locale: LocaleName) => void;
+  /// 用户选的那一档，可能是 `auto`。
+  preference: LocalePreference;
+  setPreference: (next: LocalePreference) => void;
   t: Translator;
 }
 
 const LocaleContext = createContext<LocaleValue | null>(null);
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<LocaleName>(detectLocale);
+  const [preference, setPreferenceState] = useState<LocalePreference>(readPreference);
+  const locale = resolveLocale(preference);
 
-  const setLocale = useCallback((next: LocaleName) => {
-    setLocaleState(next);
+  const setPreference = useCallback((next: LocalePreference) => {
+    setPreferenceState(next);
     try {
       localStorage.setItem(STORAGE_KEY, next);
     } catch {
-      // 存不下就算了：下次启动退回浏览器语言，不会丢功能。
+      // 存不下不影响功能：下次启动回到自动。
     }
-    document.documentElement.lang = next;
+    const resolved = resolveLocale(next);
+    document.documentElement.lang = resolved;
     // Rust 侧的错误与摘要文案跟同一门语言（见 lib.rs 的 set_locale）。
-    void api.setLocale(next).catch(() => undefined);
+    void api.setLocale(resolved).catch(() => undefined);
   }, []);
 
   const value = useMemo<LocaleValue>(
-    () => ({ locale, setLocale, t: (key, vars) => translate(locale, key, vars) }),
-    [locale, setLocale],
+    () => ({ locale, preference, setPreference, t: (key, vars) => translate(locale, key, vars) }),
+    [locale, preference, setPreference],
   );
 
   return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;

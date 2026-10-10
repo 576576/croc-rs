@@ -1,12 +1,13 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { TitleBar } from './components/TitleBar';
-import { WorkspaceSwitch, type Workspace } from './components/WorkspaceSwitch';
+import { WorkspaceSwitch, type Page } from './components/WorkspaceSwitch';
+import { ToolbarActions } from './components/ToolbarActions';
+import { Tour, TOUR_STEPS } from './components/Tour';
 import { SettingsGrid, type Settings } from './components/SettingsGrid';
-import { SendPanel, type ContentMode } from './components/SendPanel';
+import { SendPanel, type ContentMode, type DeliveryMode } from './components/SendPanel';
 import { ReceivePanel } from './components/ReceivePanel';
-import { StoredPanel } from './components/StoredPanel';
-import { SshPlaceholder } from './components/SshPlaceholder';
+import { SshPanel } from './components/SshPanel';
+import { HistoryPanel, loadHistory, saveHistory, type HistoryEntry } from './components/HistoryPanel';
 import { TransfersList } from './components/TransfersList';
 import {
   api,
@@ -14,7 +15,6 @@ import {
   type FinishedPayload,
   type OfferPayload,
   type ProgressPayload,
-  type StoredResult,
 } from './bridge';
 import { useT } from './i18n';
 import { applyTheme, resolveTheme } from './theme';
@@ -59,7 +59,10 @@ function saveSettings(value: Settings): void {
 
 export function App() {
   const t = useT();
-  const [workspace, setWorkspace] = useState<Workspace>('send');
+  const [page, setPage] = useState<Page>('transfer');
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+  const [delivery, setDelivery] = useState<DeliveryMode>('direct');
   const [mode, setMode] = useState<ContentMode>('files');
   const [files, setFiles] = useState<string[]>([]);
   const [text, setText] = useState('');
@@ -69,20 +72,33 @@ export function App() {
   const [outDir, setOutDir] = useState('.');
   const [overwrite, setOverwrite] = useState(false);
   const [rename, setRename] = useState(false);
-  const [expiration, setExpiration] = useState('');
-  const [downloads, setDownloads] = useState(1);
-  const [stored, setStored] = useState<StoredResult | null>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [transfers, setTransfers] = useState<TransferView[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /// 每条传输最近的快照：收工时要从它身上取名字与字节数写进历史。
+  const latest = useRef<Record<string, TransferView>>({});
 
   useEffect(() => {
     applyTheme(resolveTheme());
   }, []);
 
+  // 指引走到哪一步就切到那一页：步骤里有跨页的（历史、共享终端）。
+  useEffect(() => {
+    if (tourOpen) setPage(TOUR_STEPS[tourStep].page);
+  }, [tourOpen, tourStep]);
+
   const patchTransfer = useCallback((id: string, patch: Partial<TransferView>) => {
     setTransfers((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }, []);
+
+  const recordHistory = useCallback((entry: HistoryEntry) => {
+    setHistory((current) => {
+      const next = [entry, ...current].slice(0, 200);
+      saveHistory(next);
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -92,19 +108,20 @@ export function App() {
       listen<ProgressPayload>(EVENT.progress, (event) => {
         const payload = event.payload;
         setTransfers((current) =>
-          current.map((item) =>
-            item.id === payload.id
-              ? {
-                  ...item,
-                  status: payload.status,
-                  file: payload.file,
-                  transferred: payload.transferred,
-                  total: payload.total,
-                  active: true,
-                  samples: [...item.samples, { at: Date.now(), transferred: payload.transferred }].slice(-40),
-                }
-              : item,
-          ),
+          current.map((item) => {
+            if (item.id !== payload.id) return item;
+            const next: TransferView = {
+              ...item,
+              status: payload.status,
+              file: payload.file,
+              transferred: payload.transferred,
+              total: payload.total,
+              active: true,
+              samples: [...item.samples, { at: Date.now(), transferred: payload.transferred }].slice(-40),
+            };
+            latest.current[payload.id] = next;
+            return next;
+          }),
         );
       }),
     );
@@ -117,6 +134,16 @@ export function App() {
           ok: payload.ok,
           error: payload.error,
           summary: payload.summary,
+        });
+        const snapshot = latest.current[payload.id];
+        recordHistory({
+          id: payload.id,
+          direction: payload.direction,
+          name: snapshot?.file ?? payload.id,
+          bytes: snapshot?.total ?? 0,
+          at: Date.now(),
+          ok: payload.ok,
+          error: payload.error,
         });
         setBusy(false);
       }),
@@ -136,37 +163,36 @@ export function App() {
         if (dropped.length > 0) {
           setFiles((current) => [...current, ...dropped.filter((path) => !current.includes(path))]);
           setMode('files');
-          setWorkspace('send');
+          setPage('transfer');
         }
       }),
     );
 
-    // 返回键（Android）：退到发送页，而不是直接退应用——后者会把正在跑的传输一起带走。
-    unlisteners.push(listen('tauri://back-button', () => setWorkspace('send')));
+    // 返回键（Android）：退到传输页，而不是直接退应用——后者会把正在跑的传输一起带走。
+    unlisteners.push(listen('tauri://back-button', () => setPage('transfer')));
 
     return () => {
       unlisteners.forEach((promise) => void promise.then((unlisten) => unlisten()));
     };
-  }, [patchTransfer]);
+  }, [patchTransfer, recordHistory]);
 
   const addTransfer = useCallback((id: string, direction: 'send' | 'receive') => {
-    setTransfers((current) => [
-      ...current,
-      {
-        id,
-        direction,
-        status: '',
-        file: null,
-        transferred: 0,
-        total: 0,
-        active: true,
-        ok: null,
-        error: null,
-        summary: null,
-        samples: [],
-        offer: null,
-      },
-    ]);
+    const entry: TransferView = {
+      id,
+      direction,
+      status: '',
+      file: null,
+      transferred: 0,
+      total: 0,
+      active: true,
+      ok: null,
+      error: null,
+      summary: null,
+      samples: [],
+      offer: null,
+    };
+    latest.current[id] = entry;
+    setTransfers((current) => [...current, entry]);
   }, []);
 
   const relayArgs = () => ({
@@ -216,24 +242,6 @@ export function App() {
     }
   };
 
-  const startStore = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      setStored(
-        await api.storeUpload({
-          paths: files,
-          expiration: expiration.trim() === '' ? undefined : expiration.trim(),
-          downloads,
-        }),
-      );
-    } catch (cause) {
-      setError(String(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const respondOffer = async (id: string, accept: boolean) => {
     try {
       await api.respondOffer(id, accept);
@@ -245,28 +253,37 @@ export function App() {
 
   return (
     <div className="app-frame">
-      <TitleBar />
       <div className="site-shell">
         <div className="site-head">
           <div>
             <h1>{t('app.title')}</h1>
             <p>{t('app.tagline')}</p>
           </div>
+        </div>
+
+        <div className="workspace-toolbar">
           <WorkspaceSwitch
-            value={workspace}
+            value={page}
             labels={{
-              send: t('workspace.send'),
-              receive: t('workspace.receive'),
-              store: t('workspace.store'),
+              transfer: t('workspace.transfer'),
               ssh: t('workspace.ssh'),
+              history: t('workspace.history'),
             }}
-            onChange={setWorkspace}
+            onChange={setPage}
+          />
+          <ToolbarActions
+            tourActive={tourOpen}
+            onToggleTour={() => {
+              setTourStep(0);
+              setTourOpen((open) => !open);
+            }}
           />
         </div>
 
-        <div className="transfer-grid">
-          {workspace === 'send' && (
+        {page === 'transfer' && (
+          <div className="transfer-grid">
             <SendPanel
+              delivery={delivery}
               mode={mode}
               files={files}
               text={text}
@@ -274,14 +291,13 @@ export function App() {
               code={code}
               settings={settings}
               customCode={customCode}
+              onDelivery={setDelivery}
               onMode={setMode}
               onFiles={setFiles}
               onText={setText}
               onCustomCode={setCustomCode}
               onStart={() => void startSend()}
             />
-          )}
-          {workspace === 'receive' && (
             <ReceivePanel
               code={receiveCode}
               busy={busy}
@@ -294,23 +310,23 @@ export function App() {
               onRename={setRename}
               onStart={() => void startReceive()}
             />
-          )}
-          {workspace === 'store' && (
-            <StoredPanel
-              files={files}
-              busy={busy}
-              expiration={expiration}
-              downloads={downloads}
-              result={stored}
-              onFiles={setFiles}
-              onExpiration={setExpiration}
-              onDownloads={setDownloads}
-              onStart={() => void startStore()}
-            />
-          )}
-          {workspace === 'ssh' && <SshPlaceholder />}
+          </div>
+        )}
 
-          <section className="panel">
+        {page === 'ssh' && <SshPanel />}
+
+        {page === 'history' && (
+          <HistoryPanel
+            entries={history}
+            onClear={() => {
+              setHistory([]);
+              saveHistory([]);
+            }}
+          />
+        )}
+
+        {page === 'transfer' && (
+          <section className="panel" data-tour="queue">
             <span className="field-label">{t('transfers.title')}</span>
             <TransfersList
               transfers={transfers}
@@ -325,14 +341,19 @@ export function App() {
             <div className="divider" />
             <SettingsGrid
               value={settings}
-              connected={{ relay: transfers.some((item) => item.active), data: transfers.some((item) => item.transferred > 0) }}
+              connected={{
+                relay: transfers.some((item) => item.active),
+                data: transfers.some((item) => item.transferred > 0),
+              }}
               onChange={(next) => {
                 setSettings(next);
                 saveSettings(next);
               }}
             />
           </section>
-        </div>
+        )}
+
+        {tourOpen && <Tour index={tourStep} onIndex={setTourStep} onClose={() => setTourOpen(false)} />}
       </div>
     </div>
   );

@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+
+/// 仓库地址（顶部那枚 GitHub 按钮指向这里）。
+export const REPOSITORY_URL = 'https://github.com/576576/croc-rs';
 
 /// Rust 侧推给前端的事件名。改这里的同时必须改 `crates/croc-gui/src/lib.rs`。
 export const EVENT = {
@@ -100,4 +103,6 @@ export const api = {
   setLocale: (locale: string) => call<void>('set_locale', { locale }),
   reveal: (path: string) => revealItemInDir(path).catch(() => openPath(path)),
   copy: (text: string) => writeText(text),
+  // opener 插件只在 Tauri 里存在：纯浏览器打开前端时调用失败，此时忽略即可。
+  openUrl: (url: string) => openUrl(url).catch(() => undefined),
 };

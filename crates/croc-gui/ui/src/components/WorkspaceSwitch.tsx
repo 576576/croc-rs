@@ -1,41 +1,30 @@
-import { Upload, Download, CloudUpload, Terminal } from 'lucide-react';
+import { ArrowLeftRight, Clock, Terminal } from 'lucide-react';
 
-export type Workspace = 'send' | 'receive' | 'store' | 'ssh';
+export type Page = 'transfer' | 'ssh' | 'history';
 
+/// 三个大页。图标按 croc web 的调子：往来方向、终端、时间。
 export function WorkspaceSwitch({
   value,
   labels,
   onChange,
 }: {
-  value: Workspace;
-  labels: { send: string; receive: string; store: string; ssh: string };
-  onChange: (next: Workspace) => void;
+  value: Page;
+  labels: { transfer: string; ssh: string; history: string };
+  onChange: (next: Page) => void;
 }) {
   return (
-    <div className="workspace-switch four" role="tablist" aria-label={labels.send}>
-      <button type="button" role="tab" aria-selected={value === 'send'} onClick={() => onChange('send')}>
-        <Upload />
-        {labels.send}
+    <div className="workspace-switch three" role="tablist" aria-label={labels.transfer}>
+      <button type="button" role="tab" aria-selected={value === 'transfer'} onClick={() => onChange('transfer')}>
+        <ArrowLeftRight aria-hidden="true" />
+        {labels.transfer}
       </button>
-      <button type="button" role="tab" aria-selected={value === 'receive'} onClick={() => onChange('receive')}>
-        <Download />
-        {labels.receive}
-      </button>
-      <button type="button" role="tab" aria-selected={value === 'store'} onClick={() => onChange('store')}>
-        <CloudUpload />
-        {labels.store}
-      </button>
-      {/* SSH 显式占位：功能依赖还没做出来的数据面，先让人看见它在清单上（计划 §G11）。 */}
-      <button
-        type="button"
-        role="tab"
-        aria-selected={value === 'ssh'}
-        disabled={value === 'ssh' && false}
-        title={labels.ssh}
-        onClick={() => onChange('ssh')}
-      >
-        <Terminal />
+      <button type="button" role="tab" aria-selected={value === 'ssh'} onClick={() => onChange('ssh')}>
+        <Terminal aria-hidden="true" />
         {labels.ssh}
+      </button>
+      <button type="button" role="tab" aria-selected={value === 'history'} onClick={() => onChange('history')}>
+        <Clock aria-hidden="true" />
+        {labels.history}
       </button>
     </div>
   );
