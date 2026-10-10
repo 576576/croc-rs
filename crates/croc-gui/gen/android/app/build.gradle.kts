@@ -1,4 +1,6 @@
+import com.android.build.api.dsl.ApplicationExtension
 import java.util.Properties
+import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -25,7 +27,7 @@ fun signingValue(property: String, env: String): String? =
 
 val keystoreFile = signingValue("storeFile", "ANDROID_KEYSTORE_FILE")
 
-android {
+extensions.configure<ApplicationExtension> {
     compileSdk = 37
     namespace = "cn.sumitm.crocw"
     defaultConfig {
