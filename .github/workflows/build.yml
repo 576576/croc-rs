@@ -234,26 +234,30 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          # 包之间用空格分隔；写成逗号会被当作一个包名。
-          packages: 'platforms;android-37.0 build-tools;36.0.0 platform-tools ndk;27.3.13750724'
       - name: Android SDK 环境
-        # ubuntu 镜像已预装 platforms;android-37.2 / build-tools;37.0.0 / NDK，并导出
-        # ANDROID_HOME 与 ANDROID_NDK_HOME，所以这里只做校验与补齐，不装包：
-        # sdkmanager 已废弃（Android CLI 的 `android sdk` 取代它），setup-android 仍是
-        # 调 sdkmanager 去装的，在新镜像上必然失败。
+        # Ubuntu 镜像已预装 Android SDK 与 NDK，并导出了 ANDROID_HOME / ANDROID_NDK_HOME。
+        # 不能再用 sdkmanager 装包：镜像上的 sdkmanager 只是 cmdline-tools 22.0 的 shim，
+        # 调用后除了一行 deprecated 警告什么也不下载（android-actions/setup-android 走的
+        # 正是它），镜像预装反而被它掩盖。这里只做校验与导出。
         shell: bash
         run: |
           set -euo pipefail
 
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          test -d "$SDK/platforms/android-37" || { echo "::error::缺 platforms;android-37"; exit 1; }
+          # 镜像装的平台目录带小版本号（如 android-37.2），与 AGP 的 compileSdk = 37 对得上：
+          # AGP 取的是目录名前缀匹配，不是精确等值。所以这里匹配 android-<主版本> 前缀，
+          # 不写死 android-37 —— 否则镜像升到 37.3 就又断了。
+          ls "$SDK/platforms" 2>/dev/null | grep -qE '^android-37(\.|$)' || {
+            echo "::error::缺 platforms;android-37.x（现有：$(ls "$SDK/platforms" 2>/dev/null | tr '\n' ' '))"
+            exit 1
+          }
           # 优先用镜像导出的默认 NDK，没有再退回目录里版本号最大的那个。
           NDK="${ANDROID_NDK_HOME:-}"
           [ -n "$NDK" ] || NDK="$(ls -d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)"
-          test -d "${NDK:?找不到 NDK}" || exit 1
+          test -d "$NDK" || {
+            echo "::error::找不到 NDK（$SDK/ndk 现有：$(ls "$SDK/ndk" 2>/dev/null | tr '\n' ' '))"
+            exit 1
+          }
 
           {
             echo "ANDROID_HOME=$SDK"
@@ -262,6 +266,16 @@ jobs:
             echo "ANDROID_NDK_HOME=$NDK"
           } >> "$GITHUB_ENV"
           echo "SDK=$SDK NDK=$NDK"
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - name: 安装 Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+          cache: pnpm
+          cache-dependency-path: crates/croc-gui/ui/pnpm-lock.yaml
       - name: 安装 Tauri CLI
         # Android 这条路径绕不开 CLI（要生成 Gradle 工程）。`cargo install` 会从源码
         # 编一遍，约 12–15 分钟——所以 Android 默认关闭，只在真出 APK 时付这个代价。
@@ -315,6 +329,17 @@ jobs:
             echo "ANDROID_KEY_PASSWORD=$KS_KP"
           } >> "$GITHUB_ENV"
           echo "signature: $([ "$USE_PR" = "true" ] && echo prerelease || echo release)"
+      - name: 构建前端
+        # 与桌面那条路径同款：先把依赖装好、前端构建一遍。`cargo tauri android build`
+        # 自己也会跑 `beforeBuildCommand`，但那样要等到 `cargo install tauri-cli`
+        # （十几分钟）之后才发现前端装不上，提前做能把失败挪到最前面。
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd crates/croc-gui/ui
+          pnpm install --frozen-lockfile
+          pnpm run build
+          test -n "$(ls -A dist)" || { echo "ui/dist 是空的"; exit 1; }
       - name: 构建 APK
         working-directory: crates/croc-gui
         run: cargo tauri android build --apk --target ${{ matrix.abi }}

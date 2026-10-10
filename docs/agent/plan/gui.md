@@ -34,8 +34,11 @@ crates/croc-gui/
   outline 会被右边那件压掉一半（croc web 就是这样，SSH 那处不跟它）。做法是
   `:focus-within` 画在容器上，子元素的 `:focus-visible` outline 归零。
 
-- `tauri.conf.json` 的 `frontendDist` 指向 `ui/dist`，`beforeBuildCommand` 是
-  `pnpm --prefix ui run build`——Tauri 2 在 crate 根执行这条命令，不会切工作目录。
+- `tauri.conf.json` 的 `frontendDist` 指向 `ui/dist`。`beforeBuildCommand` 是
+  `pnpm run build`、**不带 `--prefix ui`**：Tauri 2 把 hook 的 cwd 设成 frontend 目录
+  （即 `crates/croc-gui/ui`，见 tauri-cli 的 `helpers::run_hook`，`cwd` 未指定时取
+  `dirs.frontend`），不是 crate 根。带上 `--prefix ui` 会从 `ui/` 里再找 `ui/`，
+  报 `canonicalizing the --dir argument: ui`。`beforeDevCommand` 同理。
 - **编 `crocw-rs` 之前必须先编前端**：`cargo build` 不会替你跑 `beforeBuildCommand`，少了它
   产物能启动但界面全白。CI 的 GUI job 里有 `ui/dist` 非空断言。
 - **生产构建必须带 `--features custom-protocol`**：`tauri build`（CLI）会自动加它，

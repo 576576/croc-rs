@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "cn.sumitm.crocw",
   "build": {
-    "beforeDevCommand": "pnpm --prefix ui run dev",
-    "beforeBuildCommand": "pnpm --prefix ui run build",
+    "beforeDevCommand": "pnpm run dev",
+    "beforeBuildCommand": "pnpm run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "ui/dist"
   },
