@@ -1,11 +1,12 @@
 import { useT } from '../i18n';
 import { api, type StoredResult } from '../bridge';
 import { Check, CloudUpload, Copy, File, FolderOpen, MessageSquareText, Upload } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { chooseFiles, FileList } from './FileList';
 import { SendCode } from './SendCode';
 import { QRCodeSVG } from 'qrcode.react';
+import { formatBytes } from '../format';
 import type { Settings } from './SettingsGrid';
 
 export type ContentMode = 'files' | 'folder' | 'text';
@@ -17,6 +18,9 @@ const EXPIRATION_UNITS = ['m', 'h', 'd', 'w'] as const;
 type ExpirationUnit = (typeof EXPIRATION_UNITS)[number];
 /// 与 CLI 的 `--expiration` 默认值一致。
 const DEFAULT_EXPIRATION: { value: number; unit: ExpirationUnit } = { value: 1, unit: 'd' };
+
+/// 文本载荷的上限，croc web 的 `maxTextTransferBytes` 与 Go 的 `validateSendingTextOffer` 都是这个数。
+const MAX_TEXT_BYTES = 1024 * 1024;
 
 /// Tauri 的 drop 事件给的是路径数组；Web 的 `File` 对象只有名字，拿不到路径。
 /// 这条直流量只走前者，所以桌面端与 Android 行为一致。
@@ -115,6 +119,13 @@ export function SendPanel({
     if (picked.length > 0) onFiles(picked);
   };
 
+  /// 暂存只收文件（croc web 切到暂存时也把内容拨回文件）：留着"目录"会去开目录选择器，
+  /// 留着"文本"则那一段没有落地的地方。
+  const chooseDelivery = (next: DeliveryMode) => {
+    if (next === 'stored') onMode('files');
+    onDelivery(next);
+  };
+
   const startUpload = async () => {
     setUploading(true);
     try {
@@ -141,7 +152,10 @@ export function SendPanel({
       .catch(() => undefined);
   };
 
-  const somethingToSend = mode === 'text' ? text.trim() !== '' : files.length > 0;
+  /// 载荷长度按 UTF-8 算：上限是字节数，不是字符数，中文一个字三字节。
+  const textBytes = useMemo(() => new Blob([text]).size, [text]);
+  const tooLarge = textBytes > MAX_TEXT_BYTES;
+  const somethingToSend = mode === 'text' ? text.trim() !== '' && !tooLarge : files.length > 0;
 
   return (
     <section className="panel" data-tour="send">
@@ -156,14 +170,15 @@ export function SendPanel({
       </div>
 
       <span className="field-label">{t('send.mode')}</span>
-      {/* 两组开关合成一块：第二组去掉上边，与上面那组共用中间那条线（见 styles.css）。 */}
-      <div className="mode-stack">
+      {/* 两组开关合成一块：第二组去掉上边，与上面那组共用中间那条线（见 styles.css）。
+          暂存下没有内容三选，只剩一组，这一格不上 `two`——那会儿第一组的下边就是外框。 */}
+      <div className={delivery === 'direct' ? 'mode-stack two' : 'mode-stack'}>
         <div className="workspace-switch two" role="tablist" aria-label={t('send.mode')}>
-          <button type="button" role="tab" aria-selected={delivery === 'direct'} onClick={() => onDelivery('direct')}>
+          <button type="button" role="tab" aria-selected={delivery === 'direct'} onClick={() => chooseDelivery('direct')}>
             <Upload aria-hidden="true" />
             {t('send.mode.direct')}
           </button>
-          <button type="button" role="tab" aria-selected={delivery === 'stored'} onClick={() => onDelivery('stored')}>
+          <button type="button" role="tab" aria-selected={delivery === 'stored'} onClick={() => chooseDelivery('stored')}>
             <CloudUpload aria-hidden="true" />
             {t('send.mode.stored')}
           </button>
@@ -195,15 +210,29 @@ export function SendPanel({
             <small>{t('send.dropzone.hint')}</small>
           </div>
 
-          <FileList paths={files} onRemove={(path) => onFiles(files.filter((item) => item !== path))} />
+          <FileList
+            paths={files}
+            folder={mode === 'folder'}
+            onRemove={(path) => onFiles(files.filter((item) => item !== path))}
+          />
         </>
       ) : (
-        <textarea
-          rows={6}
-          value={text}
-          placeholder={t('send.textPlaceholder')}
-          onChange={(event) => onText(event.target.value)}
-        />
+        <div className="text-composer">
+          <label className="field-label" htmlFor="send-text">
+            {t('send.textLabel')}
+          </label>
+          <textarea
+            id="send-text"
+            value={text}
+            placeholder={t('send.textPlaceholder')}
+            onChange={(event) => onText(event.target.value)}
+          />
+          <div className="text-composer-meta">
+            <span className={tooLarge ? 'error' : undefined} role={tooLarge ? 'alert' : undefined}>
+              {formatBytes(textBytes)} / 1 MiB{tooLarge ? t('send.textTooLarge') : ''}
+            </span>
+          </div>
+        </div>
       )}
 
       {delivery === 'stored' ? (

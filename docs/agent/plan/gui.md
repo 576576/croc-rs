@@ -85,14 +85,16 @@ crates/croc-gui/
 
 | 组件      | 类名                  | 要点                                    |
 | ------- | ------------------- | ------------------------------------- |
-| 工作区切换   | `.workspace-switch` | 四格 `inline-grid`（发送 / 接收 / 存储 / SSH），选中格反色 |
+| 工作区切换   | `.workspace-switch` | `inline-grid`（三页 3 格，投递方式 2 格），选中格反色       |
 | 丢弃区     | `.drop-zone`        | `min-height: 112px`，`1px dashed var(--subtle)` |
+| 选中清单    | `.selection-summary` | 一行"几个 / 合计多大"，在丢弃区与清单之间              |
 | 口令码块    | `.send-code`        | `auto minmax(0,1fr) 42px`：标签 + 码值 + 复制按钮 |
 | 二维码     | `.share-qr`         | 可折叠，默认收起                               |
 | 清单确认卡   | `.offer`            | `1px solid var(--foreground)`，背景 `--panel-tint` |
 | 进度条     | `.progress-track`   | `height: 7px`                         |
 | 速率 / ETA | `.progress-metrics` | 两格                                    |
-| 文件清单    | `.file-list`        | `max-height: 154px`，可滚                  |
+| 文件清单    | `.file-list`        | `max-height: 154px`，可滚；目录模式少一列大小       |
+| 文本框     | `.text-composer`    | 标题 + `min-height: 132px` 的 `textarea` + 一行字节数 |
 | 连接状态点   | `.status-dot`       | 7×7 描边，连上后填前景色                         |
 | 传输双栏    | `.transfer-grid`    | `1fr 1fr`                             |
 | 高级设置    | `.settings-grid`    | 三列：网关、中继地址、中继密码、记住密码                   |
@@ -102,7 +104,8 @@ crates/croc-gui/
 
 ### 2.4 i18n
 
-中英双语，首版就有。前端 `locales.ts`，后端 `locales/*.yml`，`set_locale` 两边一起换。
+中英双语，首版就有。前端 `locales/`（一门语言一个 `.ts`，键由 `en.ts` 的 `MessageKey` 约束），
+后端 `locales/*.yml`，`set_locale` 两边一起换。
 取值顺序沿用 CLI 的判据：localStorage → 浏览器语言（`zh*` 归中文）→ 英文兜底。
 代价是文案要走 key，不能照抄上游的字面串。
 
@@ -155,7 +158,7 @@ minSdk 30 已经高于 29，所以存储只有 `MediaStore` 一条路，没有 `
 
 | 项                   | 阻塞点                                                                        |
 | ------------------- | -------------------------------------------------------------------------- |
-| G11 SSH 共享终端        | 依赖 SSH 数据面（上游 `src/sshshare` + `internal/sshclient`），未实现；界面第四格是显式占位      |
+| G11 SSH 共享终端        | 依赖 SSH 数据面（上游 `src/sshshare` + `internal/sshclient`），未实现；SSH 页只有一句去处 |
 | 直写公共目录（免掉一次拷贝）    | 需要 `croc-engine` 的 fs 层抽象出 `FileSink` / `FileSource`（路径 或 raw fd）。现在是"先落私有目录、收完 `publishToDownloads`" |
 | Android 真机验证        | 只做到交叉编译通过。JNI 桥靠类名 + 方法名 + 描述符对上，改签名只会在运行时以 `NoSuchMethodError` 暴露         |
 | 通知里的字节级百分比          | 现在推的是 Rust 侧的状态句                                                            |

@@ -102,8 +102,7 @@ button.ghost:hover:not(:disabled) {
 
 input[type='text'],
 input[type='password'],
-input[type='number'],
-textarea {
+input[type='number'] {
   width: 100%;
   height: 42px;
   padding: 0 10px;
@@ -114,7 +113,25 @@ textarea {
 
 input[type='text']:focus,
 input[type='password']:focus,
-input[type='number']:focus,
+input[type='number']:focus {
+  border-color: var(--foreground);
+}
+
+/* 文本框单独一套：多行要的是高度上限，跟着上面的 `height: 42px` 会把内容挤成一条。
+   尺寸、内边距、行高都与 croc web 的 `textarea` 相同。 */
+textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 132px;
+  border: 1px solid var(--soft-border);
+  padding: 11px;
+  color: var(--foreground);
+  background: var(--background);
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
 textarea:focus {
   border-color: var(--foreground);
 }
@@ -417,6 +434,13 @@ details > summary::-webkit-details-marker {
 
 .mode-stack .workspace-switch + .workspace-switch {
   border-top: 0;
+}
+
+/* 两组都在时（`.two`），中间那条线用 `--soft-border`，与外围的 `--foreground` 分开：
+   上下各有一个按钮处于选中态，底色都是 `--foreground`，同色的线夹在它们中间根本看不见，
+   两组会糊成一片。只剩一组时（暂存下没有内容三选）第一组的下边就是外框，仍是前景色。 */
+.mode-stack.two .workspace-switch:first-child {
+  border-bottom-color: var(--soft-border);
 }
 
 /* 期限：数值格与单位下拉拼成一条，与 croc web 的 `stored-expiration-control` 同形。 */
@@ -817,6 +841,15 @@ details > summary::-webkit-details-marker {
   opacity: 0;
 }
 
+/* 拖入框与清单之间的那一行：左边个数，右边合计大小（照 croc web 的 `selection-summary`）。 */
+.selection-summary {
+  display: flex;
+  justify-content: space-between;
+  padding: 9px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .file-list {
   max-height: 154px;
   margin: 0;
@@ -835,6 +868,11 @@ details > summary::-webkit-details-marker {
   border-bottom: 1px solid var(--soft-border);
   color: var(--muted);
   font-size: 11px;
+}
+
+/* 目录清单没有大小那一列，整行少一格。 */
+.file-list.folder li {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .file-list svg {
@@ -877,6 +915,30 @@ details > summary::-webkit-details-marker {
 
 .list-action:hover {
   color: var(--foreground);
+}
+
+/* 文本模式下的输入区（照 croc web 的 `text-composer`）：标题 + 文本框 + 一行字节数。 */
+.text-composer {
+  display: grid;
+}
+
+.text-composer .field-label {
+  margin-top: 0;
+}
+
+.text-composer-meta {
+  display: flex;
+  min-height: 38px;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--subtle);
+  font-size: 10px;
+}
+
+.text-composer-meta .error {
+  color: var(--danger);
+  font-weight: 750;
 }
 
 .field-label {
