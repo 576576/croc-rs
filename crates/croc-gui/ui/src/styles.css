@@ -429,18 +429,26 @@ details > summary::-webkit-details-marker {
   border-right: 0;
 }
 
-/* 焦点框画在整组上：数值格只占左半边，它的 outline 会被右边的下拉压掉一半。
-   既然外面有这一圈，里面就不再改边框色——改了反而只有半条变深。 */
+/* 焦点框画在整组上：数值格只占左半边，它的 outline 会被右边的下拉压掉一半。 */
 .stored-expiration-control:focus-within {
   outline: 2px solid var(--foreground);
   outline-offset: 2px;
 }
 
 .stored-expiration-control input,
-.stored-expiration-control input:focus,
-.stored-expiration-control select:focus-visible {
+.stored-expiration-control select {
   border-color: var(--subtle);
+}
+
+.stored-expiration-control input:focus-visible,
+.stored-expiration-control select:focus-visible {
   outline: 0;
+}
+
+/* 聚焦时整条一起变深：数值格的右边就是单位下拉的左边，只描数值格会缺一段。 */
+.stored-expiration-control:focus-within input,
+.stored-expiration-control:focus-within select {
+  border-color: var(--foreground);
 }
 
 /* 未实现功能的占位区：竖排、去色，与"能用"的部分在观感上分开。 */
@@ -604,10 +612,8 @@ details > summary::-webkit-details-marker {
   grid-template-columns: minmax(0, 1fr) 42px;
 }
 
-/* 内框与眼睛按钮同色：两者拼成一条，颜色不一样会看出接缝。
-   聚焦也不再把它描成前景色——外面那圈 `:focus-within` 已经标出来了。 */
-.ssh-code-input input,
-.ssh-code-input input:focus {
+/* 内框与眼睛按钮同色：两者拼成一条，颜色不一样会看出接缝。 */
+.ssh-code-input input {
   border-right: 0;
   border-color: var(--subtle);
 }
@@ -645,6 +651,12 @@ details > summary::-webkit-details-marker {
 .ssh-code-input input:focus-visible,
 .ssh-code-input button:focus-visible {
   outline: 0;
+}
+
+/* 聚焦时整条一起变深：内框的右边就是眼睛按钮的左边，只描内框会缺一段。 */
+.ssh-code-input:focus-within input,
+.ssh-code-input:focus-within button {
+  border-color: var(--foreground);
 }
 
 .ssh-status-row {
