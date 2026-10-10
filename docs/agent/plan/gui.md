@@ -26,6 +26,10 @@ crates/croc-gui/
   `pnpm --prefix ui run build`——Tauri 2 在 crate 根执行这条命令，不会切工作目录。
 - **编 `crocw-rs` 之前必须先编前端**：`cargo build` 不会替你跑 `beforeBuildCommand`，少了它
   产物能启动但界面全白。CI 的 GUI job 里有 `ui/dist` 非空断言。
+- **生产构建必须带 `--features custom-protocol`**：`tauri build`（CLI）会自动加它，
+  `cargo build` 不会。少了它 `tauri` 的 `dev` cfg 为真，运行时连的是 `devUrl`
+  （http://localhost:1420）而不是编译期嵌入的前端，界面报"localhost 拒绝连接"。
+  开发时反过来：`cargo run -p croc-gui` 不带这个 feature，走 dev server。
 - 事件名三个：`croc://progress` / `croc://finished` / `croc://offer`。
 - ETA 在前端 `src/format.ts::project()` 里算（最近 3 秒的观测点线性外推），**没有引
   `arrival-time`**：速率抖动比拟合精度大一个量级。这是与上游有意为之的一处偏差。

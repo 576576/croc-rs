@@ -19,6 +19,12 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+# 生产构建必须开。不开它 Tauri 就是 dev 模式：运行时去连 `devUrl`
+# （http://localhost:1420）而不是用编译期嵌入的前端资源，产物打开只是"localhost
+# 拒绝连接"。`tauri build` 会自动加这个 feature，`cargo build` 不会。
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

@@ -131,10 +131,15 @@ jobs:
         # ——从源码编一整套 clap + cargo-mobile2，实测每个 target 多花 12–15 分钟，
         # 而它替我们做的只有两件：跑前端构建（上一步已经做了，与它跑的是同一个
         # 命令）和打安装器（我们传 `--no-bundle`）。配置校验与资源内嵌由 `tauri-build`
-        # （`build.rs`）在编译期做完了，所以直接 `cargo build` 的产物一模一样。
+        # （`build.rs`）在编译期做完了。
+        #
+        # **但 `--features custom-protocol` 必须自己加**：CLI 在 build 时会替你加，
+        # `cargo build` 不会。少了它 Tauri 的 `dev` cfg 为真，产物运行时去连
+        # `devUrl`（http://localhost:1420）而不是用内嵌的前端，界面是
+        # "localhost 拒绝连接"。
         #
         # Android 绕不开 CLI（要生成 Gradle 工程），见下面的 android job。
-        run: cargo build --release -p croc-gui --target ${{ matrix.rust_target }}
+        run: cargo build --release -p croc-gui --target ${{ matrix.rust_target }} --features custom-protocol
       - name: 打包
         id: pack
         shell: bash
