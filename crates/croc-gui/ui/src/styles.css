@@ -445,10 +445,13 @@ details > summary::-webkit-details-marker {
   outline: 0;
 }
 
-/* 聚焦时整条一起变深：数值格的右边就是单位下拉的左边，只描数值格会缺一段。 */
-.stored-expiration-control:focus-within input,
-.stored-expiration-control:focus-within select {
+/* 聚焦时高亮数值格，并把接缝那一竖也带上（下拉的左边界）；下拉自己那三边不动。 */
+.stored-expiration-control:focus-within input {
   border-color: var(--foreground);
+}
+
+.stored-expiration-control:focus-within select {
+  border-left-color: var(--foreground);
 }
 
 /* 未实现功能的占位区：竖排、去色，与"能用"的部分在观感上分开。 */
@@ -653,10 +656,14 @@ details > summary::-webkit-details-marker {
   outline: 0;
 }
 
-/* 聚焦时整条一起变深：内框的右边就是眼睛按钮的左边，只描内框会缺一段。 */
-.ssh-code-input:focus-within input,
-.ssh-code-input:focus-within button {
+/* 聚焦时高亮内框，并把接缝那一竖也带上——内框的右边就是眼睛按钮的左边。
+   按钮只带左边那一竖：它的另外三边是按钮自己的框，不属于内框。 */
+.ssh-code-input:focus-within input {
   border-color: var(--foreground);
+}
+
+.ssh-code-input:focus-within button {
+  border-left-color: var(--foreground);
 }
 
 .ssh-status-row {
