@@ -32,7 +32,7 @@ export const en = {
   'tour.history.title': 'History',
   'tour.history.body': 'Finished transfers stay on the History page until you clear them.',
   'tour.ssh.title': 'Shared terminal',
-  'tour.ssh.body': 'Join a terminal with its invitation. The panel is wired up; the data path is not in this build.',
+  'tour.ssh.body': 'Join a terminal with its invitation. Not in this build.',
 
   'send.intro': 'Choose several files. Share one croc code.',
   'send.mode': 'Delivery',
@@ -89,7 +89,8 @@ export const en = {
   'ssh.hide': 'Hide invitation',
   'ssh.joinAction': 'Join terminal',
   'ssh.status': 'Not connected',
-  'ssh.note': 'The shared terminal needs the SSH data path, which this build does not have yet. Everything here is wired up except the session itself.',
+  // 后面紧跟 getcroc.com/#ssh 那个链接，所以这句要以"前往"（Go to）收尾。
+  'ssh.note': 'Croc-rs does not implement SSH yet. Go to',
   'ssh.safety': 'Read/write access uses the host account privileges. Read-only viewers can still see sensitive terminal output.',
 
   'offer.title': 'Incoming transfer',

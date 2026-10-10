@@ -34,7 +34,7 @@ export const zhCN: Record<MessageKey, string> = {
   'tour.history.title': '历史',
   'tour.history.body': '已完成的传输保留在历史页，直到清空。',
   'tour.ssh.title': '共享终端',
-  'tour.ssh.body': '用邀请码加入终端。面板已就绪，数据面本版本未提供。',
+  'tour.ssh.body': '用邀请码加入终端。本版本未实现。',
 
   'send.intro': '选择若干文件，共用一个口令码。',
   'send.mode': '投递方式',
@@ -91,7 +91,7 @@ export const zhCN: Record<MessageKey, string> = {
   'ssh.hide': '隐藏邀请码',
   'ssh.joinAction': '加入终端',
   'ssh.status': '未连接',
-  'ssh.note': '共享终端需要 SSH 数据面，本版本尚未提供。除会话本身外，其余部分均已就绪。',
+  'ssh.note': 'Croc-rs 暂未实现 SSH，请前往',
   'ssh.safety': '读写权限使用宿主账号的权限。只读观看者仍可看到终端中的敏感输出。',
 
   'offer.title': '收到传输请求',
