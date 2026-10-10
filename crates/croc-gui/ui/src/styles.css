@@ -102,6 +102,7 @@ button.ghost:hover:not(:disabled) {
 
 input[type='text'],
 input[type='password'],
+input[type='number'],
 textarea {
   width: 100%;
   height: 42px;
@@ -113,8 +114,19 @@ textarea {
 
 input[type='text']:focus,
 input[type='password']:focus,
+input[type='number']:focus,
 textarea:focus {
   border-color: var(--foreground);
+}
+
+select {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--soft-border);
+  color: var(--foreground);
+  background: var(--background);
 }
 
 input[type='checkbox'] {
@@ -392,6 +404,42 @@ details > summary::-webkit-details-marker {
   height: 16px;
 }
 
+/* 两组开关上下贴成一块：每组自带 1px 边框，第二组去掉上边，中间那条线由第一组的下边
+   担当。不去掉就是两条 1px 挨在一起，看着像 2px。 */
+.mode-stack {
+  display: grid;
+  margin-bottom: 16px;
+}
+
+.mode-stack .workspace-switch {
+  margin-bottom: 0;
+}
+
+.mode-stack .workspace-switch + .workspace-switch {
+  border-top: 0;
+}
+
+/* 期限：数值格与单位下拉拼成一条，与 croc web 的 `stored-expiration-control` 同形。 */
+.stored-expiration-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 0.65fr);
+}
+
+.stored-expiration-control input {
+  border-right: 0;
+}
+
+/* 焦点框画在整组上：数值格只占左半边，它的 outline 会被右边的下拉压掉一半。 */
+.stored-expiration-control:focus-within {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.stored-expiration-control input:focus-visible,
+.stored-expiration-control select:focus-visible {
+  outline: 0;
+}
+
 /* 未实现功能的占位区：竖排、去色，与"能用"的部分在观感上分开。 */
 .placeholder {
   display: grid;
@@ -578,6 +626,18 @@ details > summary::-webkit-details-marker {
 .ssh-code-input svg {
   width: 15px;
   height: 15px;
+}
+
+/* 焦点框画在整组上，把右边的眼睛按钮一起圈进去：输入框只占左半边，它的 outline 会被
+   那个按钮压掉一半（croc web 就是这样，这里不跟）。 */
+.ssh-code-input:focus-within {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.ssh-code-input input:focus-visible,
+.ssh-code-input button:focus-visible {
+  outline: 0;
 }
 
 .ssh-status-row {

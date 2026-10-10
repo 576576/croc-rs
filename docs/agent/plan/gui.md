@@ -27,7 +27,12 @@ crates/croc-gui/
   false`），所以前端不再自绘标题栏与窗口按钮。
 - 右上角四枚图标按钮（照 croc web 的 `workspace-toolbar-actions`）：指引 / 语言 /
   仓库 / 深浅色。语言那枚是展开选择（自动 · English · 中文，默认自动），不是点击切换。
-- 暂存（`store`）不是独立页，是发送面板里的一种投递方式（直传 / 暂存链接）。
+- 暂存（`store`）不是独立页，是发送面板里的一种投递方式（直传 / 暂存）。期限与次数那
+  两处照 croc web：期限是"数值 + 单位下拉"两件一组（`stored-expiration-control`），
+  次数单独一行；拼出来的是后端 `parse_expiration` 认的 `90m` / `12h` / `3d` / `2w`。
+- **焦点框画在整组上**：数值格 + 单位下拉、邀请码 + 眼睛按钮，这两处只给输入框画
+  outline 会被右边那件压掉一半（croc web 就是这样，SSH 那处不跟它）。做法是
+  `:focus-within` 画在容器上，子元素的 `:focus-visible` outline 归零。
 
 - `tauri.conf.json` 的 `frontendDist` 指向 `ui/dist`，`beforeBuildCommand` 是
   `pnpm --prefix ui run build`——Tauri 2 在 crate 根执行这条命令，不会切工作目录。

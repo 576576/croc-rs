@@ -12,6 +12,12 @@ export type ContentMode = 'files' | 'folder' | 'text';
 /// 投递方式：直传（口令码）或暂存（上传换一条链接）。
 export type DeliveryMode = 'direct' | 'stored';
 
+/// 期限单位，后端 `parse_expiration` 认这四个，拼成 `90m` / `12h` / `3d` / `2w`。
+const EXPIRATION_UNITS = ['m', 'h', 'd', 'w'] as const;
+type ExpirationUnit = (typeof EXPIRATION_UNITS)[number];
+/// 与 CLI 的 `--expiration` 默认值一致。
+const DEFAULT_EXPIRATION: { value: number; unit: ExpirationUnit } = { value: 1, unit: 'd' };
+
 /// Tauri 的 drop 事件给的是路径数组；Web 的 `File` 对象只有名字，拿不到路径。
 /// 这条直流量只走前者，所以桌面端与 Android 行为一致。
 export function SendPanel({
@@ -51,7 +57,8 @@ export function SendPanel({
   /// 拖放事件给的坐标是物理像素，DOM 量出来的是 CSS 像素：换算要靠窗口的缩放比。
   const scale = useRef(1);
   // 暂存的三个输入自己带着：只有这个分支用得到，放到 App 只会让那边的状态更长。
-  const [expiration, setExpiration] = useState('');
+  const [expirationValue, setExpirationValue] = useState(DEFAULT_EXPIRATION.value);
+  const [expirationUnit, setExpirationUnit] = useState<ExpirationUnit>(DEFAULT_EXPIRATION.unit);
   const [downloads, setDownloads] = useState(1);
   const [stored, setStored] = useState<StoredResult | null>(null);
   const [copied, setCopied] = useState(false);
@@ -114,7 +121,7 @@ export function SendPanel({
       setStored(
         await api.storeUpload({
           paths: files,
-          expiration: expiration.trim() === '' ? undefined : expiration.trim(),
+          expiration: `${expirationValue}${expirationUnit}`,
           downloads,
         }),
       );
@@ -149,20 +156,20 @@ export function SendPanel({
       </div>
 
       <span className="field-label">{t('send.mode')}</span>
-      <div className="workspace-switch two" role="tablist" aria-label={t('send.mode')}>
-        <button type="button" role="tab" aria-selected={delivery === 'direct'} onClick={() => onDelivery('direct')}>
-          <Upload aria-hidden="true" />
-          {t('send.mode.direct')}
-        </button>
-        <button type="button" role="tab" aria-selected={delivery === 'stored'} onClick={() => onDelivery('stored')}>
-          <CloudUpload aria-hidden="true" />
-          {t('send.mode.stored')}
-        </button>
-      </div>
+      {/* 两组开关合成一块：第二组去掉上边，与上面那组共用中间那条线（见 styles.css）。 */}
+      <div className="mode-stack">
+        <div className="workspace-switch two" role="tablist" aria-label={t('send.mode')}>
+          <button type="button" role="tab" aria-selected={delivery === 'direct'} onClick={() => onDelivery('direct')}>
+            <Upload aria-hidden="true" />
+            {t('send.mode.direct')}
+          </button>
+          <button type="button" role="tab" aria-selected={delivery === 'stored'} onClick={() => onDelivery('stored')}>
+            <CloudUpload aria-hidden="true" />
+            {t('send.mode.stored')}
+          </button>
+        </div>
 
-      {delivery === 'direct' && (
-        <>
-          <span className="field-label">{t('send.content')}</span>
+        {delivery === 'direct' && (
           <div className="workspace-switch three" role="tablist" aria-label={t('send.content')}>
             <button type="button" role="tab" aria-selected={mode === 'files'} onClick={() => onMode('files')}>
               <File aria-hidden="true" />
@@ -177,8 +184,8 @@ export function SendPanel({
               {t('send.content.text')}
             </button>
           </div>
-        </>
-      )}
+        )}
+      </div>
 
       {delivery === 'stored' || mode !== 'text' ? (
         <>
@@ -201,26 +208,41 @@ export function SendPanel({
 
       {delivery === 'stored' ? (
         <>
-          <div className="settings-grid">
-            <label>
-              <span>{t('store.expiration')}</span>
-              <input
-                type="text"
-                value={expiration}
-                placeholder={t('store.expirationPlaceholder')}
-                onChange={(event) => setExpiration(event.target.value)}
-              />
-            </label>
-            <label>
-              <span>{t('store.downloads')}</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={String(downloads)}
-                onChange={(event) => setDownloads(Number(event.target.value.replace(/[^0-9]/g, '')))}
-              />
-            </label>
+          {/* 期限与次数照 croc web：期限是"数值 + 单位"两件一组，次数单独一行。 */}
+          <span className="field-label">{t('store.expiration')}</span>
+          <div className="stored-expiration-control">
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={expirationValue}
+              aria-label={t('store.expiration')}
+              onChange={(event) => setExpirationValue(Math.max(1, Math.trunc(Number(event.target.value) || 1)))}
+            />
+            <select
+              value={expirationUnit}
+              aria-label={t('store.expirationUnit')}
+              onChange={(event) => setExpirationUnit(event.target.value as ExpirationUnit)}
+            >
+              {EXPIRATION_UNITS.map((unit) => (
+                <option key={unit} value={unit}>
+                  {t(`store.unit.${unit}`)}
+                </option>
+              ))}
+            </select>
           </div>
+
+          <label className="field-label" htmlFor="stored-downloads">
+            {t('store.downloads')}
+          </label>
+          <input
+            id="stored-downloads"
+            type="number"
+            min={1}
+            step={1}
+            value={downloads}
+            onChange={(event) => setDownloads(Math.max(1, Math.trunc(Number(event.target.value) || 1)))}
+          />
 
           <div className="divider" />
           <button type="button" onClick={() => void startUpload()} disabled={uploading || files.length === 0}>
