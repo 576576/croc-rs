@@ -429,14 +429,17 @@ details > summary::-webkit-details-marker {
   border-right: 0;
 }
 
-/* 焦点框画在整组上：数值格只占左半边，它的 outline 会被右边的下拉压掉一半。 */
+/* 焦点框画在整组上：数值格只占左半边，它的 outline 会被右边的下拉压掉一半。
+   既然外面有这一圈，里面就不再改边框色——改了反而只有半条变深。 */
 .stored-expiration-control:focus-within {
   outline: 2px solid var(--foreground);
   outline-offset: 2px;
 }
 
-.stored-expiration-control input:focus-visible,
+.stored-expiration-control input,
+.stored-expiration-control input:focus,
 .stored-expiration-control select:focus-visible {
+  border-color: var(--subtle);
   outline: 0;
 }
 
@@ -601,8 +604,12 @@ details > summary::-webkit-details-marker {
   grid-template-columns: minmax(0, 1fr) 42px;
 }
 
-.ssh-code-input input {
+/* 内框与眼睛按钮同色：两者拼成一条，颜色不一样会看出接缝。
+   聚焦也不再把它描成前景色——外面那圈 `:focus-within` 已经标出来了。 */
+.ssh-code-input input,
+.ssh-code-input input:focus {
   border-right: 0;
+  border-color: var(--subtle);
 }
 
 .ssh-code-input button {
