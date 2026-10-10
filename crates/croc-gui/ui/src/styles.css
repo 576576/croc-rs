@@ -609,10 +609,15 @@ details > summary::-webkit-details-marker {
 
 /* ───────────────────────── 指引 ───────────────────────── */
 
-/* 当前这一步描一圈边框：本设计里状态靠前景背景互换，不靠别的颜色。 */
+/* 当前这一步把边框加粗：本设计里状态靠前景背景互换，不靠别的颜色。
+   用负 offset 的 outline 而不是正 offset——正的会画到元素外面，看起来是"大了一圈"，
+   负的画在边框内侧，等于把 1px 的边框加粗成 2px，位置一点不动。
+   `z-index` 是为了让加粗的这条边压在相邻面板之上：面板是同层兄弟，后画的盖住先画的。 */
 .tour-target {
+  position: relative;
+  z-index: 2;
   outline: 2px solid var(--foreground);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 .tour-bubble {
