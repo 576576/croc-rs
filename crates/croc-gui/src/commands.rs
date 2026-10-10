@@ -170,6 +170,21 @@ impl OfferEvent {
     }
 }
 
+/// 每个路径占多少字节；目录不报大小（`None`），读不到的也一样。
+///
+/// 前端只拿到路径、拿不到大小，而列表要照 croc web 那样在文件名右边显示大小。
+/// 目录那格留空：递归求和要为一次显示去遍历整棵树，而它的值对用户没有意义。
+#[tauri::command]
+pub fn stat_paths(paths: Vec<String>) -> Vec<Option<u64>> {
+    paths.iter().map(|path| size_of(std::path::Path::new(path))).collect()
+}
+
+/// 文件的字节数。目录与其它（符号链接、读不到的）一律 `None`。
+fn size_of(path: &std::path::Path) -> Option<u64> {
+    let meta = path.symlink_metadata().ok()?;
+    if meta.is_file() { Some(meta.len()) } else { None }
+}
+
 /// 生成（或校验）一个口令码。
 ///
 /// 前端用它做"先给用户看一眼码，再点发送"的两步交互——口令码是这次会话的唯一凭据，

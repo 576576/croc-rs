@@ -737,6 +737,42 @@ details > summary::-webkit-details-marker {
   color: var(--foreground);
 }
 
+/* 名字吃掉剩下的宽度并截断，移除按钮占它自己那一列：两者不会互相压。
+   它是个按钮（点一下在系统文件管理器里显示该文件），但看起来是一行文字。 */
+.file-name {
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  color: var(--foreground);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.file-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.list-action {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.list-action:hover {
+  color: var(--foreground);
+}
+
 .field-label {
   display: block;
   margin: 20px 0 7px;

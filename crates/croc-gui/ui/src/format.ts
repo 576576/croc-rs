@@ -61,7 +61,7 @@ export function sumSize(files: OfferFile[]): number {
   return files.reduce((total, file) => total + file.size, 0);
 }
 
-/// 文件路径在云端Formatted Display 里只需要最后一段，全路径留给 title 属性。
+/// 界面上只显示最后一段，全路径留给 title 属性。
 export function baseName(path: string): string {
   const normalized = path.replace(/\\/g, '/');
   return normalized.slice(normalized.lastIndexOf('/') + 1) || path;

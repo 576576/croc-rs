@@ -1,13 +1,14 @@
 import { useT } from '../i18n';
 import { api, type StoredResult } from '../bridge';
-import { Check, CloudUpload, Copy, FileArchive, FolderOpen, Upload } from 'lucide-react';
-import { useState } from 'react';
+import { Check, CloudUpload, Copy, File, FolderOpen, MessageSquareText, Upload } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { chooseFiles, FileList } from './FileList';
 import { SendCode } from './SendCode';
 import { QRCodeSVG } from 'qrcode.react';
 import type { Settings } from './SettingsGrid';
 
-export type ContentMode = 'files' | 'text';
+export type ContentMode = 'files' | 'folder' | 'text';
 /// 投递方式：直传（口令码）或暂存（上传换一条链接）。
 export type DeliveryMode = 'direct' | 'stored';
 
@@ -45,7 +46,10 @@ export function SendPanel({
   onStart: () => void;
 }) {
   const t = useT();
+  const zone = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  /// 拖放事件给的坐标是物理像素，DOM 量出来的是 CSS 像素：换算要靠窗口的缩放比。
+  const scale = useRef(1);
   // 暂存的三个输入自己带着：只有这个分支用得到，放到 App 只会让那边的状态更长。
   const [expiration, setExpiration] = useState('');
   const [downloads, setDownloads] = useState(1);
@@ -53,8 +57,54 @@ export function SendPanel({
   const [copied, setCopied] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  const pick = async (directory: boolean) => {
-    const picked = await chooseFiles(true, directory);
+  // 拖放只在拖到这块区域里才算：事件本身是给整个窗口的，落在别处（比如设置区）
+  // 也照收会把用户随手一拖变成一次发送列表的改动。
+  useEffect(() => {
+    const window = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+    void window
+      .scaleFactor()
+      .then((factor) => {
+        scale.current = factor;
+      })
+      .catch(() => undefined);
+
+    const inside = (x: number, y: number) => {
+      const rect = zone.current?.getBoundingClientRect();
+      if (!rect) return false;
+      return (
+        x / scale.current >= rect.left &&
+        x / scale.current <= rect.right &&
+        y / scale.current >= rect.top &&
+        y / scale.current <= rect.bottom
+      );
+    };
+
+    void window
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === 'leave') {
+          setDragging(false);
+          return;
+        }
+        const over = inside(payload.position.x, payload.position.y);
+        if (payload.type === 'drop') {
+          setDragging(false);
+          if (over && payload.paths.length > 0) onFiles(payload.paths);
+          return;
+        }
+        setDragging(over);
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => undefined);
+
+    return () => unlisten?.();
+  }, [onFiles]);
+
+  const pick = async () => {
+    const picked = await chooseFiles(mode !== 'folder', mode === 'folder');
     if (picked.length > 0) onFiles(picked);
   };
 
@@ -84,7 +134,7 @@ export function SendPanel({
       .catch(() => undefined);
   };
 
-  const somethingToSend = mode === 'files' ? files.length > 0 : text.trim() !== '';
+  const somethingToSend = mode === 'text' ? text.trim() !== '' : files.length > 0;
 
   return (
     <section className="panel" data-tour="send">
@@ -113,54 +163,32 @@ export function SendPanel({
       {delivery === 'direct' && (
         <>
           <span className="field-label">{t('send.content')}</span>
-          <div className="workspace-switch two" role="tablist" aria-label={t('send.content')}>
+          <div className="workspace-switch three" role="tablist" aria-label={t('send.content')}>
             <button type="button" role="tab" aria-selected={mode === 'files'} onClick={() => onMode('files')}>
-              <FileArchive aria-hidden="true" />
+              <File aria-hidden="true" />
               {t('send.content.files')}
             </button>
+            <button type="button" role="tab" aria-selected={mode === 'folder'} onClick={() => onMode('folder')}>
+              <FolderOpen aria-hidden="true" />
+              {t('send.content.folder')}
+            </button>
             <button type="button" role="tab" aria-selected={mode === 'text'} onClick={() => onMode('text')}>
-              <Upload aria-hidden="true" />
+              <MessageSquareText aria-hidden="true" />
               {t('send.content.text')}
             </button>
           </div>
         </>
       )}
 
-      {delivery === 'stored' || mode === 'files' ? (
+      {delivery === 'stored' || mode !== 'text' ? (
         <>
-          <div
-            className="drop-zone"
-            data-dragging={dragging}
-            onClick={() => void pick(false)}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragging(false);
-              const dropped = Array.from(event.dataTransfer.files, (file) => file.name);
-              if (dropped.length > 0) onFiles(dropped);
-            }}
-          >
-            <strong>{t('send.dropzone.title')}</strong>
+          {/* 拖放只在拖进这块区域里才算：事件是窗口级的，判定在 `useEffect` 里做。 */}
+          <div className="drop-zone" ref={zone} data-dragging={dragging} onClick={() => void pick()}>
+            <strong>{mode === 'folder' ? t('send.dropzone.folder') : t('send.dropzone.title')}</strong>
             <small>{t('send.dropzone.hint')}</small>
-            <input type="file" multiple readOnly />
           </div>
 
           <FileList paths={files} onRemove={(path) => onFiles(files.filter((item) => item !== path))} />
-
-          <div className="toolbar-row">
-            <button type="button" className="ghost" onClick={() => void pick(false)}>
-              <FileArchive aria-hidden="true" />
-              {t('send.pick')}
-            </button>
-            <button type="button" className="ghost" onClick={() => void pick(true)}>
-              <FolderOpen aria-hidden="true" />
-              {t('send.pickDir')}
-            </button>
-          </div>
         </>
       ) : (
         <textarea

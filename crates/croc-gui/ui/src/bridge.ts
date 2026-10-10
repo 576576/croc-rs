@@ -101,6 +101,8 @@ export const api = {
   exportFile: (path: string) => call<void>('export_file', { path }),
   shareFile: (path: string) => call<void>('share_file', { path }),
   setLocale: (locale: string) => call<void>('set_locale', { locale }),
+  // 路径 → 字节数；目录是 null（不为一次显示去遍历整棵树）。列表里那一列大小要它。
+  statPaths: (paths: string[]) => call<Array<number | null>>('stat_paths', { paths }),
   reveal: (path: string) => revealItemInDir(path).catch(() => openPath(path)),
   copy: (text: string) => writeText(text),
   // opener 插件只在 Tauri 里存在：纯浏览器打开前端时调用失败，此时忽略即可。

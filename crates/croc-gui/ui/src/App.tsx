@@ -156,18 +156,6 @@ export function App() {
       }),
     );
 
-    // 拖文件到窗口：Web 的 File 对象拿不到路径，只有这个事件给真路径。
-    unlisteners.push(
-      listen<{ paths: string[] }>('tauri://file-drop', (event) => {
-        const dropped = event.payload?.paths ?? [];
-        if (dropped.length > 0) {
-          setFiles((current) => [...current, ...dropped.filter((path) => !current.includes(path))]);
-          setMode('files');
-          setPage('transfer');
-        }
-      }),
-    );
-
     // 返回键（Android）：退到传输页，而不是直接退应用——后者会把正在跑的传输一起带走。
     unlisteners.push(listen('tauri://back-button', () => setPage('transfer')));
 
@@ -208,7 +196,7 @@ export function App() {
       const resolved = await api.generateCode(customCode.trim() === '' ? undefined : customCode.trim());
       setCode(resolved);
       const id = await api.send({
-        paths: mode === 'files' ? files : [],
+        paths: mode === 'text' ? [] : files,
         text: mode === 'text' ? text : undefined,
         ...relayArgs(),
         code: resolved,
