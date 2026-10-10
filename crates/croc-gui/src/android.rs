@@ -1,7 +1,7 @@
 //! Android 侧的 Kotlin 桥（G10）：前台服务、通知进度、SAF 另存与系统分享。
 //!
 //! 只有 Rust → Kotlin 这一个方向。Kotlin 那边是
-//! `gen/android/.../CrocBridge.kt` 的 `@JvmStatic` 方法；两边靠**类名 + 方法名 + JNI 描述符**
+//! `gen/android/.../CrocBridge.kt` 的 `@JvmStatic` 方法；两边靠类名 + 方法名 + JNI 描述符
 //! 对上，改任何一边的方法签名都不会有编译期报错，只会在真机上抛 `NoSuchMethodError`。
 //! 所以改签名时两边必须一起改。
 //!

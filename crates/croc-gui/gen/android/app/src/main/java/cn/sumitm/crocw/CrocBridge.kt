@@ -84,7 +84,7 @@ object CrocBridge {
 
   /// 把已经落盘的文件发布到公共下载目录。
   ///
-  /// 往 `MediaStore.Downloads` 插条目**不需要任何运行时权限**（minSdk 30，没有
+  /// 往 `MediaStore.Downloads` 插条目不需要任何运行时权限（minSdk 30，没有
   /// `WRITE_EXTERNAL_STORAGE` 那条路）；只有改动别人创建的文件才要
   /// `MANAGE_EXTERNAL_STORAGE` 或 SAF。
   ///
