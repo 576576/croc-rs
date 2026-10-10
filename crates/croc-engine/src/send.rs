@@ -218,7 +218,14 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
         // 逐文件压缩开关：接收方靠这个字段决定要不要解压，所以必须随清单一起过去。
         entry.info.is_compressed = compress && entry.info.size > 0;
     }
-    let info = files::sender_info(&entries, empty_folders, &request.machine_id, &request.hash_algorithm, request.ask);
+    let info = files::sender_info(
+        &entries,
+        empty_folders,
+        &request.machine_id,
+        &request.hash_algorithm,
+        request.ask,
+        request.sending_text,
+    );
 
     let ports = link.data_ports();
     if ports.is_empty() {

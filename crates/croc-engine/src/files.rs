@@ -453,10 +453,14 @@ pub fn sender_info(
     machine_id: &str,
     algorithm: &str,
     ask: bool,
+    sending_text: bool,
 ) -> SenderInfo {
     SenderInfo {
         // `--ask`：让接收方那边即便给了 `--yes` 也要问一句（Go 的 `senderInfo.Ask`）。
         ask,
+        // `st`：这次传的是文本。接收方靠它决定"打到标准输出"而不是"存成一个文件"，
+        // 所以漏了它，对端就会把 `croc-stdin-*` 当普通文件落盘。
+        sending_text,
         total_number_folders: folder_count(files, &empty_folders),
         files_to_transfer: files.iter().map(|entry| entry.info.clone()).collect(),
         empty_folders_to_transfer: empty_folders,
@@ -1041,11 +1045,19 @@ mod tests {
         let file = dir.join("x.bin");
         fs::write(&file, b"x").expect("写");
         let (files, empty) = collect(&[file], "xxhash", &CollectOptions::default()).expect("收集");
-        let info = sender_info(&files, empty, "machine", "xxhash", false);
+        let info = sender_info(&files, empty, "machine", "xxhash", false, false);
         assert_eq!(info.machine_id, "machine");
         assert_eq!(info.hash_algorithm, croc_protocol::payload::HashAlgorithm::Xxhash);
         assert_eq!(info.files_to_transfer.len(), 1);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `sending_text` 漏掉的表现是：对端把 `croc-stdin-*` 当普通文件落盘，而不是打到
+    /// 标准输出。它只影响清单里的一个布尔位，本机测不出来，所以在这里钉住。
+    #[test]
+    fn the_sender_info_carries_sending_text() {
+        assert!(sender_info(&[], Vec::new(), "machine", "xxhash", false, true).sending_text);
+        assert!(!sender_info(&[], Vec::new(), "machine", "xxhash", false, false).sending_text);
     }
 
     /// `--hash` 的名字必须原样进清单，否则接收方按错算法重算、把每个文件都判成
@@ -1057,7 +1069,7 @@ mod tests {
             ("imohash", croc_protocol::payload::HashAlgorithm::Imohash),
             ("highway", croc_protocol::payload::HashAlgorithm::Highway),
         ] {
-            let info = sender_info(&[], Vec::new(), "machine", name, false);
+            let info = sender_info(&[], Vec::new(), "machine", name, false, false);
             assert_eq!(info.hash_algorithm, expected, "{name} 应原样进清单");
         }
     }

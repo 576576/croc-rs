@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use croc_core::codephrase;
 use croc_core::policy::Preferences;
-use croc_engine::{EngineError, EngineEvent, ReceiveRequest, SendRequest};
+use croc_engine::{EngineError, EngineEvent, ReceiveRequest, SendRequest, StdoutMode};
 use croc_pake::CurveKind;
 use croc_protocol::SenderInfo;
 use rust_i18n::t;
@@ -328,7 +328,8 @@ pub async fn receive(
         multicast: croc_engine::local::MULTICAST_GROUP_V4,
         relay6: DEFAULT_RELAY6.to_owned(),
         ip: String::new(),
-        stdout: false,
+        // GUI 的标准输出没人看：文本传输若照 CLI 那样"打完删掉"，用户什么都拿不到。
+        stdout: StdoutMode::Never,
         internal_dns: false,
         no_multi: false,
         machine_id: machine_id(),

@@ -11,7 +11,7 @@ use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use croc_core::codephrase::{self, Components};
 use croc_core::policy::Preferences;
-use croc_engine::{EngineEvent, EventSink, ReceiveRequest, SendRequest, silent_sink};
+use croc_engine::{EngineEvent, EventSink, ReceiveRequest, SendRequest, StdoutMode, silent_sink};
 use croc_pake::CurveKind;
 use rust_i18n::t;
 
@@ -441,10 +441,10 @@ struct Global {
     #[arg(long, default_value = "", global = true)]
     ip: String,
 
-    /// 接收方收完之后，把文件内容打到标准输出。
+    /// 接收方收完之后，把文件内容打到标准输出，然后删掉落盘的那份。
     ///
-    /// 文件照常落盘，所以这个开关是
-    /// "顺便打一份"，不是"不写盘"。文本传输会自动开它。
+    /// 所以这个开关是"只从管道走"，不是"顺便打一份"（Go 同样是打完删）。
+    /// 文本传输会自动开它。
     #[arg(long, global = true)]
     stdout: bool,
 
@@ -900,7 +900,7 @@ pub fn parse() -> Result<Parsed, ExitCode> {
                     multicast: cli.global.multicast,
                     relay6,
                     ip: cli.global.ip.clone(),
-                    stdout: cli.global.stdout,
+                    stdout: if cli.global.stdout { StdoutMode::Always } else { StdoutMode::Auto },
                     internal_dns,
                     // `--no-multi` 只挂在 `send` 上（与 Go 一致），接收端不能给，
                     // 它按中继 banner 里的端口数走。

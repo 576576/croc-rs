@@ -534,22 +534,25 @@ case_i8() {
   if start_relay rust "$WORK/relay-rust.log"; then
     local r; r="$(relay_addr "$RELAY_BASE")"
     local text="croc-rs interop 文本载荷 · $(date -u +%s)"
+    # 接收侧必须给 `--overwrite`：Go 收到文本时会先在落盘目录里造一个 0 字节的同名
+    # 文件，随后问 "Resume ...?"，`--yes` 答的是 N，于是整个跳过（Go 自己发、自己收
+    # 也是这个结果，不是我们的问题）。
     transfer "$CASE_DIR" "" \
       "$CROC_RS_BIN" --relay "$r" --pass "$RELAY_PASS" --yes --quiet \
         send --code "$CODE" --no-local --text "$text" -- \
-      "$CROC_GO_BIN" --relay "$r" --pass "$RELAY_PASS" --yes --quiet "$CODE"
+      "$CROC_GO_BIN" --relay "$r" --pass "$RELAY_PASS" --yes --quiet --overwrite "$CODE"
     if [ $? -eq 0 ]; then
-      # 文本落盘为 croc-stdin-<时间戳>，内容必须逐字节一致。
-      local got=""
-      for f in "$CASE_DIR"/recv/croc-stdin-*; do
-        [ -f "$f" ] || continue
-        got="$(cat "$f")"
-      done
-      if [ "$got" = "$text" ]; then
-        result=0
+      # Go 的做法是打印内容、再删掉落盘的那份，所以要断言的是标准输出，不是文件。
+      if grep -qF "$text" "$CASE_DIR/receiver.log"; then
+        local left
+        left="$(ls "$CASE_DIR"/recv 2>/dev/null | wc -l)"
+        if [ "$left" -eq 0 ]; then
+          result=0
+        else
+          dim "    收完不该留文件：$left 个"
+        fi
       else
-        dim "    期望：$text"
-        dim "    实得：$got"
+        dim "    期望在接收端输出里看到：$text"
       fi
     fi
   fi

@@ -34,6 +34,18 @@ pub type ConfirmFuture = std::pin::Pin<Box<dyn std::future::Future<Output = bool
 /// tokio worker 上同步阻塞会让整个 runtime 停摆，所以给一条 async 路径。
 pub type AsyncConfirmSink = Arc<dyn Fn(&SenderInfo) -> ConfirmFuture + Send + Sync>;
 
+/// 收完要不要把内容打到标准输出。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StdoutMode {
+    /// 看情况：普通文件不打，文本传输打（Go 的 `--text` 会顺手把 `Stdout` 打开）。
+    #[default]
+    Auto,
+    /// `--stdout`：一律打。
+    Always,
+    /// 一律不打，文件留着：GUI 的标准输出没人看，打了等于把内容丢掉。
+    Never,
+}
+
 /// 一次接收所需的全部参数。
 pub struct ReceiveRequest {
     /// 中继地址（`host:port`）。
@@ -60,8 +72,11 @@ pub struct ReceiveRequest {
     pub relay6: String,
     /// `--ip`：已知的对方地址。给了就直连它，跳过局域网发现。
     pub ip: String,
-    /// `--stdout`：收完把内容打到标准输出（`--text` 会自动开）。
-    pub stdout: bool,
+    /// 收完要不要把内容打到标准输出（打完就删，见 [`print_received`]）。
+    ///
+    /// 三态而不是布尔：文本传输在 CLI 上要自动开（`--text` 的那一半协议），但 GUI 的
+    /// 标准输出没人看，它必须能明确说"别打、文件留着"。
+    pub stdout: StdoutMode,
     /// `--internal-dns`：用自带的 DNS stub resolver，而不是操作系统的解析器。
     pub internal_dns: bool,
     /// `--no-multi`：禁用多端口复用，只用一条数据流。
@@ -105,11 +120,15 @@ pub struct Summary {
     pub bytes: u64,
 }
 
-/// 把一个收完的文件打到标准输出（`--stdout`，以及文本传输会自动开它）。
+/// 把一个收完的文件打到标准输出，然后删掉它（`--stdout`，文本传输会自动开它）。
 ///
-/// 文件照常落盘，打的是落盘后的内容——Go 是"收完再读出来打"，不是"不落盘"。
-/// 时机也照 Go：每个文件收完就打（`receiveData` 里 `finished` 那一支），不是等
-/// 整次传输结束再打——`croc-rs receive --stdout | jq` 这类用法要的是边收边出。
+/// 打完就删是 Go 的行为（`croc.go:2339`：`Stdout && !IsSender` 时 `root.Remove`）：
+/// 内容已经出去了，再留一份在磁盘上，用户看到的就是"收到了一个 `croc-stdin-*` 文件"
+/// 而不是那段文本。Go 只删最后处理的那一个（它的代码只认 `FilesToTransferCurrentNum`），
+/// 这里每个打出去的都删——多文件时只删最后一个会留下一半。
+///
+/// 时机照 Go：每个文件收完就打（`receiveData` 里 `finished` 那一支），不是等整次
+/// 传输结束再打——`croc-rs receive --stdout | jq` 这类用法要的是边收边出。
 ///
 /// # Errors
 ///
@@ -124,6 +143,9 @@ fn print_received(info: &FileInfo, out_dir: &std::path::Path) -> Result<(), Engi
     let mut stdout = std::io::stdout().lock();
     std::io::copy(&mut file, &mut stdout).map_err(|error| EngineError::file(&path, error))?;
     let _ = stdout.flush();
+    drop(file);
+    // Windows 上文件还开着就删不掉，所以上面先 drop。删不掉不值得让整次传输失败。
+    let _ = std::fs::remove_file(&path);
     Ok(())
 }
 
@@ -409,7 +431,11 @@ fn plan_files(request: &ReceiveRequest, info: &SenderInfo) -> Result<(Vec<u64>, 
 
 /// 这次接收要不要把内容打到标准输出。
 fn wants_stdout(request: &ReceiveRequest, manifest: Option<&croc_protocol::SenderInfo>) -> bool {
-    request.stdout || manifest.is_some_and(|info| info.sending_text)
+    match request.stdout {
+        StdoutMode::Always => true,
+        StdoutMode::Never => false,
+        StdoutMode::Auto => manifest.is_some_and(|info| info.sending_text),
+    }
 }
 
 /// 一个文件的接收作业。

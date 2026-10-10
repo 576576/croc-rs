@@ -44,7 +44,9 @@ pub mod text;
 pub mod throttle;
 
 pub use error::EngineError;
-pub use receive::{AsyncConfirmSink, ConfirmFuture, ConfirmSink, ReceiveRequest, Summary as ReceiveSummary, receive};
+pub use receive::{
+    AsyncConfirmSink, ConfirmFuture, ConfirmSink, ReceiveRequest, StdoutMode, Summary as ReceiveSummary, receive,
+};
 pub use send::{SendRequest, Summary as SendSummary, send};
 
 use std::sync::Arc;

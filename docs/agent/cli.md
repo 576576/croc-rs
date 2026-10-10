@@ -238,8 +238,13 @@ a.bin   42% |████████            | (2.1 kB/4.9 kB, 1.2 MB/s)
   且多文件时那一行是 `N files` 加总大小而不是首文件名。多文件时本实现比 Go 多 N-1 行。
 * **上报频率** 100 ms，与 Go 的进度条一致。发送侧按已写出的明文块计
   （`data.rs` 的 `UploadProgress`），接收侧按落盘块计（`data.rs` 的 `Progress::add`）。
-* **`--stdout` 按文件输出**：每收完一个文件就打一次，与 Go 的 `receiveData` 一致。
-  原本是整次接收完毕后统一输出，那条差异已从 §2.2 移除。
+* **`--stdout` 按文件输出，且打完就删**：每收完一个文件就打一次（与 Go 的 `receiveData`
+  一致），打完删掉落盘的那份（Go 在 `croc.go:2339` 做同一件事：`Stdout && !IsSender`
+  时 `root.Remove`）。Go 只删最后处理的那个，本实现每个打出去的都删。
+* **文本传输自动开 `--stdout`**：发送方在清单里带 `st`（`SenderInfo::sending_text`），
+  接收方见到它就打内容并删掉 `croc-stdin-*` 那份落盘文件——用户看到的应该是那段文本，
+  不是一个名字很怪的文件。GUI 例外：它的标准输出没人看，所以走 `StdoutMode::Never`，
+  文件留在下载目录里。
 * **上色规则**在 `crates/croc-cli/src/term.rs`：口令码黄、文件名粗体，开启条件是 stderr 为
   终端、未设 `NO_COLOR`、`TERM` 非 `dumb`。
 
