@@ -105,27 +105,24 @@ pub struct Summary {
     pub bytes: u64,
 }
 
-/// 跑一次接收。
+/// 把一个收完的文件打到标准输出（`--stdout`，以及文本传输会自动开它）。
 ///
-/// 把收到的文件按清单顺序打到标准输出。
-///
-/// Go 是"收完再读出来打"，文件照常落盘——不是"不落盘"。这里也是
-/// 全部收完统一打；多文件时 Go 是逐个打的，但内容与顺序一致。
+/// 文件照常落盘，打的是落盘后的内容——Go 是"收完再读出来打"，不是"不落盘"。
+/// 时机也照 Go：每个文件收完就打（`receiveData` 里 `finished` 那一支），不是等
+/// 整次传输结束再打——`croc-rs receive --stdout | jq` 这类用法要的是边收边出。
 ///
 /// # Errors
 ///
 /// 读不回来时返回错误（文件被跳过时会 open 失败，那是正常的，直接跳过）。
-fn print_received(files: &[FileInfo], out_dir: &std::path::Path) -> Result<(), EngineError> {
+fn print_received(info: &FileInfo, out_dir: &std::path::Path) -> Result<(), EngineError> {
     use std::io::Write as _;
 
+    let path = files::destination_of(info, out_dir)?;
+    let Ok(mut file) = std::fs::File::open(&path) else {
+        return Ok(());
+    };
     let mut stdout = std::io::stdout().lock();
-    for info in files {
-        let path = files::destination_of(info, out_dir)?;
-        let Ok(mut file) = std::fs::File::open(&path) else {
-            continue;
-        };
-        std::io::copy(&mut file, &mut stdout).map_err(|error| EngineError::file(&path, error))?;
-    }
+    std::io::copy(&mut file, &mut stdout).map_err(|error| EngineError::file(&path, error))?;
     let _ = stdout.flush();
     Ok(())
 }
@@ -222,21 +219,16 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                         {
                             emit(&request.events, EngineEvent::FileDone { name: entry.name.clone() });
                             emit(&request.events, EngineEvent::Progress { transferred, total: total_of(&manifest) });
+                            if wants_stdout(&request, manifest.as_deref()) {
+                                print_received(entry, &request.out_dir)?;
+                            }
                         }
                     }
                     _ => {}
                 },
                 Effect::Finish(outcome) => {
                     return match outcome {
-                        Outcome::Completed => {
-                            // `--stdout`（以及文本传输会自动开它）：收完把内容打到标准输出。
-                            let wants_stdout =
-                                request.stdout || manifest.as_ref().is_some_and(|info| info.sending_text);
-                            if wants_stdout && let Some(info) = manifest.as_ref() {
-                                print_received(&info.files_to_transfer, &request.out_dir)?;
-                            }
-                            Ok(summary)
-                        }
+                        Outcome::Completed => Ok(summary),
                         other => Err(other.into()),
                     };
                 }
@@ -413,6 +405,11 @@ fn plan_files(request: &ReceiveRequest, info: &SenderInfo) -> Result<(Vec<u64>, 
         }
     }
     Ok((pending, planned))
+}
+
+/// 这次接收要不要把内容打到标准输出。
+fn wants_stdout(request: &ReceiveRequest, manifest: Option<&croc_protocol::SenderInfo>) -> bool {
+    request.stdout || manifest.is_some_and(|info| info.sending_text)
 }
 
 /// 一个文件的接收作业。

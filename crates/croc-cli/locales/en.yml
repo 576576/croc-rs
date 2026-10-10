@@ -191,7 +191,7 @@ cli:
   unknown_machine: "unknown machine"
   confirm_receive: "Receive %{count} files (%{bytes} bytes) from %{peer}? [Y/n] "
   sending_file: "Sending '%{name}' (%{size})"
-  receiving_file: "Receiving '%{name}' (%{bytes} bytes)"
+  receiving_file: "Receiving '%{name}' (%{bytes})"
   file_done: "Done '%{name}'"
   classic_prompt_on: "classic mode is currently **on**.\n\nTurning it off keeps the codephrase out of the process list, so other local users on a multi-user machine cannot see it.\n\nTurn classic mode off? (y/N) "
   classic_prompt_off: "classic mode is currently **off**.\n\nTurning it on puts the codephrase in the process list, where other local users on a multi-user machine may see it and grab the files first.\n\nTurn classic mode on? (y/N) "

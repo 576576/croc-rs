@@ -77,7 +77,13 @@ impl SendNotice {
                 }
             }
         };
-        eprintln!("{}\n  croc-rs {}{}{notice}", t!("notice.run_heading", locale = locale.tag()), self.flags, self.code);
+        // Go 用黄色高亮口令码（`termui.Secret`），开关不上色。
+        eprintln!(
+            "{}\n  croc-rs {}{}{notice}",
+            t!("notice.run_heading", locale = locale.tag()),
+            self.flags,
+            crate::term::secret(&self.code)
+        );
         // web 接收页。链接只由口令码拼成，跟中继是谁无关。
         let url = crate::qr::web_receive_url(&self.code);
         eprintln!("\n{}\n  {url}", t!("notice.or_open", locale = locale.tag()));
@@ -133,7 +139,7 @@ fn flags(local: bool, public_relay: bool, relay: &str, password: &str) -> String
 /// Go 在算哈希期间反复重打这一行，这里只打最终那一次：中间态是
 /// 一个不断变大的计数，落盘到文件里只是噪声。
 pub fn print_sending(locale: Locale, name: Option<&str>, files: u64, folders: u64, bytes: u64) {
-    let label = name.map_or_else(|| count_label(locale, files), |name| format!("'{name}'"));
+    let label = name.map_or_else(|| count_label(locale, files), |name| format!("'{}'", crate::term::filename(name)));
     let size = byte_count_decimal(bytes);
     let line = if folders == 0 {
         t!("notice.sending", locale = locale.tag(), label = label, size = size)

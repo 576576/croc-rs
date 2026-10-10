@@ -31,6 +31,7 @@ mod qr;
 mod relay_cmd;
 mod relay_pool;
 mod store;
+mod term;
 
 use rust_i18n::t;
 use std::process::ExitCode;

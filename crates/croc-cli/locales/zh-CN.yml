@@ -183,7 +183,7 @@ cli:
   unknown_machine: "未知机器"
   confirm_receive: "接收来自 %{peer} 的 %{count} 个文件（%{bytes} 字节）？[Y/n] "
   sending_file: "发送 '%{name}'（%{size}）"
-  receiving_file: "接收 '%{name}'（%{bytes} 字节）"
+  receiving_file: "接收 '%{name}'（%{bytes}）"
   file_done: "完成 '%{name}'"
   classic_prompt_on: "classic 模式当前是**开启**的。\n\n关闭它可以避免口令码出现在进程表里，多用户机器上别的本地用户就看不到它了。\n\n确定要关闭 classic 模式吗？(y/N) "
   classic_prompt_off: "classic 模式当前是**关闭**的。\n\n开启它会让口令码出现在进程表里，多用户机器上别的本地用户可能看到它、并抢先把文件收走。\n\n确定要开启 classic 模式吗？(y/N) "

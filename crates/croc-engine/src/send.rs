@@ -11,7 +11,7 @@ use croc_protocol::{TailcatDeclaration, declare};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::data::{ChunkQueue, DataPlane, send_file, stream_count};
+use crate::data::{ChunkQueue, DataPlane, UploadProgress, send_file, stream_count};
 use crate::dns;
 use crate::error::EngineError;
 use crate::files;
@@ -304,6 +304,10 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
                         data_tx.clone(),
                         throttle.clone(),
                         cancel.clone(),
+                        Arc::new(UploadProgress::new(
+                            u64::try_from(entry.info.size).unwrap_or(0),
+                            request.events.clone(),
+                        )),
                     )?;
                 }
                 Effect::Emit(Event::FileClosed { index }) => {
@@ -356,13 +360,14 @@ fn spawn_sender(
     notify: mpsc::Sender<InEvent>,
     throttle: Option<Arc<Throttle>>,
     cancel: CancellationToken,
+    progress: Arc<UploadProgress>,
 ) -> Result<(), EngineError> {
     let key = key.ok_or_else(|| EngineError::Config("the data key is not ready yet".to_owned()))?;
     let queue =
         Arc::new(Mutex::new(ChunkQueue::new(&croc_core::chunk::ChunkRanges::from_wire(ranges.to_vec()), file_size)));
 
     tokio::spawn(async move {
-        match send_file(conns, path, queue, key, compress, throttle, cancel).await {
+        match send_file(conns, path, queue, key, compress, throttle, cancel, Some(progress)).await {
             // 发完就什么都不用报：发送方的收尾由对端的 `close-sender` 驱动
             // （数据面发完 ≠ 对端收完，最后一块可能还在中继的缓冲里）。
             // 报一个事件反而会让状态机在 `Transferring` 上收到不认识的东西。

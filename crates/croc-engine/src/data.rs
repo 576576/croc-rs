@@ -255,6 +255,41 @@ impl Progress {
     }
 }
 
+/// 传输期的进度上报：当前文件走到了哪。
+///
+/// 已发字节数跨流共享（多流并行时每条流都往同一个计数器上加），上报按 100 ms 节流
+/// ——Go 的进度条也是这个频率。报出去的是文件内的进度：Go 每个文件重置一条进度条，
+/// 整次传输的累计值另由 `Progress` 事件在每个文件收尾时报。
+pub struct UploadProgress {
+    bytes: AtomicU64,
+    last: Mutex<Instant>,
+    total: u64,
+    sink: EventSink,
+}
+
+impl UploadProgress {
+    /// 从 0 起算，走到这个文件的大小 `total`。
+    #[must_use]
+    pub fn new(total: u64, sink: EventSink) -> Self {
+        Self { bytes: AtomicU64::new(0), last: Mutex::new(Instant::now()), total, sink }
+    }
+
+    /// 记下刚写出去的字节，到点就上报一次。
+    pub fn add(&self, added: u64) {
+        self.bytes.fetch_add(added, Ordering::Relaxed);
+        let Ok(mut last) = self.last.lock() else { return };
+        let now = Instant::now();
+        if now.saturating_duration_since(*last) < Duration::from_millis(100) {
+            return;
+        }
+        *last = now;
+        emit(
+            &self.sink,
+            EngineEvent::FileProgress { transferred: self.bytes.load(Ordering::Relaxed), total: self.total },
+        );
+    }
+}
+
 /// 发送一个文件。返回数据连接，调用方必须继续持有它们。
 ///
 /// # 为什么要把连接还回去
@@ -270,6 +305,7 @@ impl Progress {
 /// # Errors
 ///
 /// 读文件失败、写 socket 失败。被取消时返回 [`EngineError::Cancelled`]。
+#[allow(clippy::too_many_arguments, reason = "这条路径上的参数都是独立事实，打包成结构体只是换个地方写")]
 pub async fn send_file(
     conns: Vec<Framed<TcpStream>>,
     path: PathBuf,
@@ -278,6 +314,7 @@ pub async fn send_file(
     compress: bool,
     throttle: Option<Arc<Throttle>>,
     cancel: CancellationToken,
+    progress: Option<Arc<UploadProgress>>,
 ) -> Result<Vec<Framed<TcpStream>>, EngineError> {
     let file = Arc::new(File::open(&path).map_err(|error| EngineError::file(&path, error))?);
     let mut handles = Vec::with_capacity(conns.len());
@@ -288,8 +325,9 @@ pub async fn send_file(
         let cancel = cancel.clone();
         let path = path.clone();
         let throttle = throttle.clone();
+        let progress = progress.clone();
         handles.push(tokio::spawn(async move {
-            let result = send_stream(conn, file, queue, key, compress, throttle, cancel, path).await;
+            let result = send_stream(conn, file, queue, key, compress, throttle, cancel, path, progress).await;
             // 无论成败都把连接还回去——关连接是调用方的事，见函数头的说明。
             result
         }));
@@ -321,6 +359,7 @@ async fn send_stream(
     throttle: Option<Arc<Throttle>>,
     cancel: CancellationToken,
     path: PathBuf,
+    progress: Option<Arc<UploadProgress>>,
 ) -> (Framed<TcpStream>, Result<(), EngineError>) {
     let buffer = vec![0u8; usize::try_from(CHUNK_SIZE).unwrap_or(32 * 1024)];
     let mut payload = vec![0u8; 8 + buffer.len()];
@@ -402,6 +441,9 @@ async fn send_stream(
             result = conn.write_frame(&frame) => {
                 if let Err(error) = result {
                     return (conn, Err(error.into()));
+                }
+                if let Some(progress) = &progress {
+                    progress.add(u64::try_from(read.len()).unwrap_or(0));
                 }
             }
         }

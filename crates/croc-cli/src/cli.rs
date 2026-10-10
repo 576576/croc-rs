@@ -1039,12 +1039,13 @@ pub fn init_tracing(debug: bool) {
 /// [`EngineEvent::Sending`] 走就能复现这个顺序。
 fn send_sink(notice: Box<crate::notice::SendNotice>) -> EventSink {
     use crate::locale::Locale;
-    use crate::notice::byte_count_decimal;
+    use crate::term::{Direction, Meter};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     let locale = Locale::detect();
     // 只打一次：`Sending` 现在只会发一次，但重连等路径将来可能再发。
     let announced = Arc::new(AtomicBool::new(false));
+    let meter = Meter::new(Direction::Send);
     Arc::new(move |event: EngineEvent| match event {
         EngineEvent::Sending { name, files, folders, bytes } => {
             if announced.swap(true, Ordering::Relaxed) {
@@ -1053,41 +1054,47 @@ fn send_sink(notice: Box<crate::notice::SendNotice>) -> EventSink {
             crate::notice::print_sending(locale, name.as_deref(), files, folders, bytes);
             notice.print(locale);
         }
+        EngineEvent::PeerAddress(address) => meter.set_peer(address),
         EngineEvent::Status(message) => eprintln!("{message}"),
         EngineEvent::FileStarted { name, size } => {
-            eprintln!(
-                "{}",
-                t!("cli.sending_file", locale = locale.tag(), name = name, size = byte_count_decimal(size))
-            );
-        }
-        EngineEvent::Progress { transferred, total } => {
-            if let Some(percent) = transferred.saturating_mul(100).checked_div(total) {
-                eprint!("\r{percent}%  ");
-                if transferred >= total {
-                    eprintln!();
-                }
+            if let Some(header) = meter.start(name, size) {
+                eprintln!("{header}");
             }
         }
+        EngineEvent::FileProgress { transferred, .. } => meter.tick(transferred),
+        EngineEvent::FileDone { .. } => meter.finish(),
         _ => {}
     })
 }
 
 /// 进度事件出口。
 fn sink(global: &Global) -> EventSink {
+    use crate::term::{Direction, Meter};
+
     if global.quiet {
         return silent_sink();
     }
-    Arc::new(|event: EngineEvent| match event {
+    let meter = Meter::new(Direction::Receive);
+    Arc::new(move |event: EngineEvent| match event {
         EngineEvent::Status(message) => eprintln!("{message}"),
-        EngineEvent::FileStarted { name, size } => eprintln!("{}", t!("cli.receiving_file", name = name, bytes = size)),
-        EngineEvent::FileDone { name } => eprintln!("{}", t!("cli.file_done", name = name)),
-        EngineEvent::Progress { transferred, total } => {
-            if let Some(percent) = transferred.saturating_mul(100).checked_div(total) {
-                eprint!("\r{percent}%  ");
-                if transferred >= total {
-                    eprintln!();
-                }
+        EngineEvent::PeerAddress(address) => meter.set_peer(address),
+        EngineEvent::FileStarted { name, size } => {
+            eprintln!(
+                "{}",
+                t!(
+                    "cli.receiving_file",
+                    name = crate::term::filename(&name),
+                    bytes = crate::notice::byte_count_decimal(size)
+                )
+            );
+            if let Some(header) = meter.start(name, size) {
+                eprintln!("{header}");
             }
+        }
+        EngineEvent::FileProgress { transferred, .. } => meter.tick(transferred),
+        EngineEvent::FileDone { name } => {
+            meter.finish();
+            eprintln!("{}", t!("cli.file_done", name = name));
         }
         // `EngineEvent` 是 `#[non_exhaustive]`：将来新增的事件默认不打印，
         // 免得一个没设计过的事件把终端刷花。
