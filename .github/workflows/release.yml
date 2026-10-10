@@ -130,7 +130,9 @@ jobs:
             FLOW="auto"
             CHANNEL="alpha"
             PACK="all"
-            ANDROID_ARM64="false"
+            # Android arm64 常开：不加就只在手动 dispatch 时才编，Android 侧的
+            # 构建脚本、NDK、签名改动平时没有任何 CI 覆盖。
+            ANDROID_ARM64="true"
             ANDROID_X64="false"
             WIN_TC="msvc"
             SEL="windows-x64 linux-x64"
