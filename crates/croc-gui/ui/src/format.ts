@@ -41,11 +41,15 @@ export interface Projection {
   eta: number;
 }
 
+/// 采样窗口的时长。进度是 100 ms 上报一次，按"最近 N 个点"取窗口会把它压到 1 秒
+/// 以内，速率跟着抖——按时间取，慢速传输上窗口自然变长。
+const WINDOW_MS = 3000;
+
 export function project(samples: Sample[], transferred: number, total: number): Projection {
   if (samples.length < 2) return { rate: 0, eta: Number.POSITIVE_INFINITY };
-  const window = samples.slice(-8);
-  const first = window[0];
-  const last = window[window.length - 1];
+  const last = samples[samples.length - 1];
+  const recent = samples.filter((sample) => last.at - sample.at <= WINDOW_MS);
+  const first = (recent.length >= 2 ? recent : samples.slice(-2))[0];
   const elapsed = (last.at - first.at) / 1000;
   if (elapsed <= 0) return { rate: 0, eta: Number.POSITIVE_INFINITY };
   const rate = (last.transferred - first.transferred) / elapsed;

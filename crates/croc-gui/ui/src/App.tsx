@@ -101,7 +101,7 @@ export function App() {
                   transferred: payload.transferred,
                   total: payload.total,
                   active: true,
-                  samples: [...item.samples, { at: Date.now(), transferred: payload.transferred }].slice(-8),
+                  samples: [...item.samples, { at: Date.now(), transferred: payload.transferred }].slice(-40),
                 }
               : item,
           ),

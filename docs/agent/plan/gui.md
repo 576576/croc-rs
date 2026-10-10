@@ -27,8 +27,13 @@ crates/croc-gui/
 - **编 `crocw-rs` 之前必须先编前端**：`cargo build` 不会替你跑 `beforeBuildCommand`，少了它
   产物能启动但界面全白。CI 的 GUI job 里有 `ui/dist` 非空断言。
 - 事件名三个：`croc://progress` / `croc://finished` / `croc://offer`。
-- ETA 在前端 `src/format.ts::project()` 里算（最近 8 个观测点线性外推），**没有引
+- ETA 在前端 `src/format.ts::project()` 里算（最近 3 秒的观测点线性外推），**没有引
   `arrival-time`**：速率抖动比拟合精度大一个量级。这是与上游有意为之的一处偏差。
+  窗口按时间取而不是按点数取：进度 100 ms 上报一次，固定取 8 个点会把窗口压到
+  1 秒以内，速率跟着抖。
+- `croc://progress` 的 `transferred` 是整次传输的累计值，但在文件内也连续更新
+  （文件内进度 + 已收工文件的字节数），所以大文件上进度条是连续走的，不是每收完
+  一个文件跳一格。引擎每收完一个文件还会报一次累计值，用来校准。
 
 ## 2. UI 基准的设计契约（色值不得改）
 

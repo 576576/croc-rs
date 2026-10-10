@@ -42,9 +42,9 @@ pub struct ProgressEvent {
     pub status: String,
     /// 正在处理哪个文件。
     pub file: Option<String>,
-    /// 已搬字节。
+    /// 整次传输已搬的字节。文件内也在连续更新，不是每收完一个文件才跳一次。
     pub transferred: u64,
-    /// 总字节（未知为 0）。
+    /// 整次传输的总字节（还没拿到清单时为 0）。
     pub total: u64,
 }
 
@@ -438,55 +438,74 @@ fn default_out_dir() -> String {
 /// 回调必须是 `Fn`（引擎那边是 `Arc<dyn Fn>`，不要求 `FnMut`），所以累加器不能用
 /// 捕获的 `let mut`，只能用 `AtomicU64` / `Mutex`。多花的这几行换来的是：进度上报
 /// 不需要引擎配合加锁。
+///
+/// 报给前端的 `transferred` 是整次传输的累计值，但它是连续的：文件内的进度
+/// （`EngineEvent::FileProgress`，100 ms 一次）加上已收工文件的字节数。只按
+/// `EngineEvent::Progress`（每收完一个文件报一次）走的话，界面在大文件上会长时间
+/// 停在同一个百分比上。
 fn bridge(app: &AppHandle, id: &str, direction: &str, received: Option<Received>) -> croc_engine::EventSink {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     let app = app.clone();
     let id = id.to_owned();
     let direction = direction.to_owned();
-    let transferred = AtomicU64::new(0);
+    // 已收工文件的累计字节。
+    let done = AtomicU64::new(0);
+    // 正在搬的这个文件的大小，收工时并进 `done`。
+    let current = AtomicU64::new(0);
     let total = AtomicU64::new(0);
     let file: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
     // 接收时把收到的文件名记下来，收完统一发布到下载目录（Android）。
     let received = received.unwrap_or_default();
 
     Arc::new(move |event: EngineEvent| {
-        let snapshot = |status: String, current: Option<String>| ProgressEvent {
-            id: id.clone(),
-            direction: direction.clone(),
-            status,
-            file: current,
-            transferred: transferred.load(Ordering::Relaxed),
-            total: total.load(Ordering::Relaxed),
-        };
-
-        let payload = match event {
-            EngineEvent::Status(status) => snapshot(status, file.lock().ok().and_then(|guard| guard.clone())),
+        let mut status = String::new();
+        let mut bytes = None;
+        match event {
+            EngineEvent::Status(message) => status = message,
             EngineEvent::FileStarted { name, size } => {
+                current.store(size, Ordering::Relaxed);
+                // 总量要等 `Progress` 才准；在那之前用已开工文件的大小累加顶着。
+                if total.load(Ordering::Relaxed) == 0 {
+                    total.fetch_add(size, Ordering::Relaxed);
+                }
                 if let Ok(mut guard) = file.lock() {
                     *guard = Some(name.clone());
                 }
-                total.fetch_add(size, Ordering::Relaxed);
-                snapshot(t!("gui.status.transferring", name = name).to_string(), Some(name))
+                status = t!("gui.status.transferring", name = name).to_string();
             }
-            EngineEvent::Progress { transferred: now, total: sum } => {
-                transferred.store(now, Ordering::Relaxed);
-                total.store(sum, Ordering::Relaxed);
-                snapshot(String::new(), file.lock().ok().and_then(|guard| guard.clone()))
+            EngineEvent::FileProgress { transferred, .. } => {
+                bytes = Some(done.load(Ordering::Relaxed).saturating_add(transferred));
             }
             EngineEvent::FileDone { name } => {
+                done.fetch_add(current.swap(0, Ordering::Relaxed), Ordering::Relaxed);
                 if let Ok(mut guard) = received.lock() {
                     guard.push(name.clone());
                 }
-                snapshot(t!("gui.status.file_done", name = name).to_string(), Some(name))
+                status = t!("gui.status.file_done", name = name).to_string();
+            }
+            // 每收完一个文件报一次：用引擎的累计值把上面自己算的校准掉。
+            EngineEvent::Progress { transferred: now, total: sum } => {
+                done.store(now, Ordering::Relaxed);
+                total.store(sum, Ordering::Relaxed);
+                bytes = Some(now);
             }
             // `EngineEvent` 是 `#[non_exhaustive]`：将来新增的事件默认不上报，
             // 免得一个没设计过的事件把前端弄懵。
             _ => return,
+        }
+        let payload = ProgressEvent {
+            id: id.clone(),
+            direction: direction.clone(),
+            status,
+            file: file.lock().ok().and_then(|guard| guard.clone()),
+            transferred: bytes.unwrap_or_else(|| done.load(Ordering::Relaxed)),
+            total: total.load(Ordering::Relaxed),
         };
         if !payload.status.is_empty() {
             // Android 上进度还要写进前台服务的通知：界面退到后台就看不见了，通知是那时
-            // 唯一的窗口。桌面端这几个函数是空的。
+            // 唯一的窗口。桌面端这几个函数是空的。文件内的进度不带状态，不会每 100 ms
+            // 刷一次通知。
             crate::android::notify_progress("crocw-rs", &payload.status);
         }
         let _ = app.emit(event::PROGRESS, payload);
