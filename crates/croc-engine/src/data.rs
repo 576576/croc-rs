@@ -21,6 +21,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use croc_core::RoomName;
 use croc_core::chunk::{CHUNK_SIZE, ChunkRanges};
@@ -34,6 +35,7 @@ use crate::error::EngineError;
 use crate::files::{self, Sink};
 use crate::relay;
 use crate::throttle::Throttle;
+use crate::{EngineEvent, EventSink, emit};
 
 /// 一条数据流的上限：与 Go 的 `min(len(RelayPorts), 8)` 同一个理由——再多也不会更快。
 pub const MAX_STREAMS: u8 = 8;
@@ -206,15 +208,40 @@ impl ChunkQueue {
 }
 
 /// 接收方的进度：已写几块、已写几字节。
-#[derive(Debug, Default)]
 pub struct Progress {
     /// 已写块数。
     pub chunks: AtomicU64,
     /// 已写字节数。
     pub bytes: AtomicU64,
+    /// 这个文件该有多少字节，用于上报百分比。
+    total: u64,
+    /// 上报节流：与发送侧一样 100 ms 一次。
+    last: Mutex<Instant>,
+    /// 事件出口。`None` 表示这次接收不需要进度（例如内部调用）。
+    sink: Option<EventSink>,
 }
 
 impl Progress {
+    /// 收一个 `total` 字节的文件。`sink` 为 `None` 时只计数、不上报。
+    #[must_use]
+    pub fn new(total: u64, sink: Option<EventSink>) -> Self {
+        Self { chunks: AtomicU64::new(0), bytes: AtomicU64::new(0), total, last: Mutex::new(Instant::now()), sink }
+    }
+
+    /// 记下一块，必要时上报一次。
+    pub fn add(&self, bytes: u64) {
+        self.chunks.fetch_add(1, Ordering::Relaxed);
+        self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        let Some(sink) = self.sink.as_ref() else { return };
+        let Ok(mut last) = self.last.lock() else { return };
+        let now = Instant::now();
+        if now.saturating_duration_since(*last) < Duration::from_millis(100) {
+            return;
+        }
+        *last = now;
+        emit(sink, EngineEvent::FileProgress { transferred: self.bytes.load(Ordering::Relaxed), total: self.total });
+    }
+
     /// 收完了吗。
     ///
     /// Go 的判据是 `TotalChunksTransferred == CurrentFileChunkCount || TotalSent == Size`。
@@ -397,6 +424,7 @@ async fn send_stream(
 ///
 /// 解密失败（对端用了别的密钥 / 压缩设置不一致）、写盘失败、偏移越界。
 /// 对端提前关闭连接不算错误（见上）。
+#[allow(clippy::too_many_arguments, reason = "这条路径上的参数都是独立事实，打包成结构体只是换个地方写")]
 pub async fn receive_file(
     conns: Vec<Framed<TcpStream>>,
     sink: Arc<Sink>,
@@ -405,8 +433,9 @@ pub async fn receive_file(
     key: [u8; 32],
     compress: bool,
     cancel: CancellationToken,
+    events: Option<EventSink>,
 ) -> Result<(Vec<Framed<TcpStream>>, Arc<Progress>), EngineError> {
-    let progress = Arc::new(Progress::default());
+    let progress = Arc::new(Progress::new(expected_bytes, events));
     // 收全之后用它把还在阻塞的流叫醒——否则小文件会让另外几条流一直挂着，
     // 直到发送方关掉连接（那可能要等一整个 RTT）。
     let done = CancellationToken::new();
@@ -491,8 +520,7 @@ async fn receive_stream(
         let offset = u64::from_le_bytes(header.try_into().map_err(|_| EngineError::Io("chunk offset".to_owned()))?);
         sink.write_at(offset, data)?;
 
-        progress.chunks.fetch_add(1, Ordering::Relaxed);
-        progress.bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
+        progress.add(data.len() as u64);
     }
 }
 
@@ -541,12 +569,12 @@ mod tests {
 
     #[test]
     fn progress_completes_on_either_criterion() {
-        let progress = Progress::default();
+        let progress = Progress::new(100, None);
         assert!(!progress.is_complete(4, 100));
         progress.chunks.store(4, Ordering::Relaxed);
         assert!(progress.is_complete(4, 100), "块数够了就算完");
 
-        let progress = Progress::default();
+        let progress = Progress::new(100, None);
         progress.bytes.store(100, Ordering::Relaxed);
         assert!(progress.is_complete(4, 100), "字节数够了也算完");
     }

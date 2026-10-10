@@ -306,6 +306,9 @@ enum State {
     AwaitingConfirmationA,
     /// 接收方：已发 `pake-confirm`（A 的标签），等 B 的标签。
     AwaitingConfirmationB,
+    /// 发送方：通道已加密，但对端不支持 `inline-peer-metadata-v1`，要等它的
+    /// `externalip` 才能发清单。
+    AwaitingExternalIp,
     /// 接收方：等清单。
     AwaitingManifest,
     /// 接收方：清单分批收集中。
@@ -326,6 +329,7 @@ impl State {
             Self::AwaitingPakeResponse => "awaiting the PAKE response",
             Self::AwaitingConfirmationA => "awaiting the PAKE confirmation",
             Self::AwaitingConfirmationB => "awaiting the peer confirmation",
+            Self::AwaitingExternalIp => "awaiting the peer external IP",
             Self::AwaitingManifest => "awaiting the file manifest",
             Self::CollectingManifest(_) => "collecting the file manifest",
             Self::AwaitingDecision => "awaiting the user's decision",
@@ -374,6 +378,15 @@ pub struct Session {
     /// ，发送方从 `recipientready` 的 `Features` 读
     /// 。它决定压缩开关是按文件走还是"一律压缩"。
     peer_per_file_compression: bool,
+    /// 对端是否声明了 `inline-peer-metadata-v1`。
+    ///
+    /// 声明了就不用交换 `externalip`（地址随清单一起带走）；没声明就必须先交换，
+    /// 否则对端会把它等的第一条加密消息当成 `externalip` 来校验。
+    peer_inline_metadata: bool,
+    /// 对端是否声明了 `chunked-fileinfo-v1`。
+    ///
+    /// 没声明就只能收老式的单条 `fileinfo`（Go 的 `sendLegacySenderInfo`）。
+    peer_chunked_fileinfo: bool,
     limits: ManifestLimits,
 }
 
@@ -457,6 +470,8 @@ impl Session {
             sender_info: Some(Box::new(manifest)),
             current_file: 0,
             peer_per_file_compression: false,
+            peer_inline_metadata: false,
+            peer_chunked_fileinfo: false,
             limits: ManifestLimits::default(),
         })
     }
@@ -478,6 +493,8 @@ impl Session {
             sender_info: None,
             current_file: 0,
             peer_per_file_compression: false,
+            peer_inline_metadata: false,
+            peer_chunked_fileinfo: false,
             limits: ManifestLimits::default(),
         })
     }
@@ -518,6 +535,7 @@ impl Session {
             State::AwaitingPakeResponse
             | State::AwaitingConfirmationA
             | State::AwaitingConfirmationB
+            | State::AwaitingExternalIp
             | State::AwaitingManifest
             | State::CollectingManifest(_) => Stage::Securing,
             State::AwaitingDecision => Stage::AwaitingDecision,
@@ -709,6 +727,8 @@ impl Session {
                 let curve_name = String::from_utf8_lossy(&message.bytes2).into_owned();
                 // 曲线由接收方挑，发送方照着用——与 Go 的 `c.pakeCurve = string(m.Bytes2)` 一致。
                 let curve = CurveKind::from_name(&curve_name)?;
+                self.peer_inline_metadata = croc_protocol::supports(&message.features, Feature::InlinePeerMetadata);
+                self.peer_chunked_fileinfo = croc_protocol::supports(&message.features, Feature::ChunkedFileInfo);
                 let mut exchange =
                     pakekey::responder(&self.config.passphrase, curve, pakekey::PURPOSE_TRANSFER, &self.config.room)?;
                 exchange.accept_request(&message.bytes, croc_protocol::random::array::<EPHEMERAL_LEN>(randomness))?;
@@ -772,6 +792,8 @@ impl Session {
                     .with_version(protocol_version())
                     .with_bytes(keys.confirmation_a().to_vec());
                 self.keys = Some(keys);
+                self.peer_inline_metadata = croc_protocol::supports(&message.features, Feature::InlinePeerMetadata);
+                self.peer_chunked_fileinfo = croc_protocol::supports(&message.features, Feature::ChunkedFileInfo);
 
                 self.state = State::AwaitingConfirmationB;
                 Ok(vec![Effect::Send(self.encode(&confirm, randomness)?)])
@@ -822,10 +844,21 @@ impl Session {
         effects.push(Effect::Emit(Event::Secured));
 
         if self.config.role == Role::Sender {
-            effects.extend(self.send_manifest(randomness)?);
-            self.state = State::Transferring;
+            if self.peer_inline_metadata {
+                effects.extend(self.send_manifest(randomness)?);
+                self.state = State::Transferring;
+            } else {
+                // 对端不支持内联元数据：清单要等 externalip 交换完再发。先发会让对端
+                // 把它等 externalip 的那一次读当成清单，直接判通道没建起来。
+                self.state = State::AwaitingExternalIp;
+            }
         } else {
             self.state = State::AwaitingManifest;
+            if !self.peer_inline_metadata {
+                // 不支持内联元数据的发送方在收到这条之前不发清单。
+                let announce = Message::new(MessageType::ExternalIp).with_message(self.config.external_ip.clone());
+                effects.push(Effect::Send(self.encode(&announce, randomness)?));
+            }
         }
         Ok(effects)
     }
@@ -841,6 +874,10 @@ impl Session {
         if self.config.role == Role::Sender {
             let reply = Message::new(MessageType::ExternalIp).with_message(self.config.external_ip.clone());
             effects.push(Effect::Send(self.encode(&reply, randomness)?));
+            if matches!(self.state, State::AwaitingExternalIp) {
+                effects.extend(self.send_manifest(randomness)?);
+                self.state = State::Transferring;
+            }
         }
         Ok(effects)
     }
@@ -1041,8 +1078,16 @@ impl Session {
         }
     }
 
-    /// 发送方的清单三连：`fileinfo-start` + `fileinfo-batch*` + `fileinfo-end`。
+    /// 发送方的清单：协商过分块就发 `fileinfo-start` + `fileinfo-batch*` + `fileinfo-end`，
+    /// 否则发老式的单条 `fileinfo`。
     fn send_manifest(&mut self, randomness: &mut impl Randomness) -> Result<Vec<Effect>, SessionError> {
+        if !self.peer_chunked_fileinfo {
+            // 没协商过分块清单就发老式的单条 `fileinfo`：分块三连对端读不出来。
+            let info =
+                self.sender_info.take().ok_or_else(|| SessionError::BadConfig("no manifest to send".to_owned()))?;
+            let single = Message::new(MessageType::FileInfo).with_bytes(croc_protocol::encode_legacy_manifest(&info)?);
+            return Ok(vec![Effect::Send(self.encode(&single, randomness)?), Effect::Emit(Event::Manifest(info))]);
+        }
         let payloads = self.manifest.take().ok_or_else(|| SessionError::BadConfig("no manifest to send".to_owned()))?;
         let mut effects = Vec::with_capacity(payloads.batches.len() + 3);
         let start = Message::new(MessageType::FileInfoStart).with_bytes(payloads.header.clone());
@@ -1095,12 +1140,17 @@ mod tests {
     }
 
     fn config(role: Role, passphrase: &[u8]) -> SessionConfig<'_> {
+        config_with(role, passphrase, croc_protocol::declare(croc_protocol::TailcatDeclaration::Unsupported))
+    }
+
+    /// `features` 是本端声明的能力。传空用于模拟不带 `inline-peer-metadata-v1` 的老对端。
+    fn config_with(role: Role, passphrase: &[u8], features: Vec<String>) -> SessionConfig<'_> {
         SessionConfig {
             role,
             room: ROOM,
             passphrase,
             curve: CurveKind::Siec,
-            features: croc_protocol::declare(croc_protocol::TailcatDeclaration::Unsupported),
+            features,
             relay_ports: 4,
             machine_id: MACHINE.to_owned(),
             external_ip: String::new(),
@@ -1480,6 +1530,36 @@ mod tests {
             Err(SessionError::ConfirmationFailed),
             "口令不一致应报确认失败"
         );
+    }
+
+    #[test]
+    fn a_peer_without_inline_metadata_exchanges_the_external_ip_before_the_manifest() {
+        // 不带 `inline-peer-metadata-v1` 的对端（浏览器客户端就是）拿 externalip 交换当
+        // "通道建好了"的凭据。发送方先发清单，它对 externalip 的那次读会读到清单。
+        let mut sender =
+            Session::new_sender(&config_with(Role::Sender, PASSPHRASE, Vec::new()), manifest()).expect("构造");
+        let mut receiver = Session::new_receiver(&config_with(Role::Receiver, PASSPHRASE, Vec::new())).expect("构造");
+        let mut sender_rng = Counting::new(0x10);
+        let mut receiver_rng = Counting::new(0x80);
+        let sends = |effects: &[Effect]| effects.iter().filter(|effect| matches!(effect, Effect::Send(_))).count();
+
+        let mut effects = receiver.handle(InEvent::PeerConnected, &mut receiver_rng).expect("配对");
+        effects.remove(0);
+        let pake = first_frame(effects);
+        let reply = first_frame(sender.handle(InEvent::Frame(pake), &mut sender_rng).expect("发送方应能回 pake"));
+        let confirm_a =
+            first_frame(receiver.handle(InEvent::Frame(reply), &mut receiver_rng).expect("接收方应能算密钥"));
+
+        // 通道在这里已经加密，但发送方只能回确认标签——清单要等 externalip。
+        let secured = sender.handle(InEvent::Frame(confirm_a), &mut sender_rng).expect("发送方应能确认");
+        assert_eq!(sends(&secured), 1, "通道刚建好就发清单，老对端会判通道没建起来");
+
+        let announce = first_frame(
+            receiver.handle(InEvent::Frame(first_frame(secured)), &mut receiver_rng).expect("接收方应能确认"),
+        );
+        let after = sender.handle(InEvent::Frame(announce), &mut sender_rng).expect("发送方应能处理 externalip");
+        // 回一条 externalip，再发一条老式 `fileinfo`（不是分块三连）。
+        assert_eq!(sends(&after), 2, "externalip 之后应当只补一条清单消息");
     }
 
     #[test]

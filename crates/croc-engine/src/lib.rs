@@ -79,11 +79,25 @@ pub enum EngineEvent {
         /// 字节数。
         size: u64,
     },
-    /// 进度。由调用方节流——引擎每次落盘都会报一次。
+    /// 对端报了它的地址（`externalip`，或内联元数据里的 `ExternalIP`）。
+    ///
+    /// 只用于显示"发给谁 / 从谁收"（Go 的 `Sending (->10.0.0.2)`）。
+    PeerAddress(String),
+    /// 整次传输的累计进度。每搬完一个文件报一次。
     Progress {
         /// 已经搬完的字节。
         transferred: u64,
         /// 总字节。
+        total: u64,
+    },
+    /// 当前文件内的进度。搬运过程中按 100 ms 节流上报。
+    ///
+    /// 与 [`EngineEvent::Progress`] 的区别就是 Go 的进度条与它的完成回调之间的区别：
+    /// 条是每个文件一条、从 0 走到该文件大小；累计值则走到整次传输结束。
+    FileProgress {
+        /// 这个文件已经搬完的字节。
+        transferred: u64,
+        /// 这个文件的大小。
         total: u64,
     },
     /// 一个文件完成。

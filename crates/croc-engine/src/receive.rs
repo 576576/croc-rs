@@ -206,6 +206,11 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                 }
                 Effect::Emit(event) => match event {
                     Event::Manifest(info) => {
+                        // 对端把地址内联在清单里（`inline-peer-metadata-v1`）时，
+                        // 这是唯一能拿到它的地方——`externalip` 那条路不会走。
+                        if !info.external_ip.is_empty() {
+                            emit(&request.events, EngineEvent::PeerAddress(info.external_ip.clone()));
+                        }
                         manifest = Some(info.clone());
                         emit(&request.events, EngineEvent::Status("received the file list".to_owned()));
                     }
@@ -335,6 +340,7 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                     ranges,
                     key: session.data_key(),
                     compress,
+                    events: request.events.clone(),
                 },
                 &data_tx,
                 &cancel,
@@ -423,6 +429,8 @@ struct ReceiveJob {
     key: Option<[u8; croc_protocol::ENCRYPTION_KEY_LEN]>,
     /// 已经算好的压缩判定（调用点照抄 Go 的 `currentFileUsesCompression`）。
     compress: bool,
+    /// 进度与"开收了"要往哪儿报。
+    events: EventSink,
 }
 
 /// 开收数据的流；收完（或出错）后给控制循环发通知。
@@ -431,19 +439,28 @@ fn spawn_receive(
     notify: &mpsc::Sender<InEvent>,
     cancel: &CancellationToken,
 ) -> Result<(), EngineError> {
-    let ReceiveJob { conns, plane, sink, entry, ranges, key, compress } = job;
+    let ReceiveJob { conns, plane, sink, entry, ranges, key, compress, events } = job;
     let key = key.ok_or_else(|| EngineError::Config("the data key is not ready yet".to_owned()))?;
     let size = u64::try_from(entry.size).unwrap_or(0);
     let expected_chunks = ranges.count(size);
     let expected_bytes = ranges.bytes(size);
 
-    emit(&crate::silent_sink(), EngineEvent::FileStarted { name: entry.name.clone(), size });
+    emit(&events, EngineEvent::FileStarted { name: entry.name.clone(), size });
     let sink = Arc::new(sink);
     let notify = notify.clone();
     let cancel = cancel.clone();
     tokio::spawn(async move {
-        let result =
-            receive_file(conns, Arc::clone(&sink), expected_chunks, expected_bytes, key, compress, cancel).await;
+        let result = receive_file(
+            conns,
+            Arc::clone(&sink),
+            expected_chunks,
+            expected_bytes,
+            key,
+            compress,
+            cancel,
+            Some(events),
+        )
+        .await;
         let event = match result {
             // 收全判定放在全部流收工之后：这是唯一没有竞态的时刻。
             Ok((conns, progress)) if progress.is_complete(expected_chunks, expected_bytes) => {

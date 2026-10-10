@@ -54,7 +54,7 @@ pub use frame::{HEADER_LEN, KEEPALIVE, MAGIC, MAX_MESSAGE_SIZE, decode_frame, en
 pub use json::ModTime;
 pub use manifest::{
     BatchKind, IncomingManifest, ManifestBatch, ManifestError, ManifestHeader, ManifestLimits, ManifestPayloads,
-    encode_batches, encode_manifest, for_wire, for_wire_all,
+    encode_batches, encode_legacy_manifest, encode_manifest, for_wire, for_wire_all,
 };
 pub use message::{
     MAX_JSON_SIZE, Message, MessageType, SessionKey, decode_encrypted, decode_encrypted_with_limit, decode_plain,

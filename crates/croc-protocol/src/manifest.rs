@@ -267,6 +267,18 @@ impl ManifestPayloads {
     }
 }
 
+/// 老式单条 `fileinfo` 的载荷：整份 `SenderInfo` 直接序列化成一条 JSON。
+///
+/// 对端没声明 `chunked-fileinfo-v1` 时只认这一条（Go 的 `sendLegacySenderInfo`），
+/// 浏览器客户端就是这种情况——发分块三连它会读不到清单。
+///
+/// # Errors
+///
+/// 序列化失败时返回 [`ManifestError`]。
+pub fn encode_legacy_manifest(info: &SenderInfo) -> Result<Vec<u8>, ManifestError> {
+    to_json(info)
+}
+
 /// 把 `SenderInfo` 拆成三条消息的载荷序列。
 ///
 /// 这个函数是纯的：不发送、不分配 socket，只产出字节。发送顺序由调用方保证。

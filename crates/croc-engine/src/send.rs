@@ -313,6 +313,9 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
                         emit(&request.events, EngineEvent::Progress { transferred, total: total_bytes });
                     }
                 }
+                Effect::Emit(Event::PeerExternalIp(address)) => {
+                    emit(&request.events, EngineEvent::PeerAddress(address));
+                }
                 Effect::Emit(_) => {}
                 Effect::Finish(outcome) => {
                     // 到这一步对端已经确认收完（`finished` 已交换）。`data_plane` 随本函数
