@@ -123,7 +123,9 @@ input[type='checkbox'] {
   accent-color: var(--foreground);
 }
 
-a {
+/* `.link` 给的不是链接，只是借这套样子：文字本身不跳（例如 SSH 那句里的网址）。 */
+a,
+.link {
   color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -424,6 +426,19 @@ details > summary::-webkit-details-marker {
   border-right: 1px solid var(--foreground);
   border-bottom: 1px solid var(--foreground);
   background: var(--background);
+}
+
+/* 栅格只给上边与左边，面板自带右边与下边：不在栅格里的面板（传输队列、历史）要自己
+   补左边，否则那一栏左侧是敞开的。 */
+.site-shell > .panel {
+  border-left: 1px solid var(--foreground);
+}
+
+/* 工具栏那一栏开口朝下（`border-bottom: 0`）：紧跟着它的元素负责补上边。传输页由栅格
+   的 `border-top` 补，历史页只有一个面板，得它自己补。
+   传输队列接在栅格下面，栅格的下边就是它的上边，所以它不能补——补了就是两条 1px 挨着。 */
+.workspace-toolbar + .panel {
+  border-top: 1px solid var(--foreground);
 }
 
 /* 面板头：序号格 + 标题 + 一句说明（照 croc web 的 `panel-heading`）。 */

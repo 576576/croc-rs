@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { Eye, EyeOff, LogIn, ShieldAlert, SquareTerminal } from 'lucide-react';
 import { useT } from '../i18n';
-import { api } from '../bridge';
 
-/// 未实现时的去处，写在终端区里。
-const SSH_URL = 'https://getcroc.com/#ssh';
+/// 未实现时的去处，写在终端区里。只是文字，不做跳转。
+const SSH_URL = 'getcroc.com/#ssh';
 
 /// 共享终端（计划 §G11）。
 ///
@@ -61,7 +60,7 @@ export function SshPanel() {
             className="primary-button"
             type="submit"
             disabled
-            title={`${t('ssh.note')} ${SSH_URL.replace('https://', '')}`}
+            title={`${t('ssh.note')} ${SSH_URL}`}
           >
             <LogIn aria-hidden="true" /> {t('ssh.joinAction')}
           </button>
@@ -74,16 +73,7 @@ export function SshPanel() {
 
         <div className="ssh-terminal" aria-label={t('ssh.title')}>
           <p className="note">
-            {t('ssh.note')}{' '}
-            <a
-              href={SSH_URL}
-              onClick={(event) => {
-                event.preventDefault();
-                void api.openUrl(SSH_URL);
-              }}
-            >
-              {SSH_URL.replace('https://', '')}
-            </a>
+            {t('ssh.note')} <span className="link">{SSH_URL}</span>
           </p>
         </div>
 
