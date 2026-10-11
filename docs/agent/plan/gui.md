@@ -153,6 +153,11 @@ crates/croc-gui/
   `null`（没有 SAF），调用方据此退回系统文件选择器。
   界面上「保存到」那格在 Android 存的是 SAF 目录 URI，**不能当文件系统路径用**；
   真实落盘位置另由 `sandbox_dir` 命令给出（另存与分享要拿它拼路径）。
+- **发送目录**：引擎靠 `std::fs` 走目录树（`files::survey` 起手 `symlink_metadata`），
+  只认真实路径，所以 SAF 目录要先由 `CrocBridge.stageDirectory` 整个拷到
+  `cacheDir/crocw-send/<时间戳>`，`send` 里换成真实路径，传输结束（成败都）
+  `removeStaged` 删掉。注意 `chooseFiles(directory=true)` 的**两个调用方要求相反**：
+  接收侧要 URI，发送侧要真实路径。
 - 清单要 `FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_DATA_SYNC`（Android 14+ 需声明类型）、
   `WAKE_LOCK`、`INTERNET`、`ACCESS_NETWORK_STATE`。**不申请**
   `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`，也不引导用户关电池优化。
@@ -172,8 +177,8 @@ minSdk 30 已经高于 29，所以存储只有 `MediaStore` 一条路，没有 `
 | 项                   | 阻塞点                                                                        |
 | ------------------- | -------------------------------------------------------------------------- |
 | G11 SSH 共享终端        | 依赖 SSH 数据面（上游 `src/sshshare` + `internal/sshclient`），未实现；SSH 页只有一句去处 |
-| 直写公共目录 / SAF 目录（免掉一次拷贝） | 需要 `croc-engine` 的 fs 层抽象出 `FileSink` / `FileSource`（路径 或 raw fd）。现在是"先落私有目录、收完发布出去" |
-| Android 真机验证        | 只做到交叉编译 + Kotlin 编译通过。`ACTION_OPEN_DOCUMENT_TREE` 的选择流程、`takePersistableUriPermission`、`safPublish` 的 `DocumentFile.createFile` 写入都只在真机可见；JNI 桥靠类名 + 方法名 + 描述符对上，改签名只会在运行时以 `NoSuchMethodError` 暴露         |
+| 直写公共目录 / SAF 目录（免掉一次拷贝） | 需要 `croc-engine` 的 fs 层抽象出 `FileSink` / `FileSource`（路径 或 raw fd）。现在是"先落私有目录、收完发布出去"，发送目录同理要"先拷出来再发" |
+| Android 真机验证        | 只做到交叉编译 + Kotlin 编译通过。`ACTION_OPEN_DOCUMENT_TREE` 的选择流程、`takePersistableUriPermission`、`safPublish` / `stageDirectory` 的读写都只在真机可见；JNI 桥靠类名 + 方法名 + 描述符对上，改签名只会在运行时以 `NoSuchMethodError` 暴露         |
 | 通知里的字节级百分比          | 现在推的是 Rust 侧的状态句                                                            |
 | 系统托盘 / 更新器 / 传输历史   | P2                                                                          |
 
