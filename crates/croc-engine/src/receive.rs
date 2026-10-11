@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use croc_core::codephrase::Components;
+use croc_core::policy;
 use croc_core::policy::Preferences;
 use croc_core::{Effect, Event, InEvent, Outcome, Role, Session, SessionConfig};
 use croc_net::OsRandomness;
@@ -268,11 +269,14 @@ pub async fn receive(request: ReceiveRequest, cancel: CancellationToken) -> Resu
                 },
             };
             if accept {
+                let info = rename_text_payload(info);
                 let (plan, planned) = plan_files(&request, &info)?;
                 summary.skipped = planned.skipped;
                 summary.declined = planned.declined;
                 transferred = planned.done_bytes;
                 pending = plan;
+                // 改过名的清单要放回去：文件循环与 `FileClosed` 都从它取名。
+                manifest = Some(info);
             }
             effects = session.handle(InEvent::Decision(answer(accept)), &mut randomness)?;
             continue;
@@ -429,6 +433,28 @@ fn plan_files(request: &ReceiveRequest, info: &SenderInfo) -> Result<(Vec<u64>, 
     Ok((pending, planned))
 }
 
+/// 把文本载荷的落盘名从发送方的临时名换成接收方自己的名字。
+///
+/// `croc-stdin-*` 是发送方的临时文件名（见 [`croc_engine::text`]），对用户毫无意义——
+/// 不改的话收下来的就是一个叫 `croc-stdin-1759…` 的文件。Go 在拿到清单时用
+/// `os.CreateTemp` 换掉它（`croc.go:2518`），这里换成 [`policy::text_destination_name`]。
+///
+/// 判据必须和 [`policy::is_text_artifact`] 一致（"这次是文本传输"且名字带前缀）：
+/// 换名的前提是协议保证接收方自己生成这个名字，少一半判据就会把用户一个真叫
+/// `croc-stdin-*` 的文件改掉。
+fn rename_text_payload(mut info: Box<croc_protocol::SenderInfo>) -> Box<croc_protocol::SenderInfo> {
+    if !info.sending_text {
+        return info;
+    }
+    let replacement = policy::text_destination_name();
+    for file in &mut info.files_to_transfer {
+        if policy::is_text_artifact(true, &file.name) {
+            file.name = replacement.clone();
+        }
+    }
+    info
+}
+
 /// 这次接收要不要把内容打到标准输出。
 fn wants_stdout(request: &ReceiveRequest, manifest: Option<&croc_protocol::SenderInfo>) -> bool {
     match request.stdout {
@@ -515,4 +541,41 @@ fn total_of(manifest: &Option<Box<SenderInfo>>) -> u64 {
     manifest
         .as_ref()
         .map_or(0, |info| info.files_to_transfer.iter().filter_map(|entry| u64::try_from(entry.size).ok()).sum())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(sending_text: bool, names: &[&str]) -> Box<SenderInfo> {
+        Box::new(SenderInfo {
+            sending_text,
+            files_to_transfer: names
+                .iter()
+                .map(|name| FileInfo { name: (*name).to_owned(), ..FileInfo::default() })
+                .collect(),
+            ..SenderInfo::default()
+        })
+    }
+
+    #[test]
+    fn a_text_payload_loses_the_senders_temp_name() {
+        let renamed = rename_text_payload(manifest(true, &["croc-stdin-1759"]));
+        let name = &renamed.files_to_transfer[0].name;
+        assert!(!name.starts_with("croc-stdin-"), "{name} 还是发送方的临时名");
+        assert!(name.ends_with(".txt"), "{name} 没有后缀，用户双击打不开");
+    }
+
+    #[test]
+    fn a_plain_file_keeps_its_name() {
+        let renamed = rename_text_payload(manifest(false, &["report.pdf"]));
+        assert_eq!(renamed.files_to_transfer[0].name, "report.pdf");
+    }
+
+    #[test]
+    fn a_user_file_that_happens_to_be_named_croc_stdin_is_left_alone() {
+        // 不是文本传输就不该动：用户真有一个叫 `croc-stdin-*` 的文件时，改掉它就错了。
+        let renamed = rename_text_payload(manifest(false, &["croc-stdin-report"]));
+        assert_eq!(renamed.files_to_transfer[0].name, "croc-stdin-report");
+    }
 }

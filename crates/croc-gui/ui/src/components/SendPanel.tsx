@@ -168,9 +168,25 @@ export function SendPanel({
         <span className="step">
           <Upload aria-hidden="true" />
         </span>
-        <div>
-          <h2>{t('send.start')}</h2>
-          <p>{delivery === 'stored' ? t('store.intro') : t('send.intro')}</p>
+        <h2>{t('send.start')}</h2>
+        {/* 发起按钮放在标题右边：页脚只留一句状态提示，整块的重心因此提到顶部。 */}
+        <div className="panel-heading-action">
+          {delivery === 'stored' ? (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => void startUpload()}
+              disabled={uploading || files.length === 0}
+            >
+              <CloudUpload aria-hidden="true" />
+              {uploading ? t('store.starting') : t('store.start')}
+            </button>
+          ) : (
+            <button type="button" className="primary-button" onClick={onStart} disabled={busy || !somethingToSend}>
+              <Upload aria-hidden="true" />
+              {busy ? t('send.starting') : t('send.start')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -185,7 +201,7 @@ export function SendPanel({
             onValue={onCustomCode}
           />
           {code && (
-            <Disclosure label={t('send.qr')}>
+            <Disclosure label={t('send.qr')} open>
               <div className="share-qr">
                 <QRCodeSVG value={joinUrl(code)} size={132} bgColor="transparent" fgColor="currentColor" />
                 <button type="button" className="ghost" onClick={() => void openUrl(joinUrl(code))}>
@@ -310,22 +326,12 @@ export function SendPanel({
             onChange={(event) => setDownloads(Math.max(1, Math.trunc(Number(event.target.value) || 1)))}
           />
 
-          <div className="divider" />
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => void startUpload()}
-            disabled={uploading || files.length === 0}
-          >
-            <CloudUpload aria-hidden="true" />
-            {uploading ? t('store.starting') : t('store.start')}
-          </button>
-
           {stored && (
             <>
+              <div className="divider" />
               <span className="field-label">{t('store.link')}</span>
               <CodeField value={stored.link} copyLabel={t('store.copy')} readOnly />
-              <Disclosure label={t('send.qr')}>
+              <Disclosure label={t('send.qr')} open>
                 <div className="share-qr">
                   <QRCodeSVG value={stored.link} size={132} bgColor="transparent" fgColor="currentColor" />
                 </div>
@@ -338,18 +344,11 @@ export function SendPanel({
           )}
         </>
       ) : (
-        <>
-          <div className="divider" />
-          <button type="button" className="primary-button" onClick={onStart} disabled={busy || !somethingToSend}>
-            <Upload aria-hidden="true" />
-            {busy ? t('send.starting') : t('send.start')}
-          </button>
-          {settings.noCompress && (
-            <p className="note">
-              {t('settings.noCompress')} · {t('settings.relay')}: {settings.relay || t('settings.relayPlaceholder')}
-            </p>
-          )}
-        </>
+        settings.noCompress && (
+          <p className="note">
+            {t('settings.noCompress')} · {t('settings.relay')}: {settings.relay || t('settings.relayPlaceholder')}
+          </p>
+        )
       )}
     </section>
   );

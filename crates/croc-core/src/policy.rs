@@ -134,6 +134,36 @@ pub fn is_text_artifact(sending_text: bool, name: &str) -> bool {
     sending_text && name.starts_with(TEXT_ARTIFACT_PREFIX)
 }
 
+/// 一个文件在界面上叫什么。
+///
+/// `croc-stdin-` 前缀是协议要的（接收方靠它认出"这次是文本"），对用户却毫无意义——
+/// 不换掉的话，进度与提示里全是 `croc-stdin-1759…` 这样的临时名。名字带前缀说明内容
+/// 来自 stdin 或 `--text`，这两种都不显示那个临时名。
+#[must_use]
+pub fn display_name(name: &str, sending_text: bool) -> String {
+    if name.starts_with(TEXT_ARTIFACT_PREFIX) {
+        if sending_text { "text".to_owned() } else { "stdin".to_owned() }
+    } else {
+        name.to_owned()
+    }
+}
+
+/// 文本载荷落到接收方的哪个文件名。
+///
+/// `croc-stdin-*` 是发送方的临时文件名，只有两端的协议实现用得上；把它落成接收方的
+/// 文件名，用户在下载目录里看到的就是一个 `croc-stdin-*` 文件而不是"一段文本"。
+/// Go 用 `os.CreateTemp(".", "croc-stdin-")` 换掉它（`croc.go:2518`），这里换成固定的
+/// `croc-text-<纳秒时间戳>.txt`：同样是每次不同、同样不撞用户自己的文件，但带 `.txt`
+/// 后缀，用户双击能直接打开。
+#[must_use]
+pub fn text_destination_name() -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("croc-text-{stamp}.txt")
+}
+
 /// 这个条目是不是"不用走数据面"的：空文件或符号链接。
 #[must_use]
 pub fn is_empty_or_symlink(info: &FileInfo) -> bool {
@@ -286,6 +316,26 @@ mod tests {
         assert!(is_text_artifact(true, "croc-stdin-1234"));
         assert!(!is_text_artifact(false, "croc-stdin-1234"), "不是文本传输就不算");
         assert!(!is_text_artifact(true, "report.txt"), "没有前缀就不算");
+    }
+
+    #[test]
+    fn a_temp_name_never_reaches_the_ui() {
+        assert_eq!(display_name("croc-stdin-1759", true), "text");
+        assert_eq!(display_name("croc-stdin-1759", false), "stdin");
+        assert_eq!(display_name("report.pdf", true), "report.pdf");
+        assert_eq!(display_name("report.pdf", false), "report.pdf");
+    }
+
+    #[test]
+    fn a_text_payload_does_not_land_under_the_senders_temp_name() {
+        let name = text_destination_name();
+        assert!(!name.starts_with(TEXT_ARTIFACT_PREFIX), "{name} 又把发送方的临时名带过来了");
+        assert!(name.ends_with(".txt"), "{name} 没有后缀，用户双击打不开");
+    }
+
+    #[test]
+    fn two_text_payloads_do_not_collide() {
+        assert_ne!(text_destination_name(), text_destination_name());
     }
 
     #[test]

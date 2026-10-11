@@ -1,4 +1,4 @@
-import { Clock, Trash2 } from 'lucide-react';
+import { Clock, FolderOutput, Share2, Trash2 } from 'lucide-react';
 import { useT } from '../i18n';
 import { formatBytes } from '../format';
 
@@ -40,9 +40,19 @@ export function saveHistory(entries: HistoryEntry[]): void {
 
 export function HistoryPanel({
   entries,
+  isAndroid,
+  resolvePath,
+  onSave,
+  onShare,
   onClear,
 }: {
   entries: HistoryEntry[];
+  /// 另存与分享只在 Android 上给出：桌面端文件本来就摆在用户挑的地方。
+  isAndroid: boolean;
+  /// 条目里只有文件名，落盘路径由外层拼（它才知道下载目录）。
+  resolvePath: (name: string) => string;
+  onSave: (path: string) => void;
+  onShare: (path: string) => void;
   onClear: () => void;
 }) {
   const t = useT();
@@ -53,9 +63,15 @@ export function HistoryPanel({
         <span className="step">
           <Clock aria-hidden="true" />
         </span>
-        <div>
-          <h2>{t('history.title')}</h2>
-        </div>
+        <h2>{t('history.title')}</h2>
+        {/* 清空只在有条目时出现：空列表上摆一个没用的按钮只是噪声。 */}
+        {entries.length > 0 && (
+          <div className="panel-heading-action">
+            <button type="button" className="ghost" onClick={onClear}>
+              <Trash2 aria-hidden="true" /> {t('history.clear')}
+            </button>
+          </div>
+        )}
       </div>
 
       {entries.length === 0 ? (
@@ -76,19 +92,24 @@ export function HistoryPanel({
                 {new Date(entry.at).toLocaleString()}
               </p>
               {!entry.ok && entry.error && <p className="note danger">{entry.error}</p>}
+              {/* 收工之后还想另存或分享：队列取消之后这两个动作只能挂在记录上。 */}
+              {isAndroid && entry.ok && entry.direction === 'receive' && (
+                <div className="offer-actions">
+                  <button type="button" className="ghost" onClick={() => onSave(resolvePath(entry.name))}>
+                    <FolderOutput aria-hidden="true" />
+                    {t('transfers.save')}
+                  </button>
+                  <button type="button" className="ghost" onClick={() => onShare(resolvePath(entry.name))}>
+                    <Share2 aria-hidden="true" />
+                    {t('transfers.share')}
+                  </button>
+                </div>
+              )}
             </li>
           ))}
         </ul>
       )}
 
-      {entries.length > 0 && (
-        <>
-          <div className="divider" />
-          <button type="button" className="ghost" onClick={onClear}>
-            <Trash2 aria-hidden="true" /> {t('history.clear')}
-          </button>
-        </>
-      )}
     </section>
   );
 }

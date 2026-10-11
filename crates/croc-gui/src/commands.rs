@@ -156,13 +156,19 @@ pub struct OfferFile {
 
 impl OfferEvent {
     /// 把发送方的清单折成界面要的形状。
+    ///
+    /// 名字过一遍 [`croc_core::policy::display_name`]：文本传输的载荷在线上叫
+    /// `croc-stdin-*`（协议要的），直接摆到确认卡上会让用户以为要收一个临时文件。
     pub fn from_manifest(id: &str, info: &SenderInfo) -> Self {
         Self {
             id: id.to_owned(),
             files: info
                 .files_to_transfer
                 .iter()
-                .map(|entry| OfferFile { name: entry.name.clone(), size: u64::try_from(entry.size).unwrap_or(0) })
+                .map(|entry| OfferFile {
+                    name: croc_core::policy::display_name(&entry.name, info.sending_text),
+                    size: u64::try_from(entry.size).unwrap_or(0),
+                })
                 .collect(),
             folders: info.total_number_folders,
             total: info.files_to_transfer.iter().filter_map(|entry| u64::try_from(entry.size).ok()).sum(),

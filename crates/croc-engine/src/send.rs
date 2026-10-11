@@ -283,7 +283,7 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
                     emit(
                         &request.events,
                         EngineEvent::FileStarted {
-                            name: entry.info.name.clone(),
+                            name: croc_core::policy::display_name(&entry.info.name, request.sending_text),
                             size: u64::try_from(entry.info.size).unwrap_or(0),
                         },
                     );
@@ -320,7 +320,12 @@ pub async fn send(request: SendRequest, cancel: CancellationToken) -> Result<Sum
                 Effect::Emit(Event::FileClosed { index }) => {
                     if let Some(entry) = entries.get(usize::try_from(index).unwrap_or(usize::MAX)) {
                         transferred += u64::try_from(entry.info.size).unwrap_or(0);
-                        emit(&request.events, EngineEvent::FileDone { name: entry.info.name.clone() });
+                        emit(
+                            &request.events,
+                            EngineEvent::FileDone {
+                                name: croc_core::policy::display_name(&entry.info.name, request.sending_text),
+                            },
+                        );
                         emit(&request.events, EngineEvent::Progress { transferred, total: total_bytes });
                     }
                 }
@@ -389,19 +394,11 @@ fn spawn_sender(
 }
 
 /// 只发一个文件时的显示名；多于一个文件时返回 `None`（UI 改用文件数）。
-///
-/// Go 的规则：名字以 `croc-stdin-` 开头说明内容来自 stdin 或
-/// `--text`，这两种都不显示那个临时文件名。
 fn single_name(entries: &[files::SourceEntry], sending_text: bool) -> Option<String> {
     if entries.len() != 1 {
         return None;
     }
-    let name = entries.first()?.info.name.as_str();
-    Some(if name.starts_with("croc-stdin-") {
-        if sending_text { "text".to_owned() } else { "stdin".to_owned() }
-    } else {
-        name.to_owned()
-    })
+    Some(croc_core::policy::display_name(entries.first()?.info.name.as_str(), sending_text))
 }
 
 /// `--internal-dns` → 解析模式。

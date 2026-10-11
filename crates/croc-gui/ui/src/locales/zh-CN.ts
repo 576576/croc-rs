@@ -32,8 +32,8 @@ export const zhCN: Record<MessageKey, string> = {
   'tour.send.body': '选择文件或输入文本，然后发送。接收方只需口令码。',
   'tour.receive.title': '接收',
   'tour.receive.body': '粘贴口令码后开始接收，文件写入所选目录。',
-  'tour.queue.title': '传输队列',
-  'tour.queue.body': '各次传输的进度在此显示；运行中的传输可在同一行取消。',
+  'tour.progress.title': '传输进度',
+  'tour.progress.body': '标题旁的进度条显示当前传输；运行中可在同一行取消。',
   'tour.history.title': '历史',
   'tour.history.body': '已完成的传输保留在历史页，直到清空。',
   'tour.ssh.title': '共享终端',
@@ -44,7 +44,6 @@ export const zhCN: Record<MessageKey, string> = {
   'code.paste': '粘贴口令码',
   'code.longPress': '长按切换复制/粘贴',
 
-  'send.intro': '选择若干文件，共用一个口令码。',
   'send.mode': '投递方式',
   'send.mode.direct': '直传',
   'send.mode.stored': '暂存',
@@ -69,7 +68,6 @@ export const zhCN: Record<MessageKey, string> = {
   'send.openInBrowser': '打开加入链接',
   'send.qr': '二维码',
 
-  'receive.intro': '粘贴口令码，文件写入所选目录。',
   'receive.code': '口令码',
   'receive.codePlaceholder': 'acid-acorn-acre',
   'receive.outDir': '保存到',
@@ -82,7 +80,6 @@ export const zhCN: Record<MessageKey, string> = {
   'receive.overwrite': '覆盖同名文件',
   'receive.rename': '同名时自动改名',
 
-  'store.intro': '上传到暂存服务，用一条链接代替口令码。',
   'store.expiration': '有效期',
   'store.expirationUnit': '有效期单位',
   'store.unit.m': '分钟',
@@ -123,8 +120,6 @@ export const zhCN: Record<MessageKey, string> = {
   'progress.done': '已完成',
   'progress.failed': '失败',
 
-  'transfers.title': '传输',
-  'transfers.empty': '尚无传输。',
   'transfers.cancel': '取消',
   'transfers.save': '另存到…',
   'transfers.share': '分享',

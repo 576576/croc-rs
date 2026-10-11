@@ -108,13 +108,15 @@ crates/croc-gui/
 | 组件      | 类名                  | 要点                                    |
 | ------- | ------------------- | ------------------------------------- |
 | 工作区切换   | `.workspace-switch` | `inline-grid`（三页 3 格，投递方式 2 格），选中格反色       |
+| 站点头部    | `.site-head`        | 标题 + 进度那一格；`flex`，标题 `flex: none`，进度 `flex: 1` |
+| 进度那一格   | `.progress-strip`   | 文件名一行 + `.progress-track` + 一句"百分比 / 字节 / 速率 / 剩余"；没在跑就不渲染 |
+| 面板头     | `.panel-heading`    | `auto minmax(0,1fr) auto`：序号格 + 标题 + 右侧动作位；**无副标题**，与下方内容间距 18px |
 | 丢弃区     | `.drop-zone`        | `min-height: 112px`，`1px dashed var(--subtle)` |
 | 选中清单    | `.selection-summary` | 一行"几个 / 合计多大"，在丢弃区与清单之间              |
-| 口令码块    | `.send-code`        | `auto minmax(0,1fr) 42px`：标签 + 码值 + 复制按钮 |
-| 二维码     | `.share-qr`         | 可折叠，默认收起                               |
-| 清单确认卡   | `.offer`            | `1px solid var(--foreground)`，背景 `--panel-tint` |
-| 进度条     | `.progress-track`   | `height: 7px`                         |
-| 速率 / ETA | `.progress-metrics` | 两格                                    |
+| 口令码栏    | `.code-field`       | 输入框 + 后置一枚按钮，三页同构（见下）                 |
+| 二维码     | `.share-qr`         | `justify-items: center` 居中；`Disclosure` **默认展开** |
+| 清单确认卡   | `.offer`            | `1px solid var(--foreground)`，背景 `--panel-tint`；作为 `.offer-strip` 横幅挂在工具栏下 |
+| 进度条     | `.progress-track`   | `height: 7px`；只作视觉指示，数字写在旁边那一行          |
 | 文件清单    | `.file-list`        | `max-height: 154px`，可滚；目录模式少一列大小       |
 | 文本框     | `.text-composer`    | 标题 + `min-height: 132px` 的 `textarea` + 一行字节数 |
 | 连接状态点   | `.status-dot`       | 7×7 描边，连上后填前景色                         |
@@ -124,6 +126,21 @@ crates/croc-gui/
 
 上游的营销区（`Blog*` / `.donation-banner` / `.cli-download` / `.home-reviews`）不搬。
 
+**没有传输队列。** 原先历史页上那块"传输列表"（`TransfersList`）已整个删掉，随之删掉
+`ProgressBlock`。三个去向：
+
+* 进度与取消 → 站点头部右侧的 `.progress-strip`（只显示在跑的那一条）；
+* 清单确认（收不收）→ 工具栏下面的 `.offer-strip` 横幅，因为它挡着传输，要显眼；
+* 收工之后的另存 / 分享 → 挂在历史页对应那条记录上（`HistoryPanel` 的 `isAndroid` 分支）。
+
+由此带来的两条：发起发送 / 接收**不再跳页**（进度就在头顶，留在原页还能看码与二维码）；
+传输收工时把该条从 `transfers` 里摘掉，失败则把错误提到共用的 `.error-strip`——
+不然"失败"只报在一条随即消失的进度条上，等于没报。
+
+**口令码栏三页同构**：SSH 页的邀请码、发送页的自定义口令码、接收页的口令码是同一形
+（`.code-field` = 输入框 + 后置一枚按钮），位置都是紧跟 `.panel-heading`。SSH 页那枚是
+眼睛，传输页那枚在复制 / 粘贴之间切换（长按或右键/菜单键）。
+
 ### 2.4 i18n
 
 中英双语，首版就有。前端 `locales/`（一门语言一个 `.ts`，键由 `en.ts` 的 `MessageKey` 约束），
@@ -132,6 +149,23 @@ crates/croc-gui/
 代价是文案要走 key，不能照抄上游的字面串。
 
 ## 3. 与 CLI 同源的两条硬约束（已修，不可回退）
+
+**文本载荷的三个名字。** `--text` 的内容在线上是一个叫 `croc-stdin-<纳秒时间戳>` 的临时
+文件，前缀是**协议要求**的：上游 `validateSendingTextOffer` 明文校验
+`file.FolderRemote == "." && strings.HasPrefix(file.Name, "croc-stdin-")`，改了前缀 Go 那边
+直接拒收。所以这个名字一个字节也不能动，但**三个面向用户的地方必须换掉**，规则集中在
+`croc_core::policy`：
+
+| 场景           | 用什么                            | 结果                       |
+| ------------ | ------------------------------ | ------------------------ |
+| 发送侧进度与提示     | `policy::display_name(name, …)` | `text`（文本）/ `stdin`（管道） |
+| 接收侧确认卡       | 同上（`OfferEvent::from_manifest`） | 同上                       |
+| 接收侧落盘名       | `policy::text_destination_name()` | `croc-text-<纳秒>.txt`     |
+
+落盘名的改写点是 `croc_engine::receive` 拿到清单、用户点了"接收"之后（`rename_text_payload`），
+与上游 `croc.go:2518` 同一步。改完的清单要放回 `manifest`，否则文件循环与 `FileClosed`
+还在用旧名字。判据必须和 `policy::is_text_artifact` 一致（既要 `sending_text` 又要前缀）——
+只按前缀改会把用户一个真叫 `croc-stdin-*` 的文件也改掉。
 
 **中继路由。** `pick_relay()`（`commands.rs`）：用户没给中继就按
 `codephrase::relay_index(码, 池长)` 折到 `croc_engine::public_relay::RELAYS`，给了就以用户为准，
@@ -160,6 +194,15 @@ crates/croc-gui/
   ndk-context，仅 Android 编译）。五件事：服务按需启停、通知进度、落盘目录
   （`sandboxDir`）、发布到下载目录（`publishToDownloads`）、SAF 另存与系统分享。
   桌面端这几个 Rust 函数是 no-op，调用方不写 `cfg` 分叉。返回键由前端接 `tauri://back-button`。
+- **JNI 查类必须走 ClassLoader**：`CrocBridge` 不能用 `env.find_class`——`FindClass`
+  只认当前这条 Java 调用栈上的 classloader，而命令跑在 Tauri 的 async 线程上（从 native
+  附着上去的，栈上没有 Java 帧），它会退到系统 classloader 并抛 `ClassNotFoundException`。
+  可靠的一条是先取 ApplicationContext（`ndk_context::android_context().context()`，tao
+  在 `android_setup` 里 `new_global_ref` 出来的那个）的 `getClassLoader()`，再 `loadClass`。
+- **`CrocBridge` 与 `SafPlugin` 必须写 keep 规则**（`gen/android/app/proguard-rules.pro`）：
+  两者都没有 Java 侧调用点，前者靠 Rust 侧按名字 + JNI 描述符反查、后者靠 Tauri 的
+  `PluginManager` 反射加载，release 的 R8 全程序优化会把它们当死代码重命名或删掉。
+  新增任何靠反射 / JNI 查的 Kotlin 类都要同步加 keep。
 - **接收落盘**：先写应用私有目录（`sandboxDir`，Android 上工作目录不可写），收完按
   `EngineEvent::FileDone` 记下的名字逐个发布出去——用户挑过 SAF 目录就发到那个目录
   （`safPublish`），没挑过则发到公共下载目录（`publishToDownloads`，往 `MediaStore.Downloads`

@@ -30,8 +30,8 @@ export const en = {
   'tour.send.body': 'Pick files or type text, then press Send. The code phrase is all the receiver needs.',
   'tour.receive.title': 'Receive',
   'tour.receive.body': 'Paste the code phrase and press Receive. Files land in the folder you picked.',
-  'tour.queue.title': 'Transfers',
-  'tour.queue.body': 'Every transfer shows its progress here; cancel a running one from the same row.',
+  'tour.progress.title': 'Progress',
+  'tour.progress.body': 'The bar next to the title tracks the running transfer; cancel it from the same row.',
   'tour.history.title': 'History',
   'tour.history.body': 'Finished transfers stay on the History page until you clear them.',
   'tour.ssh.title': 'Shared terminal',
@@ -42,7 +42,6 @@ export const en = {
   'code.paste': 'Paste the code phrase',
   'code.longPress': 'Long-press to switch',
 
-  'send.intro': 'Choose several files. Share one croc code.',
   'send.mode': 'Delivery',
   'send.mode.direct': 'Direct',
   'send.mode.stored': 'Stored link',
@@ -67,7 +66,6 @@ export const en = {
   'send.openInBrowser': 'Open join link',
   'send.qr': 'QR code',
 
-  'receive.intro': 'Paste the code phrase. Files land in the folder you pick.',
   'receive.code': 'Code phrase',
   'receive.codePlaceholder': 'acid-acorn-acre',
   'receive.outDir': 'Save to',
@@ -80,7 +78,6 @@ export const en = {
   'receive.overwrite': 'Overwrite existing files',
   'receive.rename': 'Rename instead',
 
-  'store.intro': 'Upload to the temp service and hand out a link instead of a code phrase.',
   'store.expiration': 'Expiration',
   'store.expirationUnit': 'Expiration unit',
   'store.unit.m': 'Minutes',
@@ -122,8 +119,6 @@ export const en = {
   'progress.done': 'Done',
   'progress.failed': 'Failed',
 
-  'transfers.title': 'Transfers',
-  'transfers.empty': 'No transfers yet.',
   'transfers.cancel': 'Cancel',
   'transfers.save': 'Save to…',
   'transfers.share': 'Share',

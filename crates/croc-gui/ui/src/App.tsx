@@ -9,8 +9,8 @@ import { SendPanel, type ContentMode, type DeliveryMode } from './components/Sen
 import { ReceivePanel } from './components/ReceivePanel';
 import { SshPanel } from './components/SshPanel';
 import { HistoryPanel, loadHistory, saveHistory, type HistoryEntry } from './components/HistoryPanel';
-import { TransfersList } from './components/TransfersList';
-import { CodeField } from './components/CodeField';
+import { ProgressStrip } from './components/ProgressStrip';
+import { OfferCard } from './components/OfferCard';
 import {
   api,
   EVENT,
@@ -167,6 +167,12 @@ export function App() {
           error: payload.error,
         });
         setBusy(false);
+        // 收工的那条从表里摘掉：进度那一格只显示在跑的，留着这一条不但看不见，还会
+        // 一直堆在内存里——它的记录已经在历史页上了。
+        setTransfers((current) => current.filter((item) => item.id !== payload.id));
+        // 失败只报在进度条上等于没报（那一条随即消失），提到共用的报错条上。
+        // 文案由 Rust 侧按当前语言给全，这里不兜底，免得把 `t` 拖进依赖表。
+        if (!payload.ok) setError(payload.error ?? payload.summary);
       }),
     );
 
@@ -235,8 +241,7 @@ export function App() {
         noCompress: settings.noCompress,
       });
       addTransfer(id, 'send');
-      // 传输队列在历史页：发起了就该让人看见进度，不用自己翻过去。
-      setPage('history');
+      // 不发起了就跳走：进度就在标题右边那条上，留在这一页还能接着看口令码与二维码。
     } catch (cause) {
       setError(String(cause));
       setBusy(false);
@@ -257,16 +262,14 @@ export function App() {
       });
       addTransfer(id, 'receive');
       patchTransfer(id, { offer: null });
-      setPage('history');
     } catch (cause) {
       setError(String(cause));
       setBusy(false);
     }
   };
 
-  /// 有发送在跑时才把本次的码带去历史页：跑完了还挂着一条旧码只会让人念错。
-  const pendingCode =
-    code !== null && transfers.some((item) => item.direction === 'send' && item.active) ? code : '';
+  /// 等用户决定收不收的那条。同一时刻只会有一条——接收方在文件循环里不会被再问一次。
+  const pending = transfers.find((item) => item.offer !== null);
 
   const respondOffer = async (id: string, accept: boolean) => {
     try {
@@ -280,10 +283,14 @@ export function App() {
   return (
     <div className="app-frame">
       <div className="site-shell">
-        <div className="site-head">
-          <div>
-            <h1>{t('app.title')}</h1>
-          </div>
+        <div className="site-head" data-tour="progress">
+          <h1>{t('app.title')}</h1>
+          {/* 标题右边那一格放"现在在传什么"：进度条 + 一句提示。传输队列整块取消之后，
+              这是唯一能一眼看到进度的地方，所以放在最上面。 */}
+          <ProgressStrip
+            transfers={transfers}
+            onCancel={(id) => void api.cancel(id).catch((cause) => setError(String(cause)))}
+          />
         </div>
 
         <div className="workspace-toolbar">
@@ -305,10 +312,18 @@ export function App() {
           />
         </div>
 
-        {/* 报错三页共用一条：发起发送或接收失败时人还在传输页，挂在历史页的队列里看不到。 */}
+        {/* 报错三页共用一条：发起发送或接收失败时人可能不在那一页上。 */}
         {error && (
           <div className="error-strip">
             <p className="note danger">{error}</p>
+          </div>
+        )}
+
+        {/* 对端推来清单，等用户决定收不收。队列取消之后这个决定没有别处可放，就按
+            一条横幅挂在工具栏下面——它挡着传输，得比进度显眼。 */}
+        {pending?.offer && (
+          <div className="offer-strip">
+            <OfferCard offer={pending.offer} onRespond={(accept) => void respondOffer(pending.id, accept)} />
           </div>
         )}
 
@@ -392,35 +407,17 @@ export function App() {
         {page === 'ssh' && <SshPanel />}
 
         {page === 'history' && (
-          <>
-            <section className="panel fit" data-tour="queue">
-              <span className="field-label">{t('transfers.title')}</span>
-              {/* 发起发送后直接跳到这一页，码得跟着过来：念不出来这趟就白发了。 */}
-              {pendingCode !== '' && (
-                <>
-                  <span className="field-label">{t('send.code')}</span>
-                  <CodeField value={pendingCode} readOnly />
-                </>
-              )}
-              <TransfersList
-                transfers={transfers}
-                isAndroid={isAndroid}
-                resolvePath={(name) => `${sandbox.replace(/[\\/]+$/, '')}/${name}`}
-                onCancel={(id) => void api.cancel(id).catch((cause) => setError(String(cause)))}
-                onRespond={(id, accept) => void respondOffer(id, accept)}
-                onSave={(path) => void api.exportFile(path).catch((cause) => setError(String(cause)))}
-                onShare={(path) => void api.shareFile(path).catch((cause) => setError(String(cause)))}
-              />
-            </section>
-
-            <HistoryPanel
-              entries={history}
-              onClear={() => {
-                setHistory([]);
-                saveHistory([]);
-              }}
-            />
-          </>
+          <HistoryPanel
+            entries={history}
+            isAndroid={isAndroid}
+            resolvePath={(name) => `${sandbox.replace(/[\\/]+$/, '')}/${name}`}
+            onSave={(path) => void api.exportFile(path).catch((cause) => setError(String(cause)))}
+            onShare={(path) => void api.shareFile(path).catch((cause) => setError(String(cause)))}
+            onClear={() => {
+              setHistory([]);
+              saveHistory([]);
+            }}
+          />
         )}
 
         {tourOpen && <Tour index={tourStep} onIndex={setTourStep} onClose={() => setTourOpen(false)} />}

@@ -278,18 +278,64 @@ details > summary::-webkit-details-marker {
   text-underline-offset: 2px;
 }
 
+/* 站点标题与进度条同处一行：标题占它需要的宽度，剩下的全给进度那一格。 */
 .site-head {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  margin-bottom: 18px;
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
 .site-head h1 {
+  flex: none;
   margin: 0;
   font-size: 18px;
   font-weight: 750;
   letter-spacing: -0.01em;
+}
+
+/* 标题右侧那一格：进度条 + 一句提示。没有在跑的东西时整个不渲染。 */
+.progress-strip {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.progress-strip-head {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+}
+
+.progress-strip-name {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-strip-cancel {
+  flex: none;
+  padding: 2px 6px;
+  border: 0;
+}
+
+.progress-strip-cancel svg {
+  width: 13px;
+  height: 13px;
+}
+
+.progress-strip-detail {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toolbar-row {
@@ -525,6 +571,8 @@ details > summary::-webkit-details-marker {
 
 /* 报错条接在工具栏下面：工具栏开口朝下，这条也不收口，下边由紧跟着的元素补
    （栅格的 `border-top`、面板自己的上边）。它自己只补左右两边。 */
+/* 报错条接在工具栏下面：工具栏开口朝下，这条也不收口，下边由紧跟着的元素补
+   （栅格自带 `border-top`，面板要靠下面那条规则补）。它自己只补左右两边。 */
 .error-strip {
   border-right: 1px solid var(--foreground);
   border-left: 1px solid var(--foreground);
@@ -538,6 +586,15 @@ details > summary::-webkit-details-marker {
 
 .error-strip + .panel {
   border-top: 1px solid var(--foreground);
+}
+
+/* 清单横幅：`OfferCard` 自己那份框四面都有，这里只把它的外边距按掉。 */
+.offer-strip {
+  margin-top: 12px;
+}
+
+.offer-strip .offer {
+  margin: 0;
 }
 
 /* 620px 的下限是给并排的两块用的；单独一块（队列、历史、设置）撑那么高只会是大片空白。 */
@@ -562,13 +619,29 @@ details > summary::-webkit-details-marker {
   border-top: 1px solid var(--foreground);
 }
 
-/* 面板头：序号格 + 标题 + 一句说明（照 croc web 的 `panel-heading`）。 */
+/* 面板头：序号格 + 标题 + 右侧动作位（发起 / 清空）。
+   副标题已去掉，与下方内容的间距因此收到 18px——留 24px 会显得空。 */
 .panel-heading {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
-  align-items: start;
-  margin-bottom: 24px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+/* 标题右边的动作位：按钮自然宽度，挤不下时（窄屏）由断点里改成整行。 */
+.panel-heading-action {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 标题行里的按钮不占满整行：`primary-button` 默认 `width: 100%`。 */
+.panel-heading-action .primary-button {
+  width: auto;
+  min-height: 38px;
+  padding: 0 16px;
 }
 
 .panel-heading .step {
@@ -587,16 +660,9 @@ details > summary::-webkit-details-marker {
 }
 
 .panel-heading h2 {
-  margin: 0 0 7px;
+  margin: 0;
   font-size: 22px;
   letter-spacing: -0.04em;
-}
-
-.panel-heading p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.55;
 }
 
 .primary-button {
@@ -1015,10 +1081,22 @@ details > summary::-webkit-details-marker {
   border-bottom: 1px solid var(--soft-border);
 }
 
+/* 二维码居中：`justify-items` 把码与下面那枚按钮都摆到栏的中线上。 */
 .share-qr {
   display: grid;
+  justify-items: center;
   gap: 10px;
   margin: 12px 0 18px;
+}
+
+/* 清单确认横幅：与报错条同形，但里面是 `OfferCard` 自己那一套框。 */
+.offer-strip {
+  margin-bottom: 1px;
+}
+
+.offer-strip .offer {
+  margin: 0;
+  border-bottom: 0;
 }
 
 .progress-track {
@@ -1135,6 +1213,21 @@ details > summary::-webkit-details-marker {
   .panel {
     min-height: 0;
     padding: 18px;
+  }
+
+  /* 标题行窄屏照旧三格：三个大页的标题都很短，按钮留在标题右边比另起一行省地方。 */
+  .panel-heading {
+    gap: 10px;
+  }
+
+  /* 进度那一格挤不下就跟标题分两行：并排时两边都只剩几个字宽。 */
+  .site-head {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .progress-strip {
+    flex-basis: 100%;
   }
 
   .transfer-grid {

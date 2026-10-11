@@ -12,12 +12,12 @@ export interface TourStep {
   body: MessageKey;
 }
 
-/// 五步走：发送、接收、队列、历史、共享终端。
+/// 五步走：发送、接收、进度、历史、共享终端。
 export const TOUR_STEPS: TourStep[] = [
   { page: 'transfer', target: 'send', title: 'tour.send.title', body: 'tour.send.body' },
   { page: 'transfer', target: 'receive', title: 'tour.receive.title', body: 'tour.receive.body' },
-  // 队列在历史页上，所以这一步与下一步同页。
-  { page: 'history', target: 'queue', title: 'tour.queue.title', body: 'tour.queue.body' },
+  // 进度那一格在站点头部，三页都在，所以这一步放哪一页都一样。
+  { page: 'transfer', target: 'progress', title: 'tour.progress.title', body: 'tour.progress.body' },
   { page: 'history', target: 'history', title: 'tour.history.title', body: 'tour.history.body' },
   { page: 'ssh', target: 'ssh', title: 'tour.ssh.title', body: 'tour.ssh.body' },
 ];

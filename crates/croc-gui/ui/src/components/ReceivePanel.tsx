@@ -44,9 +44,13 @@ export function ReceivePanel({
         <span className="step">
           <Download aria-hidden="true" />
         </span>
-        <div>
-          <h2>{t('receive.start')}</h2>
-          <p>{t('receive.intro')}</p>
+        <h2>{t('receive.start')}</h2>
+        {/* 发起按钮放在标题右边：与发送页同构，页脚不留按钮。 */}
+        <div className="panel-heading-action">
+          <button type="button" className="primary-button" onClick={onStart} disabled={busy || code.trim() === ''}>
+            <Download aria-hidden="true" />
+            {busy ? t('receive.starting') : t('receive.start')}
+          </button>
         </div>
       </div>
 
@@ -87,17 +91,6 @@ export function ReceivePanel({
         <input type="checkbox" checked={rename} onChange={(event) => onRename(event.target.checked)} />
         <span>{t('receive.rename')}</span>
       </label>
-
-      <div className="divider" />
-      <button
-        type="button"
-        className="primary-button"
-        onClick={onStart}
-        disabled={busy || code.trim() === ''}
-      >
-        <Download aria-hidden="true" />
-        {busy ? t('receive.starting') : t('receive.start')}
-      </button>
     </section>
   );
 }
