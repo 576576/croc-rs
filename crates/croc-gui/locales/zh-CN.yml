@@ -9,6 +9,7 @@ gui:
     bad_code: "%{code} 不是合法的口令码。"
     relay_pool: "这个口令码落不到公共中继池上。"
     no_offer: "这次传输没有在等待决定。"
+    no_sandbox: "拿不到应用私有目录，没有可落盘的位置。"
     mobile_only: "仅 Android 可用。"
   summary:
     send: "已发送 %{files} 个文件（%{bytes} 字节）。"

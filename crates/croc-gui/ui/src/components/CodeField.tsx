@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type PointerEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Check, ClipboardPaste, Copy } from 'lucide-react';
 import { api } from '../bridge';
 import { useT } from '../i18n';
@@ -6,12 +6,19 @@ import { useT } from '../i18n';
 /// 长按多久算切换，不到就算单击。
 const SWITCH_AFTER_MS = 500;
 
+/// 指针挪出这么远就不算长按：那是在滚页面，不是要切换。
+const MOVE_CANCEL_PX = 10;
+
 /// 口令码一格：输入框 + 后置一枚按钮，形与 SSH 页的邀请码那处相同。
 ///
 /// 按钮的动作可切换：复制是把这一格的内容放出去，粘贴是把外面的内容读进来。切换靠
 /// 长按（触屏）或右键/菜单键（`onContextMenu`，键盘与桌面端），因为一个位置只放得下
-/// 一枚按钮。切换后要点掉紧接着的那次 click——长按结束时浏览器会补一个 click，
-/// 不拦掉就会在切换的同一瞬间又执行一次动作。
+/// 一枚按钮。
+///
+/// 切换要过滤：一次按压只准切一次。触屏长按是"定时器切一次 + 松手时浏览器补的
+/// `contextmenu` 再切一次"，右键则是"`contextmenu` 切一次 + 按久了定时器再切一次"，
+/// 两处都会连切两次、切完看着像没变。切换之后紧跟着的 click 也要点掉——那是同一次
+/// 按压带出来的，不是用户想执行动作。
 export function CodeField({
   value,
   action = 'copy',
@@ -34,8 +41,12 @@ export function CodeField({
   const [mode, setMode] = useState<'copy' | 'paste'>(action);
   const [done, setDone] = useState(false);
   const timer = useRef(0);
-  /// 这次 click 是不是长按切换带出来的。
-  const swallowed = useRef(false);
+  /// 本次按压已经切换过了：定时器与 `contextmenu` 谁先到算谁的，后到的那个不作数。
+  const switched = useRef(false);
+  /// 切换带出来的那次 click 要吞掉：它不是用户想执行动作。
+  const suppressClick = useRef(false);
+  /// 按下时的位置，用来把"滚页面"和"长按"分开。
+  const origin = useRef({ x: 0, y: 0 });
   const canSwitch = onValue !== undefined && !readOnly;
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -61,18 +72,30 @@ export function CodeField({
       .catch(() => undefined);
   };
 
-  const toggle = () => setMode((current) => (current === 'copy' ? 'paste' : 'copy'));
+  /// 一次按压只切一次；切过之后把紧跟着的 click 一并作废。
+  const switchOnce = () => {
+    if (switched.current) return;
+    switched.current = true;
+    suppressClick.current = true;
+    setMode((current) => (current === 'copy' ? 'paste' : 'copy'));
+  };
 
-  const pressStart = () => {
+  const pressStart = (event: PointerEvent<HTMLButtonElement>) => {
     if (!canSwitch) return;
-    swallowed.current = false;
-    timer.current = window.setTimeout(() => {
-      swallowed.current = true;
-      toggle();
-    }, SWITCH_AFTER_MS);
+    switched.current = false;
+    suppressClick.current = false;
+    origin.current = { x: event.clientX, y: event.clientY };
+    timer.current = window.setTimeout(switchOnce, SWITCH_AFTER_MS);
   };
 
   const pressEnd = () => window.clearTimeout(timer.current);
+
+  const pressMove = (event: PointerEvent<HTMLButtonElement>) => {
+    const moved =
+      Math.abs(event.clientX - origin.current.x) > MOVE_CANCEL_PX ||
+      Math.abs(event.clientY - origin.current.y) > MOVE_CANCEL_PX;
+    if (moved) window.clearTimeout(timer.current);
+  };
 
   const label = mode === 'copy' ? (copyLabel ?? t('code.copy')) : t('code.paste');
   const hint = canSwitch ? `${label} · ${t('code.longPress')}` : label;
@@ -94,14 +117,16 @@ export function CodeField({
         onPointerDown={pressStart}
         onPointerUp={pressEnd}
         onPointerLeave={pressEnd}
+        onPointerMove={pressMove}
         onContextMenu={(event) => {
-          if (!canSwitch) return;
+          // 右键的菜单要自己吃掉，不然在按钮上右键会弹出浏览器菜单。
           event.preventDefault();
-          toggle();
+          if (!canSwitch) return;
+          switchOnce();
         }}
         onClick={() => {
-          if (swallowed.current) {
-            swallowed.current = false;
+          if (suppressClick.current) {
+            suppressClick.current = false;
             return;
           }
           run();

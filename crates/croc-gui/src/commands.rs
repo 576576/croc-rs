@@ -328,12 +328,19 @@ pub async fn receive(
     // read-only），所以字节仍然先落到应用私有目录，收完再按 URI 发布过去。
     // 桌面端 `out_dir` 永远是真实路径，`saf_tree` 为 `None`。
     // 空串按"没给"处理：前端在 Android 上没挑目录时就是空串，不能拿它当路径。
-    let requested = args.out_dir.filter(|value| !value.trim().is_empty()).unwrap_or_else(default_out_dir);
-    let saf_tree = saf_tree_of(&requested);
-    let out_dir = match &saf_tree {
-        Some(_) => PathBuf::from(default_out_dir()),
-        None => PathBuf::from(&requested),
+    let requested = args.out_dir.filter(|value| !value.trim().is_empty());
+    let saf_tree = requested.as_deref().and_then(saf_tree_of);
+    // 挑了 SAF 目录时字节仍要先落私有目录（收完再按 URI 发布过去），所以两种情况下
+    // 兜底目录都得先问出来。
+    // 拿不到私有目录就等于没有落盘位置。硬着头皮用 `.` 会撞上 "Read-only file
+    // system"（那边的当前目录是只读的根），而那句话指不到真正的原因。
+    let Some(fallback) = default_out_dir() else {
+        return Err(t!("gui.error.no_sandbox").to_string());
     };
+    let out_dir = PathBuf::from(match &saf_tree {
+        Some(_) => fallback,
+        None => requested.unwrap_or(fallback),
+    });
     let request = ReceiveRequest {
         relay,
         relay_password: args.pass.unwrap_or_else(|| DEFAULT_PASSPHRASE.to_owned()),
@@ -521,9 +528,24 @@ pub fn list_transfers(registry: State<'_, Arc<TransferRegistry>>) -> Result<Vec<
 /// 接收过程中收到的文件名（`EngineEvent::FileDone` 记下来的）。
 type Received = Arc<std::sync::Mutex<Vec<String>>>;
 
-/// 没指定落盘目录时用哪个。Android 上工作目录不可写，得落到应用私有目录。
-fn default_out_dir() -> String {
-    crate::android::sandbox_dir().unwrap_or_else(|| ".".to_owned())
+/// 没指定落盘目录时用哪个：Android 上是应用私有目录，桌面端是当前目录。
+///
+/// Android 上拿不到私有目录时返回 `None`，由调用方报"没有可落盘的位置"——回落到
+/// `.` 会撞上 "Read-only file system"（那边的当前目录是只读的根），那句话指不到
+/// 真正的原因。
+///
+/// 桌面端这一支恒为 `Some`（`Option` 只为和 Android 那一支同签名），clippy 会在非
+/// Android 目标上把它挑出来；Android 那一支真会返回 `None`，不能用 `expect`。
+#[cfg_attr(not(target_os = "android"), allow(clippy::unnecessary_wraps))]
+fn default_out_dir() -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::android::sandbox_dir()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Some(".".to_owned())
+    }
 }
 
 /// 收到文件的真实落盘目录（Android 上是应用私有目录，桌面端是当前目录）。
@@ -532,7 +554,7 @@ fn default_out_dir() -> String {
 /// 另存与分享要的是私有目录里那个真实文件，靠这条命令问出来。
 #[tauri::command]
 pub fn sandbox_dir() -> String {
-    default_out_dir()
+    default_out_dir().unwrap_or_default()
 }
 
 /// 把引擎事件转成 Tauri event。

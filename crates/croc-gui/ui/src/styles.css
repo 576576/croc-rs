@@ -1234,4 +1234,9 @@ details > summary::-webkit-details-marker {
   .workspace-toolbar .workspace-switch button:not([aria-selected='true']) .workspace-switch-label {
     display: none;
   }
+
+  /* 右上角只留语言与深浅两枚：指引与仓库链接在手机上不如把宽度让给三个大页。 */
+  .workspace-toolbar-actions .narrow-hide {
+    display: none;
+  }
 }

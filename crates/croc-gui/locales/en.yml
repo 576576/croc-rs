@@ -9,6 +9,7 @@ gui:
     bad_code: "%{code} is not a valid code phrase."
     relay_pool: "Cannot place this code phrase on the public relay pool."
     no_offer: "This transfer is not waiting for a decision."
+    no_sandbox: "Cannot reach the app's private folder, so there is nowhere to save."
     mobile_only: "Only available on Android."
   summary:
     send: "Sent %{files} files (%{bytes} bytes)."

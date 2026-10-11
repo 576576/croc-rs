@@ -16,6 +16,8 @@ function GithubMark() {
 const OPTIONS: LocalePreference[] = ['auto', 'en', 'zh-CN'];
 
 /// 右上角那四枚按钮。顺序与 croc web 一致：指引 / 语言 / 仓库 / 深浅色。
+/// 窄屏只留语言与深浅两枚（标了 `narrow-hide` 的那两枚由样式收掉）：四枚 42px
+/// 加三个大页，在手机上会把大页挤出工具栏。
 export function ToolbarActions({
   tourActive,
   onToggleTour,
@@ -52,7 +54,7 @@ export function ToolbarActions({
     <div className="workspace-toolbar-actions">
       <button
         type="button"
-        className={`icon-button${tourActive ? ' active' : ''}`}
+        className={`icon-button narrow-hide${tourActive ? ' active' : ''}`}
         aria-pressed={tourActive}
         aria-label={t('nav.howToUse')}
         title={t('nav.howToUse')}
@@ -95,7 +97,7 @@ export function ToolbarActions({
 
       <button
         type="button"
-        className="icon-button"
+        className="icon-button narrow-hide"
         aria-label={t('nav.github')}
         title={t('nav.github')}
         onClick={() => void api.openUrl(REPOSITORY_URL)}
