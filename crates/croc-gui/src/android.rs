@@ -1,4 +1,5 @@
-//! Android 侧的 Kotlin 桥（G10）：前台服务、通知进度、SAF 另存与系统分享。
+//! Android 侧的 Kotlin 桥（G10）：前台服务、通知进度、落盘目录、发布到下载目录、
+//! SAF 目录发布、SAF 另存与系统分享。
 //!
 //! 只有 Rust → Kotlin 这一个方向。Kotlin 那边是
 //! `gen/android/.../CrocBridge.kt` 的 `@JvmStatic` 方法；两边靠类名 + 方法名 + JNI 描述符
@@ -78,6 +79,28 @@ pub fn sandbox_dir() -> Option<String> {
     })
 }
 
+/// 把已落盘的文件发布到用户选定的 SAF 目录（目录 URI），返回落到的文件名。
+///
+/// 与 [`publish_to_downloads`] 并列的另一条出口：用户在界面上挑过目录就走这条，
+/// 没挑过则落公共下载目录。失败时返回 `None`。
+#[cfg(target_os = "android")]
+pub fn saf_publish(tree_uri: &str, local_path: &str, name: &str) -> Option<String> {
+    attach("safPublish", |env| {
+        let tree = env.new_string(tree_uri)?;
+        let path = env.new_string(local_path)?;
+        let name = env.new_string(name)?;
+        let args =
+            [jni::objects::JValue::from(&tree), jni::objects::JValue::from(&path), jni::objects::JValue::from(&name)];
+        let returned = env.call_static_method(
+            BRIDGE,
+            "safPublish",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+            &args,
+        )?;
+        read_string(env, returned.l()?)
+    })
+}
+
 /// 附着到当前线程，跑一次 JNI 调用。
 ///
 /// 参数在闭包里造，是因为 `JString` 的生命周期绑在附着出来的 `JNIEnv` 上。
@@ -151,5 +174,10 @@ pub fn publish_to_downloads(_path: &str) -> Option<String> {
 
 #[cfg(not(target_os = "android"))]
 pub fn sandbox_dir() -> Option<String> {
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn saf_publish(_tree_uri: &str, _local_path: &str, _name: &str) -> Option<String> {
     None
 }

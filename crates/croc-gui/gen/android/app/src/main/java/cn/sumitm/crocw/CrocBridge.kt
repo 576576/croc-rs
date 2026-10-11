@@ -10,6 +10,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import androidx.documentfile.provider.DocumentFile
 import java.io.File
 
 /**
@@ -114,6 +115,40 @@ object CrocBridge {
       name
     }.getOrElse {
       resolver.delete(uri, null, null)
+      null
+    }
+  }
+
+  /// 把已经落在应用私有目录里的文件，发布到用户选定的 SAF 目录。
+  ///
+  /// `treeUri` 是 `open({ directory: true })` 交出来的目录 URI
+  /// （`content://com.android.externalstorage.documents/tree/...`）。往目录里建条目的
+  /// 权限来自目录本身，不是 `MANAGE_EXTERNAL_STORAGE`，所以不需要任何运行时权限；
+  /// 但这个 URI 的授权只对本次进程有效，[MainActivity] 那边要
+  /// `takePersistableUriPermission` 才能跨重启保留。
+  ///
+  /// @return 落到的文件名，失败返回 null。
+  @JvmStatic
+  fun safPublish(treeUri: String, localPath: String, name: String): String? {
+    val context = appContext ?: return null
+    val file = File(localPath)
+    if (!file.exists()) return null
+    val tree = runCatching { Uri.parse(treeUri) }.getOrNull() ?: return null
+    // URI 必须以 /tree/ 结尾才是目录：`fromTreeUri` 对文档 URI 会返回 null 之外的东西，
+    // 那种情况下 createFile 落到的位置与用户选的不一致，不如直接失败。
+    val directory = DocumentFile.fromTreeUri(context, tree) ?: return null
+    val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension) ?: "application/octet-stream"
+    // 同名条目已存在时 `createFile` 会自动改名（foo(1).ext），这与桌面端 `--rename`
+    // 的语义一致，不需要先删。
+    val target = runCatching { directory.createFile(mime, name) }.getOrNull() ?: return null
+    return runCatching {
+      val out = context.contentResolver.openOutputStream(target.uri)
+        ?: throw java.io.IOException("openOutputStream(${target.uri})")
+      out.use { file.inputStream().use { input -> input.copyTo(out) } }
+      name
+    }.getOrElse {
+      // 拷到一半失败要撤掉条目，否则目标目录里留一个半截文件。
+      runCatching { target.delete() }
       null
     }
   }

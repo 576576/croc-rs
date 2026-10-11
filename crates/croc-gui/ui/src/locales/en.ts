@@ -1,8 +1,7 @@
 // User-facing strings (English).
 
 export const en = {
-  'app.title': 'croc',
-  'app.tagline': 'End-to-end encrypted transfer. Same engine as the croc-rs CLI.',
+  'app.title': 'crocw-rs',
   'app.language': 'Language',
   'app.theme': 'Theme',
   'app.theme.dark': 'Dark',
@@ -66,6 +65,9 @@ export const en = {
   'receive.codePlaceholder': 'acid-acorn-acre',
   'receive.outDir': 'Save to',
   'receive.pickDir': 'Choose folder',
+  // Android：挑的是 SAF 目录，文件先落应用私有目录、收完再发布过去，语义与桌面的
+  // "直接写进这个目录"不同，空着则发到公共下载目录。
+  'receive.outDirPlaceholder': 'Leave empty to save to Downloads',
   'receive.start': 'Receive',
   'receive.starting': 'Receiving…',
   'receive.overwrite': 'Overwrite existing files',

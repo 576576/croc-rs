@@ -3,8 +3,7 @@
 import type { MessageKey } from './en';
 
 export const zhCN: Record<MessageKey, string> = {
-  'app.title': 'croc',
-  'app.tagline': '端到端加密传输，内核与 croc-rs CLI 同源。',
+  'app.title': 'crocw-rs',
   'app.language': '语言',
   'app.theme': '主题',
   'app.theme.dark': '深色',
@@ -68,6 +67,9 @@ export const zhCN: Record<MessageKey, string> = {
   'receive.codePlaceholder': 'acid-acorn-acre',
   'receive.outDir': '保存到',
   'receive.pickDir': '选择目录',
+  // Android：挑的是 SAF 目录，文件先落应用私有目录、收完再发布过去，语义与桌面的
+  // "直接写进这个目录"不同，空着则发到公共下载目录。
+  'receive.outDirPlaceholder': '留空则保存到下载目录',
   'receive.start': '接收',
   'receive.starting': '接收中…',
   'receive.overwrite': '覆盖同名文件',

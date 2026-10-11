@@ -25,7 +25,7 @@ pub mod store;
 
 pub use commands::{
     FinishedEvent, OfferEvent, OfferFile, ProgressEvent, ReceiveArgs, SendArgs, cancel_transfer, export_file,
-    generate_code, list_transfers, receive, respond_to_offer, send, set_locale, share_file, stat_paths,
+    generate_code, list_transfers, receive, respond_to_offer, sandbox_dir, send, set_locale, share_file, stat_paths,
 };
 pub use offers::OfferRegistry;
 pub use state::{TransferId, TransferRegistry, TransferStatus};
@@ -51,6 +51,9 @@ pub fn app() -> tauri::Builder<tauri::Wry> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        // 挑 SAF 目录：官方 dialog 插件在 Android 上用 ACTION_GET_CONTENT，
+        // 选不了目录、授权也不可持久化，见 crates/croc-saf-plugin 的说明。
+        .plugin(croc_saf_plugin::init())
         .manage(std::sync::Arc::new(TransferRegistry::new()))
         .manage(std::sync::Arc::new(OfferRegistry::new()))
         .invoke_handler(tauri::generate_handler![
@@ -65,6 +68,7 @@ pub fn app() -> tauri::Builder<tauri::Wry> {
             export_file,
             share_file,
             stat_paths,
+            sandbox_dir,
         ])
 }
 

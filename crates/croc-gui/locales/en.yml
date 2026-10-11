@@ -13,6 +13,7 @@ gui:
     send: "Sent %{files} files (%{bytes} bytes)."
     receive: "Received %{received} (%{bytes} bytes), skipped %{skipped}."
     published: "Saved %{count} file(s) to Downloads."
+    published_tree: "Saved %{count} file(s) to the chosen folder."
   status:
     transferring: "Transferring %{name}."
     file_done: "Done: %{name}."

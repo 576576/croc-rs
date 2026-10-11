@@ -142,15 +142,25 @@ crates/croc-gui/
   （`sandboxDir`）、发布到下载目录（`publishToDownloads`）、SAF 另存与系统分享。
   桌面端这几个 Rust 函数是 no-op，调用方不写 `cfg` 分叉。返回键由前端接 `tauri://back-button`。
 - **接收落盘**：先写应用私有目录（`sandboxDir`，Android 上工作目录不可写），收完按
-  `EngineEvent::FileDone` 记下的名字逐个 `publishToDownloads`——往 `MediaStore.Downloads`
-  插条目**不需要任何运行时权限**，只有改动别人创建的文件才要 `MANAGE_EXTERNAL_STORAGE` 或 SAF。
+  `EngineEvent::FileDone` 记下的名字逐个发布出去——用户挑过 SAF 目录就发到那个目录
+  （`safPublish`），没挑过则发到公共下载目录（`publishToDownloads`，往 `MediaStore.Downloads`
+  插条目**不需要任何运行时权限**，只有改动别人创建的文件才要 `MANAGE_EXTERNAL_STORAGE` 或 SAF）。
   代价是一次拷贝（无法直接写到公共目录）；免掉拷贝需要 `croc-engine` 支持 fd 写入，见 §5。
+- **挑 SAF 目录**：`crates/croc-saf-plugin`（独立 crate，`init()` 注册为 `saf`）。
+  官方 `tauri-plugin-dialog` 在 Android 上走 `Intent.ACTION_GET_CONTENT`，那个 intent
+  只出文件、**选不了目录**，授权也不可持久化，所以自己起 `ACTION_OPEN_DOCUMENT_TREE`
+  并 `takePersistableUriPermission`。前端调 `plugin:saf|pick_directory`，桌面端恒返回
+  `null`（没有 SAF），调用方据此退回系统文件选择器。
+  界面上「保存到」那格在 Android 存的是 SAF 目录 URI，**不能当文件系统路径用**；
+  真实落盘位置另由 `sandbox_dir` 命令给出（另存与分享要拿它拼路径）。
 - 清单要 `FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_DATA_SYNC`（Android 14+ 需声明类型）、
   `WAKE_LOCK`、`INTERNET`、`ACCESS_NETWORK_STATE`。**不申请**
   `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`，也不引导用户关电池优化。
 - 交叉编译要自己指工具链：`CC_aarch64_linux_android=<NDK>/toolchains/llvm/prebuilt/
-  windows-x86_64/bin/aarch64-linux-android24-clang.cmd`、`AR_...=llvm-ar.exe`。
+  windows-x86_64/bin/aarch64-linux-android30-clang.cmd`、`AR_...=llvm-ar.exe`、
+  `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=` 同上 clang。API 级别取 30（= `minSdk`）。
   Android 实际只构建 lib，验证用 `cargo check --lib --target aarch64-linux-android -p croc-gui`。
+  **插件的 `cfg(mobile)` 代码只在这个目标下才被编译**，host 上 pass 不代表 Android 上能编。
 
 移动端其它：触摸目标 48px；前端绝不持有文件字节，只用路径 / URI。
 SDK：`minSdk 30` / `targetSdk 36` / `compileSdk 37`（`app/build.gradle.kts`）。
@@ -162,8 +172,8 @@ minSdk 30 已经高于 29，所以存储只有 `MediaStore` 一条路，没有 `
 | 项                   | 阻塞点                                                                        |
 | ------------------- | -------------------------------------------------------------------------- |
 | G11 SSH 共享终端        | 依赖 SSH 数据面（上游 `src/sshshare` + `internal/sshclient`），未实现；SSH 页只有一句去处 |
-| 直写公共目录（免掉一次拷贝）    | 需要 `croc-engine` 的 fs 层抽象出 `FileSink` / `FileSource`（路径 或 raw fd）。现在是"先落私有目录、收完 `publishToDownloads`" |
-| Android 真机验证        | 只做到交叉编译通过。JNI 桥靠类名 + 方法名 + 描述符对上，改签名只会在运行时以 `NoSuchMethodError` 暴露         |
+| 直写公共目录 / SAF 目录（免掉一次拷贝） | 需要 `croc-engine` 的 fs 层抽象出 `FileSink` / `FileSource`（路径 或 raw fd）。现在是"先落私有目录、收完发布出去" |
+| Android 真机验证        | 只做到交叉编译 + Kotlin 编译通过。`ACTION_OPEN_DOCUMENT_TREE` 的选择流程、`takePersistableUriPermission`、`safPublish` 的 `DocumentFile.createFile` 写入都只在真机可见；JNI 桥靠类名 + 方法名 + 描述符对上，改签名只会在运行时以 `NoSuchMethodError` 暴露         |
 | 通知里的字节级百分比          | 现在推的是 Rust 侧的状态句                                                            |
 | 系统托盘 / 更新器 / 传输历史   | P2                                                                          |
 

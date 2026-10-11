@@ -1,5 +1,7 @@
 *.iml
 .gradle
+# Kotlin 增量编译的会话状态（Gradle 每次构建重写）。
+.kotlin
 /local.properties
 /.idea/caches
 /.idea/libraries

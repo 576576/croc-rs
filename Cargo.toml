@@ -12,6 +12,7 @@ members = [
     "crates/croc-engine",
     "crates/croc-cli",
     "crates/croc-gui",
+    "crates/croc-saf-plugin",
     "xtask",
 ]
 
@@ -157,6 +158,7 @@ croc-store = { path = "crates/croc-store" }
 croc-engine = { path = "crates/croc-engine" }
 croc-cli = { path = "crates/croc-cli" }
 croc-gui = { path = "crates/croc-gui" }
+croc-saf-plugin = { path = "crates/croc-saf-plugin" }
 
 [profile.release]
 lto = "thin"

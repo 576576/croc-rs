@@ -103,6 +103,12 @@ export const api = {
   setLocale: (locale: string) => call<void>('set_locale', { locale }),
   // 路径 → 字节数；目录是 null（不为一次显示去遍历整棵树）。列表里那一列大小要它。
   statPaths: (paths: string[]) => call<Array<number | null>>('stat_paths', { paths }),
+  // 收到文件的真实落盘目录。Android 上「保存到」那格存的是 SAF 目录 URI，
+  // 不能拿来拼文件路径——另存与分享要的是私有目录里那个真实文件。
+  sandboxDir: () => call<string>('sandbox_dir'),
+  // 挑一个 Android 的 SAF 目录，返回目录 URI；用户取消返回 null。
+  // 桌面端恒返回 null（没有 SAF），调用方据此走系统文件选择器。
+  pickSafDir: () => call<string | null>('plugin:saf|pick_directory'),
   reveal: (path: string) => revealItemInDir(path).catch(() => openPath(path)),
   copy: (text: string) => writeText(text),
   // opener 插件只在 Tauri 里存在：纯浏览器打开前端时调用失败，此时忽略即可。

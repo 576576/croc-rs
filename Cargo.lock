@@ -922,6 +922,7 @@ dependencies = [
  "croc-net",
  "croc-pake",
  "croc-protocol",
+ "croc-saf-plugin",
  "croc-store",
  "jni 0.21.1",
  "ndk-context",
@@ -1009,6 +1010,18 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "croc-saf-plugin"
+version = "0.1.0"
+dependencies = [
+ "jni 0.21.1",
+ "ndk-context",
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

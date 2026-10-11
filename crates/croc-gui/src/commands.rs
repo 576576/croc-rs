@@ -313,7 +313,17 @@ pub async fn receive(
 
     let received: Received = Received::default();
     let events = bridge(&app, &id, "receive", Some(received.clone()));
-    let out_dir = PathBuf::from(args.out_dir.unwrap_or_else(default_out_dir));
+    // 落盘目录与发布目标是两件事。Android 上用户在界面上挑的目录是 SAF 的
+    // `content://` 目录 URI——它不能当文件系统路径用（`create_dir_all` 会撞
+    // read-only），所以字节仍然先落到应用私有目录，收完再按 URI 发布过去。
+    // 桌面端 `out_dir` 永远是真实路径，`saf_tree` 为 `None`。
+    // 空串按"没给"处理：前端在 Android 上没挑目录时就是空串，不能拿它当路径。
+    let requested = args.out_dir.filter(|value| !value.trim().is_empty()).unwrap_or_else(default_out_dir);
+    let saf_tree = saf_tree_of(&requested);
+    let out_dir = match &saf_tree {
+        Some(_) => PathBuf::from(default_out_dir()),
+        None => PathBuf::from(&requested),
+    };
     let request = ReceiveRequest {
         relay,
         relay_password: args.pass.unwrap_or_else(|| DEFAULT_PASSPHRASE.to_owned()),
@@ -353,12 +363,14 @@ pub async fn receive(
                 skipped = summary.skipped
             )
             .to_string();
-            // Android 上收到的文件先落在应用私有目录里（用户看不见），收完发布到公共
-            // 下载目录。桌面端这一步是空操作，`published` 为 0，不会追加文案。
-            let published = publish_received(&out_dir, &received);
+            // Android 上收到的文件先落在应用私有目录里（用户看不见），收完再发布出去：
+            // 用户挑过目录就发到那个 SAF 目录，没挑过则发到公共下载目录。桌面端这一步
+            // 是空操作，`published` 为 0，不会追加文案。
+            let published = publish_received(&out_dir, saf_tree.as_deref(), &received);
             if published > 0 {
                 text.push('\n');
-                text.push_str(&t!("gui.summary.published", count = published));
+                let key = if saf_tree.is_some() { "gui.summary.published_tree" } else { "gui.summary.published" };
+                text.push_str(&t!(key, count = published));
             }
             text
         })
@@ -366,12 +378,31 @@ pub async fn receive(
     Ok(id)
 }
 
-/// 把收到的文件发布到公共下载目录，返回发布成功的个数。
-fn publish_received(out_dir: &std::path::Path, received: &Received) -> usize {
+/// 落盘的文件要发布到哪儿：`Some(tree_uri)` 是用户挑的 SAF 目录，`None` 是公共下载目录。
+///
+/// `content://` 是 SAF 的判据。桌面端不会出现这个 scheme——那边 `out_dir` 是用户手填
+/// 或系统文件管理器给的路径。
+fn saf_tree_of(out_dir: &str) -> Option<String> {
+    let trimmed = out_dir.trim();
+    trimmed.starts_with("content://").then(|| trimmed.to_owned())
+}
+
+/// 把收到的文件发布出去，返回发布成功的个数。
+///
+/// `saf_tree` 为 `None` 时走公共下载目录（[`crate::android::publish_to_downloads`]），
+/// 桌面端两个分支都是空操作。
+fn publish_received(out_dir: &std::path::Path, saf_tree: Option<&str>, received: &Received) -> usize {
     let names = std::mem::take(&mut *received.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     names
         .iter()
-        .filter(|name| crate::android::publish_to_downloads(&out_dir.join(name).to_string_lossy()).is_some())
+        .filter(|name| {
+            let local = out_dir.join(name);
+            let local = local.to_string_lossy();
+            saf_tree.map_or_else(
+                || crate::android::publish_to_downloads(&local).is_some(),
+                |tree| crate::android::saf_publish(tree, &local, name).is_some(),
+            )
+        })
         .count()
 }
 
@@ -447,6 +478,15 @@ type Received = Arc<std::sync::Mutex<Vec<String>>>;
 /// 没指定落盘目录时用哪个。Android 上工作目录不可写，得落到应用私有目录。
 fn default_out_dir() -> String {
     crate::android::sandbox_dir().unwrap_or_else(|| ".".to_owned())
+}
+
+/// 收到文件的真实落盘目录（Android 上是应用私有目录，桌面端是当前目录）。
+///
+/// 界面上「保存到」那格在 Android 存的是 SAF 目录 URI，不能拿来拼文件路径——
+/// 另存与分享要的是私有目录里那个真实文件，靠这条命令问出来。
+#[tauri::command]
+pub fn sandbox_dir() -> String {
+    default_out_dir()
 }
 
 /// 把引擎事件转成 Tauri event。
@@ -645,5 +685,16 @@ mod tests {
         let id = machine_id();
         assert_eq!(id.len(), 16);
         assert!(id.chars().all(|character| character.is_ascii_hexdigit()));
+    }
+
+    /// 发布文案是按分支取键的（`t!(key, ...)` 用的是变量），键名写错不会编译报错，
+    /// 只会在界面上把键名原样显示出来。这里把两条都渲染一遍，键丢了就红。
+    #[test]
+    fn both_publish_summaries_resolve() {
+        for key in ["gui.summary.published", "gui.summary.published_tree"] {
+            let text = t!(key, count = 3).to_string();
+            assert_ne!(text, key, "{key} 没有对应的文案");
+            assert!(text.contains('3'), "{key} 没有代入 count：{text}");
+        }
     }
 }

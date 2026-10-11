@@ -1,0 +1,12 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = """
+This permission set allows the app to ask the user to pick a
+Storage Access Framework directory.
+
+#### Granted Permissions
+
+Picking a directory is enabled.
+"""
+permissions = ["allow-pick-directory"]

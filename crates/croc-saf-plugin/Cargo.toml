@@ -1,0 +1,28 @@
+[package]
+name = "croc-saf-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tauri 2 plugin: pick a Storage Access Framework directory on Android."
+# Cargo 的 links 机制：tauri-build 靠 `DEP_<名称>_ANDROID_LIBRARY_PATH` 这个环境变量
+# 发现插件的 android/ 目录并写进 tauri.settings.gradle。少了这一行插件根本不会被
+# Gradle 编进来，Rust 侧调用在真机上抛 NoSuchMethodError。
+links = "tauri-plugin-saf"
+
+[lints]
+workspace = true
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+serde.workspace = true
+tauri = { version = "2", features = [] }
+thiserror.workspace = true
+
+# Android 侧的 JNI 绑定。只有 Android 要，桌面端不该把它们链接进来。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"

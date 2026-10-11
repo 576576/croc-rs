@@ -6,6 +6,7 @@ export function ReceivePanel({
   code,
   busy,
   outDir,
+  isAndroid,
   overwrite,
   rename,
   onCode,
@@ -17,6 +18,8 @@ export function ReceivePanel({
   code: string;
   busy: boolean;
   outDir: string;
+  /// Android 上这格是 SAF 目录 URI，用户不会手打，空着就是"发到公共下载目录"。
+  isAndroid: boolean;
   overwrite: boolean;
   rename: boolean;
   onCode: (next: string) => void;
@@ -26,6 +29,7 @@ export function ReceivePanel({
   onStart: () => void;
 }) {
   const t = useT();
+  const placeholder = isAndroid ? t('receive.outDirPlaceholder') : undefined;
 
   return (
     <section className="panel" data-tour="receive">
@@ -48,7 +52,12 @@ export function ReceivePanel({
       />
 
       <span className="field-label">{t('receive.outDir')}</span>
-      <input type="text" value={outDir} onChange={(event) => onOutDir(event.target.value)} />
+      <input
+        type="text"
+        value={outDir}
+        placeholder={placeholder}
+        onChange={(event) => onOutDir(event.target.value)}
+      />
       <div className="toolbar-row">
         <button
           type="button"

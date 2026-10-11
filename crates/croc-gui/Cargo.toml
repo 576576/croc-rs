@@ -40,6 +40,7 @@ croc-engine.workspace = true
 croc-pake.workspace = true
 croc-net.workspace = true
 croc-store.workspace = true
+croc-saf-plugin.workspace = true
 time.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"

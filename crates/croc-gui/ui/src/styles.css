@@ -288,12 +288,6 @@ details > summary::-webkit-details-marker {
   letter-spacing: -0.01em;
 }
 
-.site-head p {
-  margin: 6px 0 0;
-  color: var(--muted);
-  font-size: 11px;
-}
-
 .toolbar-row {
   display: flex;
   gap: 8px;

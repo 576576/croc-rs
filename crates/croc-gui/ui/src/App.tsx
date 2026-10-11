@@ -17,13 +17,11 @@ import {
   type ProgressPayload,
 } from './bridge';
 import { useT } from './i18n';
+import { isAndroid } from './platform';
 import { applyTheme, resolveTheme } from './theme';
 import type { TransferView } from './types';
 
 const SETTINGS_KEY = 'croc-gui-settings';
-
-/// 另存 / 分享只在 Android 上给：桌面端有系统文件管理器，调过去只会收到一句报错。
-const isAndroid = /Android/.test(navigator.userAgent);
 
 const DEFAULT_SETTINGS: Settings = {
   relay: '',
@@ -69,7 +67,12 @@ export function App() {
   const [customCode, setCustomCode] = useState('');
   const [code, setCode] = useState<string | null>(null);
   const [receiveCode, setReceiveCode] = useState('');
-  const [outDir, setOutDir] = useState('.');
+  // Android 上这格存的是 SAF 目录 URI（用户挑过才有）；空表示没挑，收到后发到公共
+  // 下载目录。桌面端存的是真实路径，初值 `.` 即当前目录。
+  const [outDir, setOutDir] = useState(isAndroid ? '' : '.');
+  // 收到文件的真实落盘目录（Android 上是应用私有目录）。另存与分享要它拼路径——
+  // `outDir` 在 Android 上可能是 `content://`，拼不出文件系统路径。
+  const [sandbox, setSandbox] = useState('.');
   const [overwrite, setOverwrite] = useState(false);
   const [rename, setRename] = useState(false);
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -82,6 +85,15 @@ export function App() {
 
   useEffect(() => {
     applyTheme(resolveTheme());
+  }, []);
+
+  // 收到文件的真实落盘目录：Android 上是应用私有目录。拿不到就退回 `.`——
+  // 桌面端本来就是当前目录，Android 上没这个值也只是另存/分享按下会失败。
+  useEffect(() => {
+    void api
+      .sandboxDir()
+      .then(setSandbox)
+      .catch(() => undefined);
   }, []);
 
   // 指引走到哪一步就切到那一页：步骤里有跨页的（历史、共享终端）。
@@ -245,7 +257,6 @@ export function App() {
         <div className="site-head">
           <div>
             <h1>{t('app.title')}</h1>
-            <p>{t('app.tagline')}</p>
           </div>
         </div>
 
@@ -290,6 +301,7 @@ export function App() {
               code={receiveCode}
               busy={busy}
               outDir={outDir}
+              isAndroid={isAndroid}
               overwrite={overwrite}
               rename={rename}
               onCode={setReceiveCode}
@@ -319,7 +331,7 @@ export function App() {
             <TransfersList
               transfers={transfers}
               isAndroid={isAndroid}
-              resolvePath={(name) => `${outDir.replace(/[\\/]+$/, '')}/${name}`}
+              resolvePath={(name) => `${sandbox.replace(/[\\/]+$/, '')}/${name}`}
               onCancel={(id) => void api.cancel(id).catch((cause) => setError(String(cause)))}
               onRespond={(id, accept) => void respondOffer(id, accept)}
               onSave={(path) => void api.exportFile(path).catch((cause) => setError(String(cause)))}

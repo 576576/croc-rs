@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import { api } from '../bridge';
+import { isAndroid } from '../platform';
 import { baseName, formatBytes } from '../format';
 import { File, FolderOpen, X } from 'lucide-react';
 
@@ -93,7 +94,17 @@ export function FileList({
 
 /// Tauri 的文件选择器给的是完整路径；`File` 对象给不到路径，
 /// 所以桌面版只认这条路与拖放事件里的路径数组。
+///
+/// `directory` 为真时在 Android 上走自研的 SAF 选择器（返回 `content://` 目录 URI）：
+/// 官方 dialog 插件用的是 `ACTION_GET_CONTENT`，那个 intent 选不了目录，拿到手也只是
+/// 个文件 URI。桌面端没有 SAF，仍走系统文件管理器。
 export async function chooseFiles(multiple: boolean, directory: boolean): Promise<string[]> {
+  if (directory && isAndroid) {
+    // 用户取消时返回的也是 null——Android 上不该再退回 dialog 插件，
+    // 那个 intent 给不出目录。
+    const uri = await api.pickSafDir().catch(() => null);
+    return uri ? [uri] : [];
+  }
   const { open } = await import('@tauri-apps/plugin-dialog');
   const picked = await open({ multiple, directory });
   if (!picked) return [];
