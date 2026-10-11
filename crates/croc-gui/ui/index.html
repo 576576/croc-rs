@@ -6,7 +6,12 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `user-scalable=no` 关掉 Android WebView 与 WKWebView 自己的双指缩放：界面按固定
+         版式排的，放大之后按钮会跑出屏幕。桌面端的轨道缩放由 main.tsx 那条 wheel 钩子挡。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <meta name="theme-color" content="#121411" />
     <title>croc</title>
     <script>

@@ -25,7 +25,8 @@ pub mod store;
 
 pub use commands::{
     FinishedEvent, OfferEvent, OfferFile, ProgressEvent, ReceiveArgs, SendArgs, cancel_transfer, export_file,
-    generate_code, list_transfers, receive, respond_to_offer, sandbox_dir, send, set_locale, share_file, stat_paths,
+    generate_code, list_transfers, receive, respond_to_offer, sandbox_dir, send, set_locale, share_file, share_text,
+    stat_paths,
 };
 pub use offers::OfferRegistry;
 pub use state::{TransferId, TransferRegistry, TransferStatus};
@@ -67,6 +68,7 @@ pub fn app() -> tauri::Builder<tauri::Wry> {
             store_upload,
             export_file,
             share_file,
+            share_text,
             stat_paths,
             sandbox_dir,
         ])

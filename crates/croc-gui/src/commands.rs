@@ -497,6 +497,17 @@ pub fn share_file(path: String) -> Result<(), String> {
     if cfg!(target_os = "android") { Ok(()) } else { Err(t!("gui.error.mobile_only").to_string()) }
 }
 
+/// 把一段文本交给别的应用（分享接收链接）。
+///
+/// # Errors
+///
+/// 非 Android 平台返回错误。
+#[tauri::command]
+pub fn share_text(text: String) -> Result<(), String> {
+    crate::android::share_text(&text);
+    if cfg!(target_os = "android") { Ok(()) } else { Err(t!("gui.error.mobile_only").to_string()) }
+}
+
 /// 切换界面语言。前端每次切语言都调一次，好让后端的错误与摘要跟着变。
 #[tauri::command]
 pub fn set_locale(locale: String) {

@@ -101,7 +101,7 @@ export function CodeField({
   const hint = canSwitch ? `${label} · ${t('code.longPress')}` : label;
 
   return (
-    <div className="code-field">
+    <div className="field-row code-field">
       <input
         type="text"
         value={value}

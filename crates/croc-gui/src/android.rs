@@ -79,6 +79,16 @@ pub fn share_file(path: &str) {
     });
 }
 
+/// 把一段文本交给别的应用（分享接收链接）。
+#[cfg(target_os = "android")]
+pub fn share_text(text: &str) {
+    with_env("shareText", |env, class| {
+        let text = env.new_string(text)?;
+        let args = [jni::objects::JValue::from(&text)];
+        env.call_static_method(class, "shareText", "(Ljava/lang/String;)V", &args)
+    });
+}
+
 /// 把已落盘的文件发布到公共下载目录，返回落到的文件名。
 ///
 /// 用 `MediaStore` 插条目，不需要任何运行时权限；失败时返回 `None`。
@@ -230,6 +240,9 @@ pub fn export_file(_path: &str) {}
 
 #[cfg(not(target_os = "android"))]
 pub fn share_file(_path: &str) {}
+
+#[cfg(not(target_os = "android"))]
+pub fn share_text(_text: &str) {}
 
 #[cfg(not(target_os = "android"))]
 pub fn publish_to_downloads(_path: &str) -> Option<String> {

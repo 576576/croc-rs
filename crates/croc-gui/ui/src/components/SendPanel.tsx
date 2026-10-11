@@ -1,20 +1,26 @@
 import { useT } from '../i18n';
 import { api, type StoredResult } from '../bridge';
-import { CloudUpload, File, FolderOpen, MessageSquareText, Upload, ExternalLink } from 'lucide-react';
+import { CloudUpload, File, FolderOpen, MessageSquareText, Share2, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { chooseFiles, FileList } from './FileList';
 import { CodeField } from './CodeField';
 import { Disclosure } from './Disclosure';
 import { QRCodeSVG } from 'qrcode.react';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import { formatBytes } from '../format';
+import { isAndroid } from '../platform';
 import type { Settings } from './SettingsGrid';
 
 /// 浏览器端的加入链接。拼法与 CLI 的二维码一致（`crates/croc-cli/src/qr.rs`），
 /// 换成别的地址会让"扫码→在手机上打开收件页"这条路断掉。
 export function joinUrl(code: string): string {
   return `https://getcroc.com/?code=${encodeURIComponent(code)}`;
+}
+
+/// 链接摆到界面上时去掉 `https://`：这一串是给念、给对的，协议头只是噪声。
+/// 复制与分享出去的仍是 [`joinUrl`] 那份完整的。
+export function joinUrlLabel(code: string): string {
+  return joinUrl(code).replace(/^https:\/\//, '');
 }
 
 export type ContentMode = 'files' | 'folder' | 'text';
@@ -142,6 +148,15 @@ export function SendPanel({
     onDelivery(next);
   };
 
+  /// 分享接收链接：桌面端复制到剪贴板，Android 起系统分享面板。
+  ///
+  /// 两边的"分享"含义不同——桌面上没有分享面板，把链接放进剪贴板才是能接着用的动作。
+  /// 失败不冒泡：这一格是顺手拿链接的地方，出错打断不了什么，与口令码栏那枚按钮一致。
+  const shareReceiveLink = (value: string) => {
+    const url = joinUrl(value);
+    void (isAndroid ? api.shareText(url) : api.copy(url)).catch(() => undefined);
+  };
+
   const startUpload = async () => {
     setUploading(true);
     try {
@@ -204,9 +219,10 @@ export function SendPanel({
             <Disclosure label={t('send.qr')} open>
               <div className="share-qr">
                 <QRCodeSVG value={joinUrl(code)} size={132} bgColor="transparent" fgColor="currentColor" />
-                <button type="button" className="ghost" onClick={() => void openUrl(joinUrl(code))}>
-                  <ExternalLink aria-hidden="true" />
-                  {t('send.openInBrowser')}
+                <p className="share-link-url">{joinUrlLabel(code)}</p>
+                <button type="button" className="ghost" onClick={() => shareReceiveLink(code)}>
+                  <Share2 aria-hidden="true" />
+                  {t('send.shareLink')}
                 </button>
               </div>
             </Disclosure>

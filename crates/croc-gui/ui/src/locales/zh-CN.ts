@@ -65,7 +65,7 @@ export const zhCN: Record<MessageKey, string> = {
   'send.regenerate': '换一个码',
   'send.start': '发送',
   'send.starting': '发送中…',
-  'send.openInBrowser': '打开加入链接',
+  'send.shareLink': '分享链接',
   'send.qr': '二维码',
 
   'receive.code': '口令码',

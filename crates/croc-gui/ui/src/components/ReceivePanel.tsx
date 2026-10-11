@@ -65,19 +65,19 @@ export function ReceivePanel({
       />
 
       <span className="field-label">{t('receive.outDir')}</span>
-      <input
-        type="text"
-        value={outDir}
-        placeholder={placeholder}
-        onChange={(event) => onOutDir(event.target.value)}
-      />
-      <div className="toolbar-row">
+      {/* 挑目录与输入同行：两者说的是同一件事，分两行会让这一格看着像两块。 */}
+      <div className="field-row">
+        <input
+          type="text"
+          value={outDir}
+          placeholder={placeholder}
+          onChange={(event) => onOutDir(event.target.value)}
+        />
         <button
           type="button"
-          className="ghost"
           onClick={() => void chooseFiles(false, true).then((picked) => picked[0] && onOutDir(picked[0]))}
         >
-          <FolderOpen />
+          <FolderOpen aria-hidden="true" />
           {t('receive.pickDir')}
         </button>
       </div>

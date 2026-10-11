@@ -219,6 +219,20 @@ object CrocBridge {
     activity?.requestExport(path, mime)
   }
 
+  /// 系统分享一段文本（分享接收链接用）。
+  ///
+  /// 与 [shareFile] 并列的另一条出口：那个分享的是文件，要 FileProvider 授 URI 读权限；
+  /// 这个只是一串文本，`ACTION_SEND` + `text/plain` 就够，不涉及任何文件。
+  @JvmStatic
+  fun shareText(text: String) {
+    val current = activity ?: return
+    val intent = Intent(Intent.ACTION_SEND).apply {
+      type = "text/plain"
+      putExtra(Intent.EXTRA_TEXT, text)
+    }
+    runCatching { current.startActivity(Intent.createChooser(intent, null)) }
+  }
+
   /// 系统分享：交给别的应用（云盘、聊天工具……）。走 FileProvider，不让对方拿到本应用
   /// 私有目录的读权限。
   @JvmStatic

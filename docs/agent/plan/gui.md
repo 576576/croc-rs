@@ -32,11 +32,20 @@ crates/croc-gui/
   跳走了看不到码，这趟就白发了。高级设置留在传输页，是栅格下面单独一块（`.settings-panel`）。
 - 能展开的部分一律走 `.disclosure`（二维码、高级设置）：`summary` 自带的三角被
   `list-style: none` 去掉了，箭头得自己画，展开时转 180°。
-- **口令码那格三页同构**：紧跟 `panel-heading`，`field-label` 在上、`.code-field` 在下
-  （输入框 + 后置一枚按钮）。SSH 页那枚是眼睛（显示/隐藏邀请码），发送与接收页是
+- **口令码那格三页同构**：紧跟 `panel-heading`，`field-label` 在上、`.field-row.code-field`
+  在下（输入框 + 后置一枚按钮）。SSH 页那枚是眼睛（显示/隐藏邀请码），发送与接收页是
   复制/粘贴——一个位置只放得下一枚，所以靠长按（触屏）或 `onContextMenu`（桌面、键盘）
   切换，长按结束后要点掉浏览器补的那次 click，否则切换的同一瞬间又执行一次动作。
   接收页默认是粘贴（码是别人给的），发送页默认是复制。
+- **焦点框只跟输入框**：`.field-row:has(input:focus)` 画整组的环，不用 `:focus-within`——
+  后者在点后置按钮时也会亮，而那会儿用户并没有在编辑那一格，整行闪一下像点错了。
+  后置按钮保留全局的 `:focus-visible`（键盘走到才描边，鼠标点没有任何变化）。
+  不认识 `:has()` 的引擎由 `@supports not selector(:has(*))` 退回把环画在输入框自己身上。
+- **缩放一律挡掉**：版面按固定版式排的，放大之后按钮会跑出屏幕。触摸那条是
+  `html { touch-action: pan-x pan-y }`（只留滚动与点按）+ `index.html` 的
+  `user-scalable=no`；桌面那条是 `main.tsx` 里拦带 `ctrlKey` 的 `wheel`（触控板双指滑动
+  Chromium 会合成成它）与 Safari 的 `gesture*` 事件。键盘的 Ctrl+加减号拦不到，由 WebView
+  自己处理。
 - **发送前重置口令码**（默认勾选，随设置存）：上次发的码会回填进那一格，再点发送会把
   它当自定义码交上去，撞回同一个还在跑的房间。勾选时每次发送都用新码；要用自己填的码
   就把勾去掉。勾选框画在发送页（它管的是那格），`Settings.resetCode` 只为跟着存。
@@ -113,7 +122,8 @@ crates/croc-gui/
 | 面板头     | `.panel-heading`    | `auto minmax(0,1fr) auto`：序号格 + 标题 + 右侧动作位；**无副标题**，与下方内容间距 18px |
 | 丢弃区     | `.drop-zone`        | `min-height: 112px`，`1px dashed var(--subtle)` |
 | 选中清单    | `.selection-summary` | 一行"几个 / 合计多大"，在丢弃区与清单之间              |
-| 口令码栏    | `.code-field`       | 输入框 + 后置一枚按钮，三页同构（见下）                 |
+| 输入行     | `.field-row`        | 输入框 + 后置一枚按钮同行；`.code-field` 是"按钮只有图标"那一变体 |
+| 分享链接    | `.share-link-url`   | 二维码下方的链接，只展示（`user-select: none`）；按钮才是拿走它的入口 |
 | 二维码     | `.share-qr`         | `justify-items: center` 居中；`Disclosure` **默认展开** |
 | 清单确认卡   | `.offer`            | `1px solid var(--foreground)`，背景 `--panel-tint`；作为 `.offer-strip` 横幅挂在工具栏下 |
 | 进度条     | `.progress-track`   | `height: 7px`；只作视觉指示，数字写在旁边那一行          |
@@ -138,8 +148,14 @@ crates/croc-gui/
 不然"失败"只报在一条随即消失的进度条上，等于没报。
 
 **口令码栏三页同构**：SSH 页的邀请码、发送页的自定义口令码、接收页的口令码是同一形
-（`.code-field` = 输入框 + 后置一枚按钮），位置都是紧跟 `.panel-heading`。SSH 页那枚是
-眼睛，传输页那枚在复制 / 粘贴之间切换（长按或右键/菜单键）。
+（`.field-row.code-field` = 输入框 + 后置一枚按钮），位置都是紧跟 `.panel-heading`。
+SSH 页那枚是眼睛，传输页那枚在复制 / 粘贴之间切换（长按或右键/菜单键）。接收页的
+「保存到」也用 `.field-row`（后置按钮带文字），只是没有 `.code-field` 那套方按钮尺寸。
+
+**二维码下面那一行**：链接本体（`getcroc.com/?code=…`，去掉协议头）只展示、不可选中，
+旁边一枚「分享链接」按钮才是拿走它的入口——两样都长成可点的样子会分不清。动作按平台
+分叉：**桌面复制到剪贴板，Android 起系统分享面板**（`share_text` 命令 → `CrocBridge.shareText`
+→ `ACTION_SEND` + `text/plain`；桌面上没有分享面板，复制才是能接着用的那个动作）。
 
 ### 2.4 i18n
 
@@ -191,8 +207,10 @@ crates/croc-gui/
 - 改过的两个文件：`MainActivity.kt`（入口：请求 `POST_NOTIFICATIONS`、启停前台服务）、
   `TransferForegroundService.kt`（前台服务 + `PARTIAL_WAKE_LOCK`，10 min 超时自动放）。
 - **Rust→Kotlin 桥**：`CrocBridge.kt`（`@JvmStatic`）+ `src/android.rs`（jni 0.21 +
-  ndk-context，仅 Android 编译）。五件事：服务按需启停、通知进度、落盘目录
-  （`sandboxDir`）、发布到下载目录（`publishToDownloads`）、SAF 另存与系统分享。
+  ndk-context，仅 Android 编译）。服务按需启停、通知进度、落盘目录（`sandboxDir`）、
+  发布到下载目录（`publishToDownloads`）、SAF 另存、系统分享（`shareFile` 走文件 +
+  FileProvider，`shareText` 走 `ACTION_SEND` + `text/plain`）、SAF 目录暂存
+  （`stageDirectory` / `removeStaged`）。
   桌面端这几个 Rust 函数是 no-op，调用方不写 `cfg` 分叉。返回键由前端接 `tauri://back-button`。
 - **JNI 查类必须走 ClassLoader**：`CrocBridge` 不能用 `env.find_class`——`FindClass`
   只认当前这条 Java 调用栈上的 classloader，而命令跑在 Tauri 的 async 线程上（从 native

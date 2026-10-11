@@ -97,9 +97,10 @@ export const api = {
   receive: (args: ReceiveArgs) => call<string>('receive', { args }),
   cancel: (id: string) => call<void>('cancel_transfer', { id }),
   respondOffer: (id: string, accept: boolean) => call<void>('respond_to_offer', { id, accept }),
-  // 这两个只在 Android 上真的起作用：桌面端会收到一句"仅 Android 可用"。
+  // 这三个只在 Android 上真的起作用：桌面端会收到一句"仅 Android 可用"。
   exportFile: (path: string) => call<void>('export_file', { path }),
   shareFile: (path: string) => call<void>('share_file', { path }),
+  shareText: (text: string) => call<void>('share_text', { text }),
   setLocale: (locale: string) => call<void>('set_locale', { locale }),
   // 路径 → 字节数；目录是 null（不为一次显示去遍历整棵树）。列表里那一列大小要它。
   statPaths: (paths: string[]) => call<Array<number | null>>('stat_paths', { paths }),

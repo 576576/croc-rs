@@ -63,7 +63,7 @@ export const en = {
   'send.regenerate': 'New code',
   'send.start': 'Send',
   'send.starting': 'Sending…',
-  'send.openInBrowser': 'Open join link',
+  'send.shareLink': 'Share link',
   'send.qr': 'QR code',
 
   'receive.code': 'Code phrase',

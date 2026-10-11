@@ -36,6 +36,13 @@ body,
   min-height: 100%;
 }
 
+/* 双指缩放关掉：版面按固定版式排的，放大之后按钮会跑出屏幕。`pan-x pan-y` 只留滚动与
+   点按，把 `pinch-zoom` 与双击缩放一起排除掉。`index.html` 的 viewport 另有一条，
+   两条都要——`touch-action` 管触摸手势，viewport 管 Android WebView 自己那套缩放控件。 */
+html {
+  touch-action: pan-x pan-y;
+}
+
 body {
   margin: 0;
   background: var(--canvas);
@@ -995,63 +1002,82 @@ details > summary::-webkit-details-marker {
   text-transform: uppercase;
 }
 
-/* ───────────────────────── 口令码栏 ───────────────────────── */
+/* ───────────────── 输入行（输入框 + 后置按钮） ───────────────── */
 
-/* 输入框与后置按钮（复制、显示/隐藏邀请码）拼成一条。 */
-.code-field {
+/* 输入框与后置按钮拼成一条。后置按钮按内容宽度，输入框吃掉剩下的：
+   口令码栏那枚只有图标（复制 / 粘贴 / 显示邀请码），接收页的目录行那枚带文字。
+   代号那一类另加 `.code-field`，见下。 */
+.field-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 /* 内框与后置按钮同色：两者拼成一条，颜色不一样会看出接缝。 */
-.code-field input {
+.field-row input {
   border-right: 0;
   border-color: var(--subtle);
 }
 
-.code-field button {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 1px solid var(--subtle);
-  padding: 0;
+.field-row button {
+  border-color: var(--subtle);
   color: var(--foreground);
   background: var(--background);
-  cursor: pointer;
 }
 
-.code-field button:hover:not(:disabled) {
+.field-row button:hover:not(:disabled) {
   color: var(--background);
   border-color: var(--foreground);
   background: var(--foreground);
 }
 
-.code-field svg {
+.field-row svg {
   width: 15px;
   height: 15px;
 }
 
-/* 焦点框画在整组上，把右边的按钮一起圈进去：输入框只占左半边，它的 outline 会被
-   那个按钮压掉一半（croc web 就是这样，这里不跟）。 */
-.code-field:focus-within {
+/* 只要图标的那枚撑成方的：全局的 `padding: 0 14px` 会让它被图标撑成一条长条。 */
+.code-field button {
+  width: 42px;
+  padding: 0;
+}
+
+/* 焦点框只认输入框，不认后置按钮。原先用 `:focus-within`，点按钮时整行也会亮一下——
+   那会儿用户并没有在编辑那一格，闪这一下像点错了。 */
+.code-field:has(input:focus),
+.field-row:has(input:focus) {
   outline: 2px solid var(--foreground);
   outline-offset: 2px;
 }
 
-.code-field input:focus-visible,
-.code-field button:focus-visible {
-  outline: 0;
-}
-
 /* 聚焦时高亮内框，并把接缝那一竖也带上——内框的右边就是后置按钮的左边。
    按钮只带左边那一竖：它的另外三边是按钮自己的框，不属于内框。 */
-.code-field:focus-within input {
+.code-field:has(input:focus) input,
+.field-row:has(input:focus) input {
   border-color: var(--foreground);
 }
 
-.code-field:focus-within button {
+.code-field:has(input:focus) button,
+.field-row:has(input:focus) button {
   border-left-color: var(--foreground);
+}
+
+/* 环已画在整组上，输入框自己那圈要去掉。后置按钮不动：全局的 `:focus-visible`
+   只在键盘走到时给环，鼠标点是不会有任何视觉变化的。 */
+.code-field input:focus,
+.code-field input:focus-visible,
+.field-row input:focus,
+.field-row input:focus-visible {
+  outline: 0;
+}
+
+/* 不认识 `:has()` 的引擎（老 WebView）退回把环画在输入框自己身上：右边半圈会被后置
+   按钮压掉一点，但焦点可见性不能丢。 */
+@supports not selector(:has(*)) {
+  .code-field input:focus,
+  .field-row input:focus {
+    outline: 2px solid var(--foreground);
+    outline-offset: 2px;
+  }
 }
 
 /* 可展开的一块：标题两头对齐，箭头在右。`summary` 自带的三角已被 `list-style: none`
@@ -1081,12 +1107,25 @@ details > summary::-webkit-details-marker {
   border-bottom: 1px solid var(--soft-border);
 }
 
-/* 二维码居中：`justify-items` 把码与下面那枚按钮都摆到栏的中线上。 */
+/* 二维码居中：`justify-items` 把码、链接与那枚按钮都摆到栏的中线上。 */
 .share-qr {
   display: grid;
   justify-items: center;
   gap: 10px;
   margin: 12px 0 18px;
+}
+
+/* 链接只展示：去掉 `https://` 给前端念、给对，不许选中它本身——旁边那枚按钮才是
+   拿走它的入口，两者都长成可点的样子会分不清。 */
+.share-link-url {
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
 }
 
 /* 清单确认横幅：与报错条同形，但里面是 `OfferCard` 自己那一套框。 */
@@ -1290,10 +1329,14 @@ details > summary::-webkit-details-marker {
     min-height: 48px;
   }
 
-  /* 口令码栏的输入框跟着长高：按钮被上面那条提到 48px，框还是 42px 就会矮一截。 */
-  .code-field input,
-  .code-field button {
+  /* 输入行跟着长高：按钮被上面那条提到 48px，框还是 42px 就会矮一截。 */
+  .field-row input,
+  .field-row button {
     height: 48px;
+  }
+
+  .code-field button {
+    width: 48px;
   }
 
   /* 设置面板的内边距交给 summary，面板自己不留——上面 `.panel` 的 18px 会盖掉这条。 */
