@@ -1115,16 +1115,30 @@ details > summary::-webkit-details-marker {
   margin: 12px 0 18px;
 }
 
+/* 链接与按钮同行，整组居中；按钮按整块的中线对齐——窄屏上链接折成两行时，不居中就会
+   跟第一行齐平，看着像挂在链接上。 */
+.share-link-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+}
+
+.share-link-row button {
+  flex: none;
+}
+
 /* 链接只展示：去掉 `https://` 给前端念、给对，不许选中它本身——旁边那枚按钮才是
-   拿走它的入口，两者都长成可点的样子会分不清。 */
+   拿走它的入口，两者都长成可点的样子会分不清。
+   `anywhere` 是给窄屏的：链接没有空格，只有它能让这一串从中间断开折行。 */
 .share-link-url {
   margin: 0;
-  max-width: 100%;
-  overflow: hidden;
+  min-width: 0;
   color: var(--muted);
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   user-select: none;
 }
 

@@ -219,11 +219,14 @@ export function SendPanel({
             <Disclosure label={t('send.qr')} open>
               <div className="share-qr">
                 <QRCodeSVG value={joinUrl(code)} size={132} bgColor="transparent" fgColor="currentColor" />
-                <p className="share-link-url">{joinUrlLabel(code)}</p>
-                <button type="button" className="ghost" onClick={() => shareReceiveLink(code)}>
-                  <Share2 aria-hidden="true" />
-                  {t('send.shareLink')}
-                </button>
+                {/* 链接与按钮同行：窄屏链接会折成两行，按钮按整块的中线对齐（见 styles.css）。 */}
+                <div className="share-link-row">
+                  <p className="share-link-url">{joinUrlLabel(code)}</p>
+                  <button type="button" className="ghost" onClick={() => shareReceiveLink(code)}>
+                    <Share2 aria-hidden="true" />
+                    {t('send.shareLink')}
+                  </button>
+                </div>
               </div>
             </Disclosure>
           )}
