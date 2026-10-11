@@ -72,6 +72,7 @@ crates/croc-gui/
 - **生产构建必须带 `--features custom-protocol`**：`tauri build`（CLI）会自动加它，
   `cargo build` 不会。少了它 `tauri` 的 `dev` cfg 为真，运行时连的是 `devUrl`
   （http://localhost:1420）而不是编译期嵌入的前端，界面报"localhost 拒绝连接"。
+  缺少时 `crates/croc-gui/build.rs` 会在 release 构建里打一条 `cargo:warning`。
   开发时反过来：`cargo run -p croc-gui` 不带这个 feature，走 dev server。
 - 事件名三个：`croc://progress` / `croc://finished` / `croc://offer`。
 - ETA 在前端 `src/format.ts::project()` 里算（最近 3 秒的观测点线性外推），**没有引
