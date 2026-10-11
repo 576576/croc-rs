@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 
 /// 仓库地址（顶部那枚 GitHub 按钮指向这里）。
@@ -111,6 +111,7 @@ export const api = {
   pickSafDir: () => call<string | null>('plugin:saf|pick_directory'),
   reveal: (path: string) => revealItemInDir(path).catch(() => openPath(path)),
   copy: (text: string) => writeText(text),
+  paste: () => readText(),
   // opener 插件只在 Tauri 里存在：纯浏览器打开前端时调用失败，此时忽略即可。
   openUrl: (url: string) => openUrl(url).catch(() => undefined),
 };

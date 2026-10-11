@@ -12,7 +12,8 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "dialog:default",
-    "clipboard-manager:default",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text",
     "opener:default",
     "saf:default"
   ]

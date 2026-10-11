@@ -31,7 +31,7 @@ export function SshPanel() {
         <form className="ssh-join-form" autoComplete="off" onSubmit={(event) => event.preventDefault()}>
           <div className="ssh-invitation-field">
             <label htmlFor="croc-ssh-invitation">{t('ssh.invitation')}</label>
-            <span className="ssh-code-input">
+            <span className="code-field">
               <input
                 id="croc-ssh-invitation"
                 name="croc-ssh-invitation"

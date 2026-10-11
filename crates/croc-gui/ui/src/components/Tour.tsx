@@ -16,7 +16,8 @@ export interface TourStep {
 export const TOUR_STEPS: TourStep[] = [
   { page: 'transfer', target: 'send', title: 'tour.send.title', body: 'tour.send.body' },
   { page: 'transfer', target: 'receive', title: 'tour.receive.title', body: 'tour.receive.body' },
-  { page: 'transfer', target: 'queue', title: 'tour.queue.title', body: 'tour.queue.body' },
+  // 队列在历史页上，所以这一步与下一步同页。
+  { page: 'history', target: 'queue', title: 'tour.queue.title', body: 'tour.queue.body' },
   { page: 'history', target: 'history', title: 'tour.history.title', body: 'tour.history.body' },
   { page: 'ssh', target: 'ssh', title: 'tour.ssh.title', body: 'tour.ssh.body' },
 ];

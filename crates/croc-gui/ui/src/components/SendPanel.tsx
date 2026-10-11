@@ -1,13 +1,21 @@
 import { useT } from '../i18n';
 import { api, type StoredResult } from '../bridge';
-import { Check, CloudUpload, Copy, File, FolderOpen, MessageSquareText, Upload } from 'lucide-react';
+import { CloudUpload, File, FolderOpen, MessageSquareText, Upload, ExternalLink } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { chooseFiles, FileList } from './FileList';
-import { SendCode } from './SendCode';
+import { CodeField } from './CodeField';
+import { Disclosure } from './Disclosure';
 import { QRCodeSVG } from 'qrcode.react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { formatBytes } from '../format';
 import type { Settings } from './SettingsGrid';
+
+/// 浏览器端的加入链接。拼法与 CLI 的二维码一致（`crates/croc-cli/src/qr.rs`），
+/// 换成别的地址会让"扫码→在手机上打开收件页"这条路断掉。
+export function joinUrl(code: string): string {
+  return `https://getcroc.com/?code=${encodeURIComponent(code)}`;
+}
 
 export type ContentMode = 'files' | 'folder' | 'text';
 /// 投递方式：直传（口令码）或暂存（上传换一条链接）。
@@ -25,6 +33,8 @@ const MAX_TEXT_BYTES = 1024 * 1024;
 /// Tauri 的 drop 事件给的是路径数组；Web 的 `File` 对象只有名字，拿不到路径。
 /// 这条直流量只走前者，所以桌面端与 Android 行为一致。
 export function SendPanel({
+  id,
+  active,
   delivery,
   mode,
   files,
@@ -38,8 +48,13 @@ export function SendPanel({
   onFiles,
   onText,
   onCustomCode,
+  onResetCode,
   onStart,
 }: {
+  /// 窄屏切换条的 `aria-controls` 指向它。
+  id: string;
+  /// 窄屏下这一块是否被选中：没选中的整块由样式收掉（宽屏两块并排，不受影响）。
+  active: boolean;
   delivery: DeliveryMode;
   mode: ContentMode;
   files: string[];
@@ -53,6 +68,8 @@ export function SendPanel({
   onFiles: (next: string[]) => void;
   onText: (next: string) => void;
   onCustomCode: (next: string) => void;
+  /// 切换"发送前重置口令码"。
+  onResetCode: (next: boolean) => void;
   onStart: () => void;
 }) {
   const t = useT();
@@ -65,7 +82,6 @@ export function SendPanel({
   const [expirationUnit, setExpirationUnit] = useState<ExpirationUnit>(DEFAULT_EXPIRATION.unit);
   const [downloads, setDownloads] = useState(1);
   const [stored, setStored] = useState<StoredResult | null>(null);
-  const [copied, setCopied] = useState(false);
   const [uploading, setUploading] = useState(false);
 
   // 拖放只在拖到这块区域里才算：事件本身是给整个窗口的，落在别处（比如设置区）
@@ -141,24 +157,13 @@ export function SendPanel({
     }
   };
 
-  const copyLink = () => {
-    if (!stored) return;
-    void api
-      .copy(stored.link)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1200);
-      })
-      .catch(() => undefined);
-  };
-
   /// 载荷长度按 UTF-8 算：上限是字节数，不是字符数，中文一个字三字节。
   const textBytes = useMemo(() => new Blob([text]).size, [text]);
   const tooLarge = textBytes > MAX_TEXT_BYTES;
   const somethingToSend = mode === 'text' ? text.trim() !== '' && !tooLarge : files.length > 0;
 
   return (
-    <section className="panel" data-tour="send">
+    <section id={id} className={active ? 'panel mobile-active' : 'panel'} data-tour="send">
       <div className="panel-heading">
         <span className="step">
           <Upload aria-hidden="true" />
@@ -168,6 +173,38 @@ export function SendPanel({
           <p>{delivery === 'stored' ? t('store.intro') : t('send.intro')}</p>
         </div>
       </div>
+
+      {/* 口令码那一格与 SSH 页的邀请码同位置（紧跟标题），框后面那枚按钮长按切换
+          复制/粘贴。暂存没有口令码，那一格整个不出现。 */}
+      {delivery === 'direct' && (
+        <>
+          <span className="field-label">{t('send.code')}</span>
+          <CodeField
+            value={customCode}
+            placeholder={t('send.code.customPlaceholder')}
+            onValue={onCustomCode}
+          />
+          {code && (
+            <Disclosure label={t('send.qr')}>
+              <div className="share-qr">
+                <QRCodeSVG value={joinUrl(code)} size={132} bgColor="transparent" fgColor="currentColor" />
+                <button type="button" className="ghost" onClick={() => void openUrl(joinUrl(code))}>
+                  <ExternalLink aria-hidden="true" />
+                  {t('send.openInBrowser')}
+                </button>
+              </div>
+            </Disclosure>
+          )}
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={settings.resetCode}
+              onChange={(event) => onResetCode(event.target.checked)}
+            />
+            <span>{t('settings.resetCode')}</span>
+          </label>
+        </>
+      )}
 
       <span className="field-label">{t('send.mode')}</span>
       {/* 两组开关合成一块：第二组去掉上边，与上面那组共用中间那条线（见 styles.css）。
@@ -274,7 +311,12 @@ export function SendPanel({
           />
 
           <div className="divider" />
-          <button type="button" onClick={() => void startUpload()} disabled={uploading || files.length === 0}>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void startUpload()}
+            disabled={uploading || files.length === 0}
+          >
             <CloudUpload aria-hidden="true" />
             {uploading ? t('store.starting') : t('store.start')}
           </button>
@@ -282,19 +324,12 @@ export function SendPanel({
           {stored && (
             <>
               <span className="field-label">{t('store.link')}</span>
-              <div className="send-code">
-                <strong title={stored.link}>{stored.link}</strong>
-                <span />
-                <button type="button" className="ghost" onClick={copyLink} aria-label={t('store.copied')}>
-                  {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                </button>
-              </div>
-              <details>
-                <summary className="field-label">{t('send.qr')}</summary>
+              <CodeField value={stored.link} copyLabel={t('store.copy')} readOnly />
+              <Disclosure label={t('send.qr')}>
                 <div className="share-qr">
                   <QRCodeSVG value={stored.link} size={132} bgColor="transparent" fgColor="currentColor" />
                 </div>
-              </details>
+              </Disclosure>
               <p className="note">
                 {t('store.expires')}: {stored.expiresAt} · {t('store.downloads')}: {stored.downloads}
               </p>
@@ -304,18 +339,8 @@ export function SendPanel({
         </>
       ) : (
         <>
-          <span className="field-label">{t('send.code.custom')}</span>
-          <input
-            type="text"
-            value={customCode}
-            placeholder={t('send.code.customPlaceholder')}
-            onChange={(event) => onCustomCode(event.target.value)}
-          />
-
-          <SendCode code={code} />
-
           <div className="divider" />
-          <button type="button" onClick={onStart} disabled={busy || !somethingToSend}>
+          <button type="button" className="primary-button" onClick={onStart} disabled={busy || !somethingToSend}>
             <Upload aria-hidden="true" />
             {busy ? t('send.starting') : t('send.start')}
           </button>

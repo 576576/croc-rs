@@ -178,9 +178,13 @@ details > summary::-webkit-details-marker {
 }
 
 /* 顶部一行：左边是三个大页，右边是四枚图标按钮（照 croc web 的 `workspace-toolbar`）。 */
+/* `flex-wrap` 让这排在放不下时折成两行（窄屏：三个大页 + 四枚图标按钮）；
+   放得下就不折，宽屏看不出区别。不折的话图标那组会被推出右边界。 */
 .workspace-toolbar {
   display: flex;
   gap: 18px;
+  row-gap: 10px;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   border: 1px solid var(--foreground);
@@ -497,6 +501,11 @@ details > summary::-webkit-details-marker {
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* 窄屏的发送/接收切换条。宽屏两块并排，用不着它——窄屏那一套写在断点里。 */
+.mobile-transfer-switch {
+  display: none;
+}
+
 .panel {
   display: flex;
   min-width: 0;
@@ -512,6 +521,38 @@ details > summary::-webkit-details-marker {
    补左边，否则那一栏左侧是敞开的。 */
 .site-shell > .panel {
   border-left: 1px solid var(--foreground);
+}
+
+/* 报错条接在工具栏下面：工具栏开口朝下，这条也不收口，下边由紧跟着的元素补
+   （栅格的 `border-top`、面板自己的上边）。它自己只补左右两边。 */
+.error-strip {
+  border-right: 1px solid var(--foreground);
+  border-left: 1px solid var(--foreground);
+  padding: 12px;
+  background: var(--background);
+}
+
+.error-strip .note {
+  margin: 0;
+}
+
+.error-strip + .panel {
+  border-top: 1px solid var(--foreground);
+}
+
+/* 620px 的下限是给并排的两块用的；单独一块（队列、历史、设置）撑那么高只会是大片空白。 */
+.panel.fit {
+  min-height: 0;
+}
+
+/* 高级设置整块就是一条可展开的标题：内边距交给 summary，面板自己不留。 */
+.settings-panel {
+  padding: 0;
+}
+
+.settings-panel .disclosure-summary {
+  margin: 0;
+  padding: 13px 15px;
 }
 
 /* 工具栏那一栏开口朝下（`border-bottom: 0`）：紧跟着它的元素负责补上边。传输页由栅格
@@ -626,62 +667,6 @@ details > summary::-webkit-details-marker {
   min-height: 42px;
   margin-top: 0;
   white-space: nowrap;
-}
-
-.ssh-code-input {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
-}
-
-/* 内框与眼睛按钮同色：两者拼成一条，颜色不一样会看出接缝。 */
-.ssh-code-input input {
-  border-right: 0;
-  border-color: var(--subtle);
-}
-
-.ssh-code-input button {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 1px solid var(--subtle);
-  padding: 0;
-  color: var(--foreground);
-  background: var(--background);
-  cursor: pointer;
-}
-
-.ssh-code-input button:hover:not(:disabled) {
-  color: var(--background);
-  border-color: var(--foreground);
-  background: var(--foreground);
-}
-
-.ssh-code-input svg {
-  width: 15px;
-  height: 15px;
-}
-
-/* 焦点框画在整组上，把右边的眼睛按钮一起圈进去：输入框只占左半边，它的 outline 会被
-   那个按钮压掉一半（croc web 就是这样，这里不跟）。 */
-.ssh-code-input:focus-within {
-  outline: 2px solid var(--foreground);
-  outline-offset: 2px;
-}
-
-.ssh-code-input input:focus-visible,
-.ssh-code-input button:focus-visible {
-  outline: 0;
-}
-
-/* 聚焦时高亮内框，并把接缝那一竖也带上——内框的右边就是眼睛按钮的左边。
-   按钮只带左边那一竖：它的另外三边是按钮自己的框，不属于内框。 */
-.ssh-code-input:focus-within input {
-  border-color: var(--foreground);
-}
-
-.ssh-code-input:focus-within button {
-  border-left-color: var(--foreground);
 }
 
 .ssh-status-row {
@@ -944,13 +929,90 @@ details > summary::-webkit-details-marker {
   text-transform: uppercase;
 }
 
-.send-code {
-  position: relative;
+/* ───────────────────────── 口令码栏 ───────────────────────── */
+
+/* 输入框与后置按钮（复制、显示/隐藏邀请码）拼成一条。 */
+.code-field {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 42px;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 42px;
+}
+
+/* 内框与后置按钮同色：两者拼成一条，颜色不一样会看出接缝。 */
+.code-field input {
+  border-right: 0;
+  border-color: var(--subtle);
+}
+
+.code-field button {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid var(--subtle);
+  padding: 0;
+  color: var(--foreground);
+  background: var(--background);
+  cursor: pointer;
+}
+
+.code-field button:hover:not(:disabled) {
+  color: var(--background);
+  border-color: var(--foreground);
+  background: var(--foreground);
+}
+
+.code-field svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 焦点框画在整组上，把右边的按钮一起圈进去：输入框只占左半边，它的 outline 会被
+   那个按钮压掉一半（croc web 就是这样，这里不跟）。 */
+.code-field:focus-within {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.code-field input:focus-visible,
+.code-field button:focus-visible {
+  outline: 0;
+}
+
+/* 聚焦时高亮内框，并把接缝那一竖也带上——内框的右边就是后置按钮的左边。
+   按钮只带左边那一竖：它的另外三边是按钮自己的框，不属于内框。 */
+.code-field:focus-within input {
+  border-color: var(--foreground);
+}
+
+.code-field:focus-within button {
+  border-left-color: var(--foreground);
+}
+
+/* 可展开的一块：标题两头对齐，箭头在右。`summary` 自带的三角已被 `list-style: none`
+   去掉，没有这枚箭头就看不出这一行能点开。 */
+.disclosure-summary {
+  display: flex;
   align-items: center;
-  margin-top: 20px;
+  justify-content: space-between;
+}
+
+.disclosure-arrow {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--foreground);
+  transition: transform 120ms ease;
+}
+
+.disclosure[open] .disclosure-arrow {
+  transform: rotate(180deg);
+}
+
+/* 展开后标题下面压一条线：它与内容同属一块，没有这条线标题会浮在内容上。
+   线下面留一段用 margin 而不是 padding——padding 会被"设置面板"自己的内边距改写。 */
+.disclosure[open] .disclosure-summary {
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--soft-border);
 }
 
 .share-qr {
@@ -1039,17 +1101,25 @@ details > summary::-webkit-details-marker {
   font-size: 11px;
 }
 
-.settings-grid .checkbox-label {
+/* 复选框 + 一行说明：发送页的"发送前重置"、接收页的覆盖/改名、设置里两处都用它。 */
+.checkbox-label {
   display: flex;
-  grid-column: 1 / -1;
+  margin-top: 7px;
   gap: 9px;
   align-items: center;
-}
-
-.settings-grid .checkbox-label span {
-  margin: 0;
   color: var(--muted);
   font-size: 10px;
+}
+
+/* 栅格里这行横跨整行，也不额外要上边距（栅格自带 `gap`）。 */
+.settings-grid .checkbox-label {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+/* `span` 在栅格里被 `label > span` 那条改成 uppercase 了，这里得改回来。 */
+.settings-grid .checkbox-label span {
+  margin: 0;
   letter-spacing: 0;
   text-transform: none;
 }
@@ -1071,6 +1141,53 @@ details > summary::-webkit-details-marker {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* 发送与接收二选一（照 croc web 的 `mobile-transfer-switch`）：切换条吸顶，
+     没选中的那块整个收掉——上下堆叠会把两块都推到首屏之外。 */
+  .mobile-transfer-switch {
+    position: sticky;
+    z-index: 30;
+    top: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-right: 1px solid var(--foreground);
+    border-bottom: 1px solid var(--foreground);
+    background: var(--background);
+    box-shadow: 0 8px 22px rgb(0 0 0 / 16%);
+  }
+
+  .mobile-transfer-switch button {
+    display: inline-flex;
+    min-height: 52px;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    padding: 8px 12px;
+    color: var(--muted);
+    background: transparent;
+    font-size: 13px;
+    font-weight: 750;
+    cursor: pointer;
+  }
+
+  .mobile-transfer-switch button + button {
+    border-left: 1px solid var(--foreground);
+  }
+
+  .mobile-transfer-switch button[aria-selected='true'] {
+    color: var(--background);
+    background: var(--foreground);
+  }
+
+  .mobile-transfer-switch svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .transfer-grid .panel:not(.mobile-active) {
+    display: none;
+  }
+
   .settings-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1080,11 +1197,41 @@ details > summary::-webkit-details-marker {
     min-height: 48px;
   }
 
+  /* 口令码栏的输入框跟着长高：按钮被上面那条提到 48px，框还是 42px 就会矮一截。 */
+  .code-field input,
+  .code-field button {
+    height: 48px;
+  }
+
+  /* 设置面板的内边距交给 summary，面板自己不留——上面 `.panel` 的 18px 会盖掉这条。 */
+  .settings-panel {
+    padding: 0;
+  }
+
   .title-bar .controls button {
     min-height: 34px;
   }
 
   .file-list li {
     min-height: 40px;
+  }
+}
+
+/* 更窄的屏：三个大页里只留当前那一页的文字，其余收成图标——
+   三格各占 116px，在手机上会把右侧那排图标按钮挤出工具栏。 */
+@media (max-width: 600px) {
+  /* 开关各格不再有 116px 的下限：面板里那组三选（文件/目录/文本）在手机上会撑破面板。 */
+  .workspace-switch button {
+    min-width: 0;
+  }
+
+  .workspace-toolbar .workspace-switch button:not([aria-selected='true']) {
+    min-width: 52px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .workspace-toolbar .workspace-switch button:not([aria-selected='true']) .workspace-switch-label {
+    display: none;
   }
 }

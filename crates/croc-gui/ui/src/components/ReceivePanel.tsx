@@ -1,8 +1,11 @@
 import { useT } from '../i18n';
 import { Download, FolderOpen } from 'lucide-react';
 import { chooseFiles } from './FileList';
+import { CodeField } from './CodeField';
 
 export function ReceivePanel({
+  id,
+  active,
   code,
   busy,
   outDir,
@@ -15,6 +18,10 @@ export function ReceivePanel({
   onRename,
   onStart,
 }: {
+  /// 窄屏切换条的 `aria-controls` 指向它。
+  id: string;
+  /// 窄屏下这一块是否被选中：没选中的整块由样式收掉（宽屏两块并排，不受影响）。
+  active: boolean;
   code: string;
   busy: boolean;
   outDir: string;
@@ -32,7 +39,7 @@ export function ReceivePanel({
   const placeholder = isAndroid ? t('receive.outDirPlaceholder') : undefined;
 
   return (
-    <section className="panel" data-tour="receive">
+    <section id={id} className={active ? 'panel mobile-active' : 'panel'} data-tour="receive">
       <div className="panel-heading">
         <span className="step">
           <Download aria-hidden="true" />
@@ -43,12 +50,14 @@ export function ReceivePanel({
         </div>
       </div>
 
+      {/* 与发送页、SSH 页同位置同形：标题下面就是口令码那一格。
+          这一格的默认动作是粘贴（码是别人给的），长按切到复制。 */}
       <span className="field-label">{t('receive.code')}</span>
-      <input
-        type="text"
+      <CodeField
         value={code}
+        action="paste"
         placeholder={t('receive.codePlaceholder')}
-        onChange={(event) => onCode(event.target.value)}
+        onValue={onCode}
       />
 
       <span className="field-label">{t('receive.outDir')}</span>
@@ -80,8 +89,13 @@ export function ReceivePanel({
       </label>
 
       <div className="divider" />
-      <button type="button" onClick={onStart} disabled={busy || code.trim() === ''}>
-        <Download />
+      <button
+        type="button"
+        className="primary-button"
+        onClick={onStart}
+        disabled={busy || code.trim() === ''}
+      >
+        <Download aria-hidden="true" />
         {busy ? t('receive.starting') : t('receive.start')}
       </button>
     </section>

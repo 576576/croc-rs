@@ -11,6 +11,10 @@ export const en = {
   'workspace.ssh': 'SSH',
   'workspace.history': 'History',
 
+  'transfer.direction': 'Transfer direction',
+  'transfer.tab.send': 'Send',
+  'transfer.tab.receive': 'Receive',
+
   'nav.howToUse': 'How to use crocw',
   'nav.language': 'Language',
   'nav.github': 'View this repository on GitHub',
@@ -33,6 +37,11 @@ export const en = {
   'tour.ssh.title': 'Shared terminal',
   'tour.ssh.body': 'Join a terminal with its invitation. Not in this build.',
 
+  // 口令码那格的后置按钮：复制与粘贴共用一枚，长按/右键切换。
+  'code.copy': 'Copy the code phrase',
+  'code.paste': 'Paste the code phrase',
+  'code.longPress': 'Long-press to switch',
+
   'send.intro': 'Choose several files. Share one croc code.',
   'send.mode': 'Delivery',
   'send.mode.direct': 'Direct',
@@ -51,14 +60,12 @@ export const en = {
   'send.summary.files': '{count} files',
   'send.summary.folders': '{count} folders',
   'send.code': 'Code phrase',
-  'send.code.custom': 'Custom code phrase (optional)',
   'send.code.customPlaceholder': 'Generated on send if left empty',
   'send.regenerate': 'New code',
   'send.start': 'Send',
   'send.starting': 'Sending…',
   'send.openInBrowser': 'Open join link',
   'send.qr': 'QR code',
-  'send.copied': 'Copied.',
 
   'receive.intro': 'Paste the code phrase. Files land in the folder you pick.',
   'receive.code': 'Code phrase',
@@ -84,7 +91,7 @@ export const en = {
   'store.start': 'Upload',
   'store.starting': 'Uploading…',
   'store.link': 'Pickup link',
-  'store.copied': 'Link copied.',
+  'store.copy': 'Copy the link',
   'store.expires': 'Expires',
   'store.done': 'Uploaded. The link stops working when it expires or runs out of downloads.',
 
@@ -129,6 +136,7 @@ export const en = {
   'history.failed': 'Failed',
 
   'settings.title': 'Advanced',
+  'settings.resetCode': 'New code for every send',
   'settings.relay': 'Relay address',
   'settings.relayPlaceholder': 'Leave empty to use the public pool',
   'settings.pass': 'Relay password',

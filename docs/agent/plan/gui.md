@@ -25,6 +25,21 @@ crates/croc-gui/
 
 - **三个大页**：传输 / SSH / 历史。标题栏是原生的（`tauri.conf.json` 不开 `decorations:
   false`），所以前端不再自绘标题栏与窗口按钮。
+- **窄屏（≤720px）发送与接收二选一**：切换条照 croc web 的 `mobile-transfer-switch`
+  （吸顶、选中态前景背景互换），没选中的那块整块收掉，不再上下堆叠；≤600px 时三个大页
+  只留当前那一页的文字，其余收成图标（收起来的靠 `aria-label` 留名字）。
+- **传输队列在历史页**：发起发送或接收后直接跳过去。有发送在跑时那一页还带本次口令码——
+  跳走了看不到码，这趟就白发了。高级设置留在传输页，是栅格下面单独一块（`.settings-panel`）。
+- 能展开的部分一律走 `.disclosure`（二维码、高级设置）：`summary` 自带的三角被
+  `list-style: none` 去掉了，箭头得自己画，展开时转 180°。
+- **口令码那格三页同构**：紧跟 `panel-heading`，`field-label` 在上、`.code-field` 在下
+  （输入框 + 后置一枚按钮）。SSH 页那枚是眼睛（显示/隐藏邀请码），发送与接收页是
+  复制/粘贴——一个位置只放得下一枚，所以靠长按（触屏）或 `onContextMenu`（桌面、键盘）
+  切换，长按结束后要点掉浏览器补的那次 click，否则切换的同一瞬间又执行一次动作。
+  接收页默认是粘贴（码是别人给的），发送页默认是复制。
+- **发送前重置口令码**（默认勾选，随设置存）：上次发的码会回填进那一格，再点发送会把
+  它当自定义码交上去，撞回同一个还在跑的房间。勾选时每次发送都用新码；要用自己填的码
+  就把勾去掉。勾选框画在发送页（它管的是那格），`Settings.resetCode` 只为跟着存。
 - 右上角四枚图标按钮（照 croc web 的 `workspace-toolbar-actions`）：指引 / 语言 /
   仓库 / 深浅色。语言那枚是展开选择（自动 · English · 中文，默认自动），不是点击切换。
 - 暂存（`store`）不是独立页，是发送面板里的一种投递方式（直传 / 暂存）。期限与次数那
@@ -33,6 +48,10 @@ crates/croc-gui/
 - **焦点框画在整组上**：数值格 + 单位下拉、邀请码 + 眼睛按钮，这两处只给输入框画
   outline 会被右边那件压掉一半（croc web 就是这样，SSH 那处不跟它）。做法是
   `:focus-within` 画在容器上，子元素的 `:focus-visible` outline 归零。
+- **`clipboard-manager:default` 是空权限集**（插件自己的 `permissions/default.toml` 里
+  `permissions = []`，注释写明读写都要显式开）。所以 `capabilities/default.json` 里必须
+  逐条列 `allow-write-text` / `allow-read-text`，只写 `clipboard-manager:default` 等于
+  复制按钮静默失效——失败被 `.catch` 吞掉，界面上看不出。
 
 - `tauri.conf.json` 的 `frontendDist` 指向 `ui/dist`。`beforeBuildCommand` 是
   `pnpm run build`、**不带 `--prefix ui`**：Tauri 2 把 hook 的 cwd 设成 frontend 目录

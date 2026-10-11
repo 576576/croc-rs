@@ -13,6 +13,10 @@ export const zhCN: Record<MessageKey, string> = {
   'workspace.ssh': 'SSH',
   'workspace.history': '历史',
 
+  'transfer.direction': '传输方向',
+  'transfer.tab.send': '发送',
+  'transfer.tab.receive': '接收',
+
   'nav.howToUse': 'crocw 使用指引',
   'nav.language': '语言',
   'nav.github': '在 GitHub 上查看本仓库',
@@ -35,6 +39,11 @@ export const zhCN: Record<MessageKey, string> = {
   'tour.ssh.title': '共享终端',
   'tour.ssh.body': '用邀请码加入终端。本版本未实现。',
 
+  // 口令码那格的后置按钮：复制与粘贴共用一枚，长按/右键切换。
+  'code.copy': '复制口令码',
+  'code.paste': '粘贴口令码',
+  'code.longPress': '长按切换复制/粘贴',
+
   'send.intro': '选择若干文件，共用一个口令码。',
   'send.mode': '投递方式',
   'send.mode.direct': '直传',
@@ -53,14 +62,12 @@ export const zhCN: Record<MessageKey, string> = {
   'send.summary.files': '{count} 个文件',
   'send.summary.folders': '{count} 个目录',
   'send.code': '口令码',
-  'send.code.custom': '自定义口令码（可留空）',
   'send.code.customPlaceholder': '留空则发送时自动生成',
   'send.regenerate': '换一个码',
   'send.start': '发送',
   'send.starting': '发送中…',
   'send.openInBrowser': '打开加入链接',
   'send.qr': '二维码',
-  'send.copied': '已复制。',
 
   'receive.intro': '粘贴口令码，文件写入所选目录。',
   'receive.code': '口令码',
@@ -86,7 +93,7 @@ export const zhCN: Record<MessageKey, string> = {
   'store.start': '上传',
   'store.starting': '上传中…',
   'store.link': '取件链接',
-  'store.copied': '链接已复制。',
+  'store.copy': '复制链接',
   'store.expires': '到期',
   'store.done': '已上传。链接到期或次数用尽即失效。',
 
@@ -130,6 +137,7 @@ export const zhCN: Record<MessageKey, string> = {
   'history.failed': '失败',
 
   'settings.title': '高级设置',
+  'settings.resetCode': '发送前重置口令码',
   'settings.relay': '中继地址',
   'settings.relayPlaceholder': '留空则用公共中继池',
   'settings.pass': '中继密码',

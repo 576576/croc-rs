@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { Download, Upload } from 'lucide-react';
 import { WorkspaceSwitch, type Page } from './components/WorkspaceSwitch';
 import { ToolbarActions } from './components/ToolbarActions';
 import { Tour, TOUR_STEPS } from './components/Tour';
@@ -9,6 +10,7 @@ import { ReceivePanel } from './components/ReceivePanel';
 import { SshPanel } from './components/SshPanel';
 import { HistoryPanel, loadHistory, saveHistory, type HistoryEntry } from './components/HistoryPanel';
 import { TransfersList } from './components/TransfersList';
+import { CodeField } from './components/CodeField';
 import {
   api,
   EVENT,
@@ -23,12 +25,18 @@ import type { TransferView } from './types';
 
 const SETTINGS_KEY = 'croc-gui-settings';
 
+/// 窄屏下发送与接收二选一（照 croc web 的 `mobile-transfer-switch`）。
+/// 宽屏两块并排，这个值不体现——只有窄屏的样式会把没选中的那块收掉。
+type MobilePanel = 'send' | 'receive';
+
 const DEFAULT_SETTINGS: Settings = {
   relay: '',
   pass: 'pass123',
   rememberPass: false,
   curve: 'p256',
   noCompress: false,
+  // 默认重置：上次发的码还留在那一格里，再点发送会拿它撞回同一个房间。
+  resetCode: true,
 };
 
 function loadSettings(): Settings {
@@ -58,6 +66,7 @@ function saveSettings(value: Settings): void {
 export function App() {
   const t = useT();
   const [page, setPage] = useState<Page>('transfer');
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>('send');
   const [tourOpen, setTourOpen] = useState(false);
   const [tourStep, setTourStep] = useState(0);
   const [delivery, setDelivery] = useState<DeliveryMode>('direct');
@@ -195,6 +204,11 @@ export function App() {
     setTransfers((current) => [...current, entry]);
   }, []);
 
+  const changeSettings = (next: Settings) => {
+    setSettings(next);
+    saveSettings(next);
+  };
+
   const relayArgs = () => ({
     relay: settings.relay.trim() === '' ? undefined : settings.relay.trim(),
     pass: settings.pass.trim() === '' ? undefined : settings.pass.trim(),
@@ -205,8 +219,13 @@ export function App() {
     setBusy(true);
     try {
       // 先把码生成好再点发送：码是本次会话的唯一凭据，用户应该先看一眼。
-      const resolved = await api.generateCode(customCode.trim() === '' ? undefined : customCode.trim());
+      // 勾了"发送前重置"就用新码（这一格里若留着上次发的码，交上去会撞回同一个房间）；
+      // 没勾则用这一格的内容当自定义码。
+      const requested = settings.resetCode ? undefined : customCode.trim() === '' ? undefined : customCode.trim();
+      const resolved = await api.generateCode(requested);
       setCode(resolved);
+      // 生成出来的码回填进那一格：它就是本次用的码，复制按钮与二维码都从它取值。
+      setCustomCode(resolved);
       const id = await api.send({
         paths: mode === 'text' ? [] : files,
         text: mode === 'text' ? text : undefined,
@@ -216,6 +235,8 @@ export function App() {
         noCompress: settings.noCompress,
       });
       addTransfer(id, 'send');
+      // 传输队列在历史页：发起了就该让人看见进度，不用自己翻过去。
+      setPage('history');
     } catch (cause) {
       setError(String(cause));
       setBusy(false);
@@ -236,11 +257,16 @@ export function App() {
       });
       addTransfer(id, 'receive');
       patchTransfer(id, { offer: null });
+      setPage('history');
     } catch (cause) {
       setError(String(cause));
       setBusy(false);
     }
   };
+
+  /// 有发送在跑时才把本次的码带去历史页：跑完了还挂着一条旧码只会让人念错。
+  const pendingCode =
+    code !== null && transfers.some((item) => item.direction === 'send' && item.active) ? code : '';
 
   const respondOffer = async (id: string, accept: boolean) => {
     try {
@@ -279,78 +305,122 @@ export function App() {
           />
         </div>
 
-        {page === 'transfer' && (
-          <div className="transfer-grid">
-            <SendPanel
-              delivery={delivery}
-              mode={mode}
-              files={files}
-              text={text}
-              busy={busy}
-              code={code}
-              settings={settings}
-              customCode={customCode}
-              onDelivery={setDelivery}
-              onMode={setMode}
-              onFiles={setFiles}
-              onText={setText}
-              onCustomCode={setCustomCode}
-              onStart={() => void startSend()}
-            />
-            <ReceivePanel
-              code={receiveCode}
-              busy={busy}
-              outDir={outDir}
-              isAndroid={isAndroid}
-              overwrite={overwrite}
-              rename={rename}
-              onCode={setReceiveCode}
-              onOutDir={setOutDir}
-              onOverwrite={setOverwrite}
-              onRename={setRename}
-              onStart={() => void startReceive()}
-            />
+        {/* 报错三页共用一条：发起发送或接收失败时人还在传输页，挂在历史页的队列里看不到。 */}
+        {error && (
+          <div className="error-strip">
+            <p className="note danger">{error}</p>
           </div>
+        )}
+
+        {page === 'transfer' && (
+          <>
+            <div className="transfer-grid">
+              {/* 窄屏的发送/接收切换条：宽屏这一条由样式收掉，两块并排。 */}
+              <div className="mobile-transfer-switch" role="tablist" aria-label={t('transfer.direction')}>
+                <button
+                  id="mobile-send-tab"
+                  type="button"
+                  role="tab"
+                  aria-controls="send-panel"
+                  aria-selected={mobilePanel === 'send'}
+                  onClick={() => setMobilePanel('send')}
+                >
+                  <Upload aria-hidden="true" />
+                  {t('transfer.tab.send')}
+                </button>
+                <button
+                  id="mobile-receive-tab"
+                  type="button"
+                  role="tab"
+                  aria-controls="receive-panel"
+                  aria-selected={mobilePanel === 'receive'}
+                  onClick={() => setMobilePanel('receive')}
+                >
+                  <Download aria-hidden="true" />
+                  {t('transfer.tab.receive')}
+                </button>
+              </div>
+              <SendPanel
+                id="send-panel"
+                active={mobilePanel === 'send'}
+                delivery={delivery}
+                mode={mode}
+                files={files}
+                text={text}
+                busy={busy}
+                code={code}
+                settings={settings}
+                customCode={customCode}
+                onDelivery={setDelivery}
+                onMode={setMode}
+                onFiles={setFiles}
+                onText={setText}
+                onCustomCode={setCustomCode}
+                onResetCode={(next) => changeSettings({ ...settings, resetCode: next })}
+                onStart={() => void startSend()}
+              />
+              <ReceivePanel
+                id="receive-panel"
+                active={mobilePanel === 'receive'}
+                code={receiveCode}
+                busy={busy}
+                outDir={outDir}
+                isAndroid={isAndroid}
+                overwrite={overwrite}
+                rename={rename}
+                onCode={setReceiveCode}
+                onOutDir={setOutDir}
+                onOverwrite={setOverwrite}
+                onRename={setRename}
+                onStart={() => void startReceive()}
+              />
+            </div>
+
+            <section className="panel fit settings-panel" data-tour="settings">
+              <SettingsGrid
+                value={settings}
+                connected={{
+                  relay: transfers.some((item) => item.active),
+                  data: transfers.some((item) => item.transferred > 0),
+                }}
+              onChange={changeSettings}
+              />
+            </section>
+          </>
         )}
 
         {page === 'ssh' && <SshPanel />}
 
         {page === 'history' && (
-          <HistoryPanel
-            entries={history}
-            onClear={() => {
-              setHistory([]);
-              saveHistory([]);
-            }}
-          />
-        )}
+          <>
+            <section className="panel fit" data-tour="queue">
+              <span className="field-label">{t('transfers.title')}</span>
+              {/* 发起发送后直接跳到这一页，码得跟着过来：念不出来这趟就白发了。 */}
+              {pendingCode !== '' && (
+                <>
+                  <span className="field-label">{t('send.code')}</span>
+                  <CodeField value={pendingCode} readOnly />
+                </>
+              )}
+              <TransfersList
+                transfers={transfers}
+                isAndroid={isAndroid}
+                resolvePath={(name) => `${sandbox.replace(/[\\/]+$/, '')}/${name}`}
+                onCancel={(id) => void api.cancel(id).catch((cause) => setError(String(cause)))}
+                onRespond={(id, accept) => void respondOffer(id, accept)}
+                onSave={(path) => void api.exportFile(path).catch((cause) => setError(String(cause)))}
+                onShare={(path) => void api.shareFile(path).catch((cause) => setError(String(cause)))}
+              />
+            </section>
 
-        {page === 'transfer' && (
-          <section className="panel" data-tour="queue">
-            <span className="field-label">{t('transfers.title')}</span>
-            <TransfersList
-              transfers={transfers}
-              isAndroid={isAndroid}
-              resolvePath={(name) => `${sandbox.replace(/[\\/]+$/, '')}/${name}`}
-              onCancel={(id) => void api.cancel(id).catch((cause) => setError(String(cause)))}
-              onRespond={(id, accept) => void respondOffer(id, accept)}
-              onSave={(path) => void api.exportFile(path).catch((cause) => setError(String(cause)))}
-              onShare={(path) => void api.shareFile(path).catch((cause) => setError(String(cause)))}
-            />
-            {error && <p className="note danger">{error}</p>}
-            <div className="divider" />
-            <SettingsGrid
-              value={settings}
-              connected={{
-                relay: transfers.some((item) => item.active),
-                data: transfers.some((item) => item.transferred > 0),
-              }}
-              onChange={(next) => {
-                setSettings(next);
-                saveSettings(next);
+            <HistoryPanel
+              entries={history}
+              onClear={() => {
+                setHistory([]);
+                saveHistory([]);
               }}
             />
-          </section>
+          </>
         )}
 
         {tourOpen && <Tour index={tourStep} onIndex={setTourStep} onClose={() => setTourOpen(false)} />}

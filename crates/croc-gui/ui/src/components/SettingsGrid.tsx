@@ -1,4 +1,5 @@
 import { useT } from '../i18n';
+import { Disclosure } from './Disclosure';
 import { StatusDot } from './StatusDot';
 
 export interface Settings {
@@ -7,6 +8,9 @@ export interface Settings {
   rememberPass: boolean;
   curve: string;
   noCompress: boolean;
+  /// 发送前是否重新生成口令码。勾着就用新码，不勾则用口令码那格里填的。
+  /// 勾选框画在发送页（它管的是那一格），所以它在这里只是为了跟着设置一起存。
+  resetCode: boolean;
 }
 
 export function SettingsGrid({
@@ -22,8 +26,7 @@ export function SettingsGrid({
   const set = <K extends keyof Settings>(key: K, next: Settings[K]) => onChange({ ...value, [key]: next });
 
   return (
-    <details>
-      <summary className="field-label">{t('settings.title')}</summary>
+    <Disclosure label={t('settings.title')}>
       <div className="settings-grid">
         <label>
           <span>{t('settings.relay')}</span>
@@ -67,6 +70,6 @@ export function SettingsGrid({
           <span>{t('settings.statusData')}</span>
         </div>
       </div>
-    </details>
+    </Disclosure>
   );
 }
