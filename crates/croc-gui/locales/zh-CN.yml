@@ -3,6 +3,7 @@
 gui:
   error:
     no_paths: "至少选一个文件。"
+    unreadable_dir: "读不到所选目录（可能是空的，或授权已失效）。"
     transfer_finished: "%{id} 已经结束了。"
     bad_curve: "%{name} 不是可用的曲线。"
     bad_code: "%{code} 不是合法的口令码。"

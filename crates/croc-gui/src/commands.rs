@@ -224,8 +224,15 @@ pub async fn send(
         let artifact = croc_engine::text::write_text_artifact(text)?;
         paths.push(artifact.to_string_lossy().into_owned());
     }
+    // Android 上用户挑的目录是 SAF 的 `content://` URI，引擎走不通（`files::survey`
+    // 起手就是 `symlink_metadata`）。先整个拷进应用私有目录，拿真实路径去发，发完删。
+    // 桌面端没有 `content://`，这一步是空操作。
+    let (staged, unreadable) = stage_saf_directories(&mut paths);
     if paths.is_empty() {
-        return Err(t!("gui.error.no_paths").to_string());
+        // 挑过目录但一个都没留下：目录读不到（空目录 / 授权失效），这比"没选东西"
+        // 更具体，别报成 no_paths 让用户去反复重点。
+        let key = if unreadable { "gui.error.unreadable_dir" } else { "gui.error.no_paths" };
+        return Err(t!(key).to_string());
     }
     let curve = parse_curve(args.curve.as_deref())?;
     let (code, components) = resolve_code(args.code.as_deref())?;
@@ -269,9 +276,12 @@ pub async fn send(
 
     let cancel = registry.register(id.clone(), "send");
     spawn(app, registry.inner().clone(), id.clone(), "send", cancel, move |token| async move {
-        croc_engine::send(request, token)
+        let result = croc_engine::send(request, token)
             .await
-            .map(|summary| t!("gui.summary.send", files = summary.files, bytes = summary.bytes).to_string())
+            .map(|summary| t!("gui.summary.send", files = summary.files, bytes = summary.bytes).to_string());
+        // 成败都要清：留着就是每一次发送都往缓存区堆一份完整副本。
+        cleanup_staged(&staged);
+        result
     });
     Ok(id)
 }
@@ -385,6 +395,42 @@ pub async fn receive(
 fn saf_tree_of(out_dir: &str) -> Option<String> {
     let trimmed = out_dir.trim();
     trimmed.starts_with("content://").then(|| trimmed.to_owned())
+}
+
+/// 把 `paths` 里的 SAF 目录 URI 就地换成拷进私有目录后的真实路径。
+///
+/// 返回 `(要清理的暂存目录, 有没有 SAF 目录没拷出来)`。第二个值用来区分"用户根本没选
+/// 东西"与"选了但读不到"——两者的提示文案不同。
+///
+/// 引擎只认文件系统路径，SAF 目录必须先整个拷出来。拷不出来的（目录空、授权失效）
+/// 直接从 `paths` 里去掉——留着只会让整次发送在 `survey` 那步报错。
+fn stage_saf_directories(paths: &mut Vec<String>) -> (Vec<String>, bool) {
+    let mut staged = Vec::new();
+    let mut unreadable = false;
+    let mut kept = Vec::with_capacity(paths.len());
+    for path in paths.drain(..) {
+        match saf_tree_of(&path) {
+            // 普通路径：桌面端的手填路径、系统文件管理器给的路径，原样留着。
+            None => kept.push(path),
+            // SAF 目录：换成私有目录里的真实路径，记下等会儿删；拷不出来就丢掉。
+            Some(uri) => match crate::android::stage_directory(&uri) {
+                Some(local) => {
+                    staged.push(local.clone());
+                    kept.push(local);
+                }
+                None => unreadable = true,
+            },
+        }
+    }
+    *paths = kept;
+    (staged, unreadable)
+}
+
+/// 删掉 [`stage_saf_directories`] 拷出来的目录。
+fn cleanup_staged(staged: &[String]) {
+    for path in staged {
+        crate::android::remove_staged(path);
+    }
 }
 
 /// 把收到的文件发布出去，返回发布成功的个数。
@@ -696,5 +742,27 @@ mod tests {
             assert_ne!(text, key, "{key} 没有对应的文案");
             assert!(text.contains('3'), "{key} 没有代入 count：{text}");
         }
+    }
+
+    /// 桌面端的路径没有 `content://`，`stage_saf_directories` 必须原样放行。
+    /// （这里跑的是桌面实现：`crate::android::stage_directory` 恒返回 `None`，
+    /// 所以带 `content://` 的那些会被丢掉并标成 unreadable——正是"拷不出来就别发"。）
+    #[test]
+    fn staging_leaves_plain_paths_alone_and_drops_content_uris() {
+        let mut paths = vec!["/tmp/a".to_owned(), "C:\\b".to_owned(), "content://tree/c".to_owned()];
+        let (staged, unreadable) = stage_saf_directories(&mut paths);
+        assert_eq!(paths, vec!["/tmp/a".to_owned(), "C:\\b".to_owned()]);
+        assert!(staged.is_empty(), "桌面端没有 SAF，不该有暂存目录");
+        assert!(unreadable, "带 content:// 却拷不出来，必须标成读不到");
+    }
+
+    /// 全是普通路径时不该被标成"目录读不到"。
+    #[test]
+    fn staging_plain_paths_reports_nothing_unreadable() {
+        let mut paths = vec!["/tmp/a".to_owned()];
+        let (staged, unreadable) = stage_saf_directories(&mut paths);
+        assert_eq!(staged.len(), 0);
+        assert!(!unreadable);
+        assert_eq!(paths, vec!["/tmp/a".to_owned()]);
     }
 }

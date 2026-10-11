@@ -3,6 +3,7 @@
 gui:
   error:
     no_paths: "Pick at least one file."
+    unreadable_dir: "Cannot read the chosen folder (it may be empty, or the grant has expired)."
     transfer_finished: "%{id} has already finished."
     bad_curve: "%{name} is not a curve."
     bad_code: "%{code} is not a valid code phrase."

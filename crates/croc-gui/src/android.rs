@@ -1,5 +1,5 @@
 //! Android 侧的 Kotlin 桥（G10）：前台服务、通知进度、落盘目录、发布到下载目录、
-//! SAF 目录发布、SAF 另存与系统分享。
+//! SAF 目录发布、SAF 目录暂存、SAF 另存与系统分享。
 //!
 //! 只有 Rust → Kotlin 这一个方向。Kotlin 那边是
 //! `gen/android/.../CrocBridge.kt` 的 `@JvmStatic` 方法；两边靠类名 + 方法名 + JNI 描述符
@@ -101,6 +101,32 @@ pub fn saf_publish(tree_uri: &str, local_path: &str, name: &str) -> Option<Strin
     })
 }
 
+/// 把用户选的 SAF 目录拷进应用私有目录，返回拷出来的真实路径。
+///
+/// 发送目录用：引擎靠 `std::fs` 走目录树，只认真实路径，SAF 的 `content://` URI
+/// 交给它必然报 `No such file or directory`。发完由 [`remove_staged`] 删掉。
+/// 目录空或拷贝失败时返回 `None`。
+#[cfg(target_os = "android")]
+pub fn stage_directory(tree_uri: &str) -> Option<String> {
+    attach("stageDirectory", |env| {
+        let tree = env.new_string(tree_uri)?;
+        let args = [jni::objects::JValue::from(&tree)];
+        let returned =
+            env.call_static_method(BRIDGE, "stageDirectory", "(Ljava/lang/String;)Ljava/lang/String;", &args)?;
+        read_string(env, returned.l()?)
+    })
+}
+
+/// 删掉 [`stage_directory`] 拷出来的目录。
+#[cfg(target_os = "android")]
+pub fn remove_staged(path: &str) {
+    with_env("removeStaged", |env| {
+        let value = env.new_string(path)?;
+        let args = [jni::objects::JValue::from(&value)];
+        env.call_static_method(BRIDGE, "removeStaged", "(Ljava/lang/String;)Z", &args)
+    });
+}
+
 /// 附着到当前线程，跑一次 JNI 调用。
 ///
 /// 参数在闭包里造，是因为 `JString` 的生命周期绑在附着出来的 `JNIEnv` 上。
@@ -181,3 +207,11 @@ pub fn sandbox_dir() -> Option<String> {
 pub fn saf_publish(_tree_uri: &str, _local_path: &str, _name: &str) -> Option<String> {
     None
 }
+
+#[cfg(not(target_os = "android"))]
+pub fn stage_directory(_tree_uri: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn remove_staged(_path: &str) {}

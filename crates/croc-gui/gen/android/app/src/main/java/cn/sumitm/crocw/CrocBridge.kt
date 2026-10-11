@@ -83,6 +83,67 @@ object CrocBridge {
   @JvmStatic
   fun sandboxDir(): String? = appContext?.filesDir?.absolutePath
 
+  /// 把用户选的 SAF 目录整个拷进应用私有目录，返回拷出来的真实路径。
+  ///
+  /// 发送目录必须走这一步：引擎靠 `std::fs` 递归走目录树（`files::survey` 的
+  /// `symlink_metadata` 起手就要一个真实路径），而 SAF 目录只有 `content://` URI，
+  /// 直接把 URI 交给引擎必然 `No such file or directory`。拷完由调用方把返回的路径
+  /// 当普通目录发，发完再用 [removeStaged] 删掉。
+  ///
+  /// 拷到 `cacheDir/crocw-send/<时间戳>` 而不是 `filesDir`：它在缓存区，系统在空间
+  /// 紧张时可以自己回收，也与我们自己发完就删的语义一致。时间戳避免同一目录发两次时
+  /// 撞上前一次没删干净的残留。
+  ///
+  /// @return 拷出来的目录绝对路径；选不到目录或一个文件都没拷出来时返回 null。
+  @JvmStatic
+  fun stageDirectory(treeUri: String): String? {
+    val context = appContext ?: return null
+    val tree = runCatching { Uri.parse(treeUri) }.getOrNull() ?: return null
+    val source = DocumentFile.fromTreeUri(context, tree) ?: return null
+    val root = File(context.cacheDir, "crocw-send/${System.currentTimeMillis()}") 
+    if (!root.mkdirs()) return null
+    // 目录本身可能是空的：那就没有一个可发的文件，直接失败而不是发一个空目录。
+    return if (copyTree(context, source, root) > 0) root.absolutePath else null
+  }
+
+  /// 删掉 [stageDirectory] 拷出来的目录。
+  ///
+  /// 用路径前缀校验：`stageDirectory` 给出的是 `cacheDir` 下的路径，Rust 那边只是原样
+  /// 传回来，不该让它有机会删掉别处的东西。
+  @JvmStatic
+  fun removeStaged(path: String): Boolean {
+    val context = appContext ?: return false
+    val root = context.cacheDir.absolutePath + "/crocw-send/"
+    if (!path.startsWith(root)) return false
+    return runCatching { File(path).deleteRecursively() }.getOrDefault(false)
+  }
+
+  /// 递归把一个 SAF 目录里的文件与子目录拷到 [target]，返回拷出的文件数。
+  ///
+  /// 逐个条目查询而不是用 `DocumentFile.findFile` 拼路径：SAF 的文件名与真实路径不是
+  /// 一回事，只有 `uri` 能定位字节。子目录按名字建，重名走 `createFile` 的自动改名。
+  private fun copyTree(context: Context, source: DocumentFile, target: File): Int {
+    var copied = 0
+    for (child in source.listFiles()) {
+      val name = child.name ?: continue
+      if (child.isDirectory) {
+        val nested = File(target, name)
+        if (nested.mkdirs()) copied += copyTree(context, child, nested)
+        continue
+      }
+      val ok = runCatching {
+        val destination = File(target, name)
+        context.contentResolver.openInputStream(child.uri)?.use { input ->
+          destination.outputStream().use { output -> input.copyTo(output) }
+          true
+        } ?: false
+      }.getOrDefault(false)
+      if (ok) copied++
+    }
+    return copied
+  }
+
+
   /// 把已经落盘的文件发布到公共下载目录。
   ///
   /// 往 `MediaStore.Downloads` 插条目不需要任何运行时权限（minSdk 30，没有
@@ -121,11 +182,10 @@ object CrocBridge {
 
   /// 把已经落在应用私有目录里的文件，发布到用户选定的 SAF 目录。
   ///
-  /// `treeUri` 是 `open({ directory: true })` 交出来的目录 URI
-  /// （`content://com.android.externalstorage.documents/tree/...`）。往目录里建条目的
-  /// 权限来自目录本身，不是 `MANAGE_EXTERNAL_STORAGE`，所以不需要任何运行时权限；
-  /// 但这个 URI 的授权只对本次进程有效，[MainActivity] 那边要
-  /// `takePersistableUriPermission` 才能跨重启保留。
+  /// `treeUri` 是 SAF 的目录 URI（`content://com.android.externalstorage.documents/tree/...`），
+  /// 由 `croc-saf-plugin` 起 `ACTION_OPEN_DOCUMENT_TREE` 拿到，并在那边持久化了授权。
+  /// 往目录里建条目的权限来自目录本身，不是 `MANAGE_EXTERNAL_STORAGE`，所以不需要任何
+  /// 运行时权限。
   ///
   /// @return 落到的文件名，失败返回 null。
   @JvmStatic
@@ -134,8 +194,8 @@ object CrocBridge {
     val file = File(localPath)
     if (!file.exists()) return null
     val tree = runCatching { Uri.parse(treeUri) }.getOrNull() ?: return null
-    // URI 必须以 /tree/ 结尾才是目录：`fromTreeUri` 对文档 URI 会返回 null 之外的东西，
-    // 那种情况下 createFile 落到的位置与用户选的不一致，不如直接失败。
+    // 只认 tree URI：`fromTreeUri` 收到文档 URI 时也能返回一个 DocumentFile，但
+    // createFile 落到的位置与用户选的不一致，不如直接失败。
     val directory = DocumentFile.fromTreeUri(context, tree) ?: return null
     val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension) ?: "application/octet-stream"
     // 同名条目已存在时 `createFile` 会自动改名（foo(1).ext），这与桌面端 `--rename`

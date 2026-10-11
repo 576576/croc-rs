@@ -62,7 +62,27 @@ export function sumSize(files: OfferFile[]): number {
 }
 
 /// 界面上只显示最后一段，全路径留给 title 属性。
+///
+/// SAF 目录 URI 要特殊处理：它最后一段是 URL 编码的"卷:路径"
+/// （`primary%3ADownload%2Fmyfolder`），直接截取会显示成一串 `%3A`。
 export function baseName(path: string): string {
+  if (path.startsWith('content://')) return safDirectoryName(path) ?? path;
   const normalized = path.replace(/\\/g, '/');
   return normalized.slice(normalized.lastIndexOf('/') + 1) || path;
+}
+
+/// 从 SAF 目录 URI 里取出用户认得的目录名。
+///
+/// 形态是 `.../tree/<卷>:<路径>`（目录 URI）或 `.../document/<卷>:<路径>`（文档 URI），
+/// 两段的最后一段都编码了真实路径。解不出来时返回 `null`，交给调用方退回原样显示。
+function safDirectoryName(path: string): string | null {
+  const normalized = path.replace(/\\/g, '/');
+  const encoded = normalized.slice(normalized.lastIndexOf('/') + 1);
+  try {
+    const tail = decodeURIComponent(encoded).split(':').pop() ?? '';
+    return tail.slice(tail.lastIndexOf('/') + 1) || null;
+  } catch {
+    // 编码坏了就返回 null，别让一个显示名把整个界面拖崩。
+    return null;
+  }
 }
