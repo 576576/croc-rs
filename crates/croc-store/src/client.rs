@@ -204,7 +204,7 @@ impl Client {
     ) -> Result<(), Error> {
         share.browser_url()?;
         manifest::validate_manifest(manifest, MAX_MANIFEST_BYTES)?;
-        std::fs::create_dir_all(output)?;
+        tokio::fs::create_dir_all(output).await?;
 
         let mut session = Session::load(share, manifest, output);
         if session.state.claim_token.is_empty() {
@@ -265,9 +265,10 @@ impl Client {
         .browser_url()?;
 
         let redeem = crypto::redeem_capability(master)?;
+        let manifest_bytes: i64 = narrow(prepared.manifest_json.len(), "stored-transfer manifest size")?;
         let request = CreateRequest {
             protocol: PROTOCOL.to_owned(),
-            manifest_bytes: i64::try_from(prepared.manifest_json.len()).unwrap_or(i64::MAX) + SEAL_OVERHEAD,
+            manifest_bytes: manifest_bytes + SEAL_OVERHEAD,
             chunk_bytes: prepared.chunk_bytes.clone(),
             redeem_verifier: base64url::encode(&crypto::capability_verifier(&redeem)),
             files: prepared.files.len(),
@@ -341,7 +342,7 @@ impl Client {
             let file = Arc::new(file.clone());
             let next = Arc::new(AtomicUsize::new(0));
             let per_file_sent = Arc::new(AtomicI64::new(0));
-            let count = usize::try_from(file.chunk_count).unwrap_or(usize::MAX);
+            let count: usize = narrow(file.chunk_count, "stored-transfer chunk count")?;
             for _ in 0..WORKERS.min(count) {
                 let shared = Arc::clone(&shared);
                 let file = Arc::clone(&file);
@@ -485,9 +486,9 @@ impl Client {
         // 不截断：续传时文件里可能已经有下好的分片。
         let mut handle =
             tokio::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&part).await?;
-        handle.set_len(u64::try_from(file.size).unwrap_or(u64::MAX)).await?;
+        handle.set_len(narrow(file.size, "stored-transfer file size")?).await?;
 
-        let file_index = i64::try_from(index).unwrap_or(i64::MAX);
+        let file_index: i64 = narrow(index, "stored-transfer file index")?;
         let pending: Vec<ChunkRef> =
             session.references.iter().filter(|reference| reference.file_index == file_index).copied().collect();
 
@@ -506,7 +507,7 @@ impl Client {
             }
             let ciphertext = self.chunk_with_retry(session, reference.object_index).await?;
             let plaintext = crypto::open_chunk(&session.share.master_key, &session.share.id, reference, &ciphertext)?;
-            let offset = u64::try_from(reference.file_chunk * CHUNK_SIZE).unwrap_or(u64::MAX);
+            let offset: u64 = narrow(reference.file_chunk * CHUNK_SIZE, "stored-transfer chunk offset")?;
             handle.seek(std::io::SeekFrom::Start(offset)).await?;
             handle.write_all(&plaintext).await?;
             session.state.completed.insert(reference.object_index);
@@ -557,8 +558,8 @@ async fn upload_worker(
     file_sent: Arc<AtomicI64>,
 ) -> Result<(), Error> {
     let mut handle = tokio::fs::File::open(&file.path).await?;
-    let count = usize::try_from(file.chunk_count).unwrap_or(usize::MAX);
-    let base = usize::try_from(file.first_chunk).unwrap_or(usize::MAX);
+    let count: usize = narrow(file.chunk_count, "stored-transfer chunk count")?;
+    let base: usize = narrow(file.first_chunk, "stored-transfer first chunk")?;
     loop {
         let sequence = next.fetch_add(1, Ordering::SeqCst);
         if sequence >= count {
@@ -567,8 +568,9 @@ async fn upload_worker(
         let Some(reference) = shared.references.get(base.wrapping_add(sequence)).copied() else {
             return Err(Error::Format("stored-transfer chunk map is out of range".to_owned()));
         };
-        let offset = u64::try_from(i64::try_from(sequence).unwrap_or(i64::MAX) * CHUNK_SIZE).unwrap_or(u64::MAX);
-        let mut plaintext = vec![0u8; usize::try_from(reference.plain_size).unwrap_or(0)];
+        let sequence_index: i64 = narrow(sequence, "stored-transfer chunk sequence")?;
+        let offset: u64 = narrow(sequence_index * CHUNK_SIZE, "stored-transfer chunk offset")?;
+        let mut plaintext = vec![0u8; narrow(reference.plain_size, "stored-transfer plaintext size")?];
         handle.seek(std::io::SeekFrom::Start(offset)).await?;
         handle.read_exact(&mut plaintext).await?;
         let ciphertext = crypto::seal_chunk(&shared.share.master_key, &shared.share.id, reference, &plaintext)?;
@@ -659,18 +661,25 @@ struct PreparedFile {
     chunk_count: i64,
 }
 
-async fn prepare(paths: &[PathBuf], reporter: &Arc<dyn Reporter>) -> Result<Prepared, Error> {
-    if paths.is_empty() || paths.len() > MAX_FILES {
-        return Err(Error::Format(format!("stored transfer must contain between 1 and {MAX_FILES} files")));
-    }
-    let mut files = Vec::with_capacity(paths.len());
-    let mut manifest_files = Vec::with_capacity(paths.len());
+/// 目录探测的产出：一个文件的元信息，哈希还没算。
+struct Surveyed {
+    path: PathBuf,
+    name: String,
+    size: i64,
+    modified: OffsetDateTime,
+    chunk_count: i64,
+}
+
+/// 把每个输入文件的元信息摸一遍：是不是普通文件、名字能不能用、有没有重名、多大、切几片。
+///
+/// 同步函数，由 [`prepare`] 放进阻塞线程跑——它每个文件一次 `symlink_metadata`，
+/// 几百个文件时这些 syscall 加起来会把 async worker 占住。
+fn survey(paths: Vec<PathBuf>) -> Result<(Vec<Surveyed>, i64), Error> {
+    let mut surveyed = Vec::with_capacity(paths.len());
     let mut names: Vec<String> = Vec::with_capacity(paths.len());
     let mut total_bytes = 0i64;
-    let mut next_chunk = 0i64;
-
-    for (index, path) in paths.iter().enumerate() {
-        let metadata = std::fs::symlink_metadata(path)?;
+    for path in paths {
+        let metadata = std::fs::symlink_metadata(&path)?;
         if !metadata.is_file() {
             return Err(Error::Format(format!("stored mode supports regular files only: {}", path.display())));
         }
@@ -682,22 +691,60 @@ async fn prepare(paths: &[PathBuf], reporter: &Arc<dyn Reporter>) -> Result<Prep
         }
         names.push(name.clone());
 
-        let size = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
-        total_bytes += size;
-        reporter.status(&format!("Hashing {}/{}: {name}", index + 1, paths.len()));
-        let digest = hash_file(path).await?;
-        let chunk_count = (size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-
-        manifest_files.push(ManifestFile {
-            name: name.clone(),
+        let size = i64::try_from(metadata.len())
+            .map_err(|_| Error::Format(format!("file too large for a stored transfer: {}", path.display())))?;
+        total_bytes = total_bytes
+            .checked_add(size)
+            .ok_or_else(|| Error::Format("stored-transfer total size overflow".to_owned()))?;
+        // 不写 `size + CHUNK_SIZE - 1`：size 接近 i64::MAX 时会溢出。`i64::div_ceil`
+        // 还没稳定（只有无符号整数有），所以摊开算。
+        let chunk_count = size / CHUNK_SIZE + i64::from(size % CHUNK_SIZE != 0);
+        surveyed.push(Surveyed {
+            path,
+            name,
             size,
             modified: metadata.modified().ok().and_then(system_time_to_offset).unwrap_or(OffsetDateTime::UNIX_EPOCH),
-            sha256: base64url::encode(&digest),
-            first_chunk: next_chunk,
             chunk_count,
         });
-        files.push(PreparedFile { path: path.clone(), name, size, first_chunk: next_chunk, chunk_count });
-        next_chunk += chunk_count;
+    }
+    Ok((surveyed, total_bytes))
+}
+
+async fn prepare(paths: &[PathBuf], reporter: &Arc<dyn Reporter>) -> Result<Prepared, Error> {
+    if paths.is_empty() || paths.len() > MAX_FILES {
+        return Err(Error::Format(format!("stored transfer must contain between 1 and {MAX_FILES} files")));
+    }
+    let count = paths.len();
+    let (surveyed, total_bytes) = tokio::task::spawn_blocking({
+        let owned = paths.to_vec();
+        move || survey(owned)
+    })
+    .await
+    .map_err(|error| Error::Format(format!("the file survey task {error}")))??;
+
+    let mut files = Vec::with_capacity(surveyed.len());
+    let mut manifest_files = Vec::with_capacity(surveyed.len());
+    let mut next_chunk = 0i64;
+
+    for (index, entry) in surveyed.into_iter().enumerate() {
+        reporter.status(&format!("Hashing {}/{}: {}", index + 1, count, entry.name));
+        let digest = hash_file(&entry.path).await?;
+        manifest_files.push(ManifestFile {
+            name: entry.name.clone(),
+            size: entry.size,
+            modified: entry.modified,
+            sha256: base64url::encode(&digest),
+            first_chunk: next_chunk,
+            chunk_count: entry.chunk_count,
+        });
+        files.push(PreparedFile {
+            path: entry.path,
+            name: entry.name,
+            size: entry.size,
+            first_chunk: next_chunk,
+            chunk_count: entry.chunk_count,
+        });
+        next_chunk += entry.chunk_count;
     }
 
     let document = Manifest { version: VERSION, chunk_size: CHUNK_SIZE, files: manifest_files };
@@ -801,10 +848,24 @@ async fn install_verified(
         let _ = handle.set_modified(modified);
     }
     let target = output.join(&file.name);
+    // 这三步保持 `std::fs`：单次 rename / remove 是微秒级，走 `spawn_blocking` 的线程往返
+    // 比它本身还贵。
     // Windows 上 rename 不覆盖已存在的文件。
     let _ = std::fs::remove_file(&target);
     std::fs::rename(part, &target)?;
     Ok(())
+}
+
+/// 把已经校验过的数值转成目标整数类型。
+///
+/// 这些值在被用到之前都过了 `manifest::validate_manifest` 或 `manifest::validate_chunk_ref`
+/// （非负、且不超过 2^32-1），走到这里失败说明代码写错。不拿饱和值顶上：那会把"不会发生"
+/// 悄悄变成一个错误的大数，让后面的分配或 seek 按一个不存在的尺寸走。
+fn narrow<T, U>(value: T, what: &str) -> Result<U, Error>
+where
+    U: TryFrom<T>,
+{
+    U::try_from(value).map_err(|_| Error::Format(format!("{what} is out of range")))
 }
 
 /// 分片的临时文件名。与 Go 的 `.<名字>.croc-<id>.part` 同形。

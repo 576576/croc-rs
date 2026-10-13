@@ -227,7 +227,7 @@ pub async fn send(
     if let Some(text) = text {
         // `--text` 的等价物：文本先落成 `croc-stdin-*` 临时文件，再走正常发送——
         // 接收方靠这个名字前缀认出"这次是文本"（croc_engine::text）。
-        let artifact = croc_engine::text::write_text_artifact(text)?;
+        let artifact = croc_engine::text::write_text_artifact(text).map_err(|error| error.to_string())?;
         paths.push(artifact.to_string_lossy().into_owned());
     }
     // Android 上用户挑的目录是 SAF 的 `content://` URI，引擎走不通（`files::survey`

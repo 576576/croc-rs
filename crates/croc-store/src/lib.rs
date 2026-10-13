@@ -53,6 +53,10 @@ pub enum Error {
     /// 格式不合法：长度不对、版本不认识、清单字段自相矛盾。
     #[error("stored transfer format: {0}")]
     Format(String),
+    /// 有效期的写法不合法。消息原样透出，不加前缀——它要跟 Go 的
+    /// `storeapi.ParseExpiration` 逐字一致。
+    #[error("{0}")]
+    Expiration(String),
     /// 认证失败。密文被改过，或者密钥不对。
     #[error("stored transfer authentication failed")]
     Authentication,

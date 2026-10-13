@@ -234,8 +234,8 @@ pub async fn send(request: StoreRequest) -> std::process::ExitCode {
     }
     let expiration = match parse_expiration(&request.expiration) {
         Ok(value) => value,
-        Err(reason) => {
-            eprintln!("{}", t!("store.error.expiration", reason = reason));
+        Err(error) => {
+            eprintln!("{}", t!("store.error.expiration", reason = error.to_string()));
             return std::process::ExitCode::FAILURE;
         }
     };

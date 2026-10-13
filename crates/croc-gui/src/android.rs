@@ -183,7 +183,8 @@ where
     use jni::JavaVM;
 
     let context = ndk_context::android_context();
-    // `ndk-context` 交出来的只有裸指针，取 `JavaVM` 只能走 `from_raw`；这里不接管它的生命周期。
+    // SAFETY: `ndk-context` 交出来的只有裸指针，取 `JavaVM` 只能走 `from_raw`；
+    // 这里不接管它的生命周期。
     #[expect(unsafe_code, reason = "ndk-context 只提供裸指针")]
     let Ok(vm) = (unsafe { JavaVM::from_raw(context.vm().cast()) }) else {
         tracing::warn!("拿不到 JavaVM，跳过 {name}");
@@ -193,8 +194,8 @@ where
         tracing::warn!("附着到 JVM 失败，跳过 {name}");
         return None;
     };
-    // ApplicationContext 是 tao 在 android_setup 里 `new_global_ref` 出来的，借一下，
-    // 不接管它的生命周期——它活在整个进程上。
+    // SAFETY: ApplicationContext 是 tao 在 android_setup 里 `new_global_ref` 出来的，
+    // 借一下，不接管它的生命周期——它活在整个进程上。
     #[expect(unsafe_code, reason = "ndk-context 只提供裸指针")]
     let application = unsafe { jni::objects::JObject::from_raw(context.context() as jni::sys::jobject) };
     let class = match bridge_class(&mut env, &application) {

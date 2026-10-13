@@ -63,7 +63,7 @@ pub async fn store_upload(app: AppHandle, args: StoreArgs) -> Result<StoredResul
         return Err(t!("gui.error.no_paths").to_string());
     }
     let expiration = match args.expiration.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        Some(value) => croc_store::parse_expiration(value)?,
+        Some(value) => croc_store::parse_expiration(value).map_err(|error| error.to_string())?,
         None => time::Duration::ZERO,
     };
     let origin = args.url.as_deref().map(str::trim).filter(|value| !value.is_empty()).unwrap_or(DEFAULT_ORIGIN);

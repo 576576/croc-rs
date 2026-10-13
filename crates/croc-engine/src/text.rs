@@ -8,14 +8,17 @@ use std::path::PathBuf;
 
 use croc_core::policy::TEXT_ARTIFACT_PREFIX;
 
+use crate::error::EngineError;
+
 /// 把一段文本落成临时文件，返回它的路径。
 ///
 /// # Errors
 ///
 /// 临时目录写不下去。
-pub fn write_text_artifact(text: &str) -> Result<PathBuf, String> {
+pub fn write_text_artifact(text: &str) -> Result<PathBuf, EngineError> {
     let path = artifact_path();
-    std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
+    std::fs::write(&path, text)
+        .map_err(|error| EngineError::File { path: path.display().to_string(), reason: error.to_string() })?;
     Ok(path)
 }
 
