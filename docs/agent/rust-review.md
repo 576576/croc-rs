@@ -32,7 +32,7 @@
 | 4 | MEDIUM | `croc-store/src/client.rs` 等 | async fn 内直接调用阻塞 `std::fs` | 已修（只改值两处） |
 | 5 | LOW | `croc-store/src/client.rs` 9 处 | `try_from(..).unwrap_or(MAX)` 家族，掩盖"不可达"这件事 | 已修 |
 | 6 | LOW | `croc-gui/src/android.rs:186,197` | `unsafe` 块缺 `// SAFETY:` 前缀 | 已修 |
-| 7 | LOW | `Cargo.toml:164` | `lto = "thin"` 可评估换成 `"fat"` | 保持 thin |
+| 7 | LOW | `Cargo.toml:164` | `lto = "thin"` 可评估换成 `"fat"` | 已实测，保持 thin |
 
 ## 2. 逐条详述
 
@@ -219,14 +219,16 @@ let Ok(vm) = (unsafe { JavaVM::from_raw(context.vm().cast()) }) else { ... };
 要求的 `// SAFETY:` 前缀——那个前缀能被 grep、被 CI 检查，散在 `reason` 里的不行。
 全仓只有这两处 `unsafe`，都已加上 `// SAFETY:` 前缀（原来的生命周期说明保留）。
 
-### 2.7 LOW —— `lto = "thin"`（经评估保持原状）
+### 2.7 LOW —— `lto = "thin"`（已实测，保持原状）
 
 `Cargo.toml:164` 现在 `lto = "thin"`。`fat` 通常再快 5–15%，代价是链接时间明显变长。
-croc 的瓶颈在网络与磁盘（`data.rs` 的加解密、`flate2` 的压缩才是 CPU 大头），
-收益大概率落在噪声里。
 
-这条**没有改**：按 `perf-profile-first`，没有 profiler 数据就不该动构建配置——改了也无从判断
-是变快还是变慢。要动就先有个能覆盖 `data.rs` 加解密或 `hash.rs` 的基准。
+已按 `perf-profile-first` 跑过一轮端到端对比：四种负载、13-16 次配对测量，`fat` 与 `thin`
+的差全在 **±3.2%** 以内且符号不自洽；采样显示 CPU 时间只有 **27-38%** 落在 croc 自己的
+代码里（其余是系统调用与内核），LTO 能动的部分太小。**保持 `thin`**。
+
+数据、方法与限制见 `docs/agent/perf-lto.md`。那里还记了一条顺带发现：默认压缩对不可
+压缩数据白花约 48% 的时间（回环这类高速链路上是净损失）。
 
 ## 3. 已验证、确认**不是**问题的方面
 
